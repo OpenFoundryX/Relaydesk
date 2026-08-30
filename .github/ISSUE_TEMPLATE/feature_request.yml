@@ -1,0 +1,32 @@
+name: Feature request
+description: Propose an improvement to Relaydesk
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: checkboxes
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for a similar proposal.
+          required: true
+  - type: textarea
+    attributes:
+      label: Problem
+      description: What problem or unmet need should Relaydesk address?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Proposed solution
+      description: Describe the desired behavior without assuming a particular implementation.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Alternatives considered
+      description: What workarounds or alternative approaches have you considered?
+  - type: textarea
+    attributes:
+      label: Additional context
+      description: Add mockups, examples, or links that clarify the proposal.

@@ -1,0 +1,26 @@
+name: Question
+description: Ask for help using or developing Relaydesk
+title: "[Question]: "
+labels:
+  - question
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Community support is best effort. For vulnerabilities, follow SECURITY.md instead.
+  - type: textarea
+    attributes:
+      label: Question
+      description: Explain what you are trying to accomplish and where you are stuck.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What have you tried?
+      description: Include relevant commands, sanitized output, and documentation you consulted.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Environment
+      description: Include relevant OS, Docker, browser, branch, or commit details.

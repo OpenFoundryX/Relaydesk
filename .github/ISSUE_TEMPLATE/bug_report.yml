@@ -1,0 +1,40 @@
+name: Bug report
+description: Report a reproducible problem in Relaydesk
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Do not include secrets, personal data, or security vulnerabilities.
+  - type: checkboxes
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for this problem.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
+  - type: textarea
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest reliable sequence that reproduces the issue.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Environment
+      description: Include OS, Docker version, browser, branch or commit, and relevant configuration.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Logs or additional context
+      description: Paste sanitized logs or screenshots. Remove credentials and personal data.
