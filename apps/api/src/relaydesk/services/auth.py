@@ -5,7 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from relaydesk.config import get_settings
 from relaydesk.errors import Unauthorized
-from relaydesk.models import Membership, MembershipStatus, Session, User
+from relaydesk.models import Membership, MembershipStatus, Session, User, UserIdentity
+from relaydesk.security.oauth_google import GoogleProfile
 from relaydesk.security.passwords import hash_password, verify_password
 from relaydesk.security.tokens import generate_token, hash_token
 
@@ -131,3 +132,34 @@ async def revoke_session(session: AsyncSession, token: str) -> None:
         sa.delete(Session).where(Session.token_hash == hash_token(token))
     )
     await session.commit()
+
+
+async def login_with_google(session: AsyncSession, profile: GoogleProfile) -> User:
+    """Log in an existing member through Google.
+
+    There is no self-serve signup, so an address without an active
+    membership is refused rather than provisioned.
+    """
+    if not profile.email_verified or not profile.email:
+        raise Unauthorized("Google did not confirm this email address.")
+
+    user = await session.scalar(sa.select(User).where(User.email == profile.email))
+    if user is None:
+        raise Unauthorized("No Relaydesk account matches this Google address.")
+
+    await active_membership(session, user)
+
+    identity = await session.scalar(
+        sa.select(UserIdentity).where(
+            UserIdentity.provider == "google",
+            UserIdentity.provider_account_id == profile.sub,
+        )
+    )
+    if identity is None:
+        session.add(
+            UserIdentity(
+                user_id=user.id, provider="google", provider_account_id=profile.sub
+            )
+        )
+        await session.commit()
+    return user

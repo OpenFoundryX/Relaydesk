@@ -32,6 +32,17 @@ Then visit:
 - API: http://localhost:8000
 - API Docs: http://localhost:8000/docs
 
+### Google sign-in (optional)
+
+"Continue with Google" on the login page works out of the box for
+self-hosters who don't configure it: the button redirects back to sign-in
+with an error banner instead of crashing. To enable it, set
+`GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `.env` from a Google Cloud
+OAuth client, and register `http://localhost:3000/login/google/callback` as
+an authorized redirect URI in the Google Cloud console. There is no
+self-serve signup through Google — an email must already have an active
+membership to sign in.
+
 ## Development commands
 
 ```sh

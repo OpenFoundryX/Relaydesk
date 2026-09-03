@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-import { signIn } from "./actions";
+import { signIn, signInWithGoogle } from "./actions";
 
 export const metadata: Metadata = { title: "Sign in" };
 
@@ -22,7 +22,7 @@ export default async function LoginPage({
       <div className="px-8 py-12 sm:px-12 lg:py-20">
         <h1 className="text-2xl font-semibold tracking-tight text-ink-950">Sign in</h1>
 
-        <form action={signIn} className="mt-6">
+        <form action={signInWithGoogle} className="mt-6">
           <Button type="submit" variant="secondary" size="lg" className="w-full">
             <GoogleMark />
             Continue with Google

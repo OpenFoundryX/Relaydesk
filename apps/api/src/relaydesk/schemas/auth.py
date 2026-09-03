@@ -15,6 +15,16 @@ class TokenResponse(CamelModel):
     expires_at: datetime
 
 
+class GoogleUrlResponse(CamelModel):
+    url: str
+    state: str
+
+
+class GoogleExchangeRequest(CamelModel):
+    code: str
+    redirect_uri: str
+
+
 class UserOut(CamelModel):
     id: str
     name: str
