@@ -11,4 +11,8 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 
 EXPOSE 3000
-CMD ["pnpm", "dev", "--hostname", "0.0.0.0"]
+
+# node_modules is a named volume, so it survives image rebuilds and can fall
+# behind the lockfile. Reinstalling at start keeps it in step; it is a no-op
+# once the volume is current.
+CMD ["sh", "-c", "pnpm install --frozen-lockfile && pnpm dev --hostname 0.0.0.0"]

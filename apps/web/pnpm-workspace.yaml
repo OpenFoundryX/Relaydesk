@@ -2,3 +2,11 @@ onlyBuiltDependencies:
   - sharp
   - unrs-resolver
 strictDepBuilds: false
+
+# The dev container keeps node_modules in a named volume, so pnpm periodically
+# needs to purge and repopulate it. There is no TTY there to confirm the prompt.
+confirmModulesPurge: false
+
+allowBuilds:
+  sharp: set this to true or false
+  unrs-resolver: set this to true or false

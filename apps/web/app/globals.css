@@ -4,10 +4,30 @@
 
 @layer base {
   * {
-    @apply border-slate-200;
+    @apply border-ink-200;
+  }
+
+  html {
+    @apply antialiased;
   }
 
   body {
-    @apply bg-white text-slate-950 antialiased;
+    @apply bg-ink-50 text-ink-900;
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  /* Citron ring on anything focused by keyboard. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent-500 ring-offset-2 ring-offset-white;
+  }
+
+  ::selection {
+    @apply bg-accent-200 text-ink-950;
+  }
+}
+
+@layer utilities {
+  .tabular {
+    font-variant-numeric: tabular-nums;
   }
 }
