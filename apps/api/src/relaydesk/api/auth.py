@@ -1,10 +1,8 @@
 from typing import Annotated
 
-import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Header, Response, status
 
 from relaydesk.api.deps import DbSession, Scope, bearer_token, client_ip
-from relaydesk.models import Membership, MembershipStatus
 from relaydesk.schemas.auth import (
     LoginRequest,
     MembershipOut,
@@ -13,7 +11,7 @@ from relaydesk.schemas.auth import (
     UserOut,
     WorkspaceOut,
 )
-from relaydesk.services import auth
+from relaydesk.services import auth, workspaces
 
 router = APIRouter()
 
@@ -41,14 +39,7 @@ async def logout(
 
 @router.get("/me", response_model=MeResponse)
 async def me(scope: Scope, session: DbSession) -> MeResponse:
-    seats = await session.scalar(
-        sa.select(sa.func.count())
-        .select_from(Membership)
-        .where(
-            Membership.workspace_id == scope.workspace_id,
-            Membership.status == MembershipStatus.active,
-        )
-    )
+    seats = await workspaces.active_seat_count(session, scope.workspace_id)
     return MeResponse(
         user=UserOut(
             id=str(scope.user.id),
@@ -63,7 +54,7 @@ async def me(scope: Scope, session: DbSession) -> MeResponse:
             monogram=scope.workspace.monogram,
             plan=scope.workspace.plan,
             trial_days_left=scope.workspace.trial_days_left,
-            seats=seats or 0,
+            seats=seats,
             tickets_this_period=scope.workspace.tickets_this_period,
             projected_tickets=scope.workspace.projected_tickets,
         ),

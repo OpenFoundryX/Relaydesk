@@ -1,3 +1,4 @@
+import uuid
 from dataclasses import dataclass
 from typing import Annotated
 
@@ -15,7 +16,10 @@ DbSession = Annotated[AsyncSession, Depends(get_session)]
 def bearer_token(authorization: Annotated[str | None, Header()] = None) -> str:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise Unauthorized("Authentication required.")
-    return authorization[7:].strip()
+    token = authorization[7:].strip()
+    if not token:
+        raise Unauthorized("Authentication required.")
+    return token
 
 
 async def current_user(
@@ -33,7 +37,7 @@ class WorkspaceScope:
     workspace: Workspace
 
     @property
-    def workspace_id(self):
+    def workspace_id(self) -> uuid.UUID:
         return self.workspace.id
 
     def require_admin(self) -> None:

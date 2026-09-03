@@ -35,6 +35,7 @@ async def authenticate(session: AsyncSession, email: str, password: str) -> User
     now = datetime.now(UTC)
     if user.locked_until is not None:
         if user.locked_until > now:
+            verify_password(password, _DUMMY_PASSWORD_HASH)
             raise Unauthorized(BAD_CREDENTIALS)
         user.failed_login_count = 0
         user.locked_until = None
@@ -59,6 +60,14 @@ async def authenticate(session: AsyncSession, email: str, password: str) -> User
 
 
 async def active_membership(session: AsyncSession, user: User) -> Membership:
+    """Return the user's one active membership.
+
+    Deliberately scoped by user only, not by workspace: this slice assumes a
+    single active membership per user (the console has no workspace switcher
+    yet). If a user ever holds more than one active membership, ``scalar()``
+    picks whichever row comes back first — don't build multi-workspace
+    behaviour on top of this without revisiting it.
+    """
     membership = await session.scalar(
         sa.select(Membership).where(
             Membership.user_id == user.id,
@@ -68,6 +77,12 @@ async def active_membership(session: AsyncSession, user: User) -> Membership:
     if membership is None:
         raise Unauthorized(BAD_CREDENTIALS)
     return membership
+
+
+# sessions.user_agent is a String(400); Postgres raises rather than
+# truncates on overflow, so an oversized header would otherwise escape as an
+# unhandled 500 instead of a normal login.
+USER_AGENT_MAX_LENGTH = 400
 
 
 async def create_session(
@@ -85,7 +100,7 @@ async def create_session(
         token_hash=hash_token(token),
         expires_at=now + timedelta(days=settings.session_ttl_days),
         last_seen_at=now,
-        user_agent=user_agent,
+        user_agent=user_agent[:USER_AGENT_MAX_LENGTH] if user_agent else user_agent,
         ip=ip,
     )
     session.add(row)

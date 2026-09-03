@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 import sqlalchemy as sa
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +13,7 @@ from relaydesk.models import (
     Workspace,
 )
 from relaydesk.security.passwords import hash_password
+from relaydesk.security.tokens import generate_token, hash_token
 
 
 async def seed_member(session: AsyncSession) -> tuple[Workspace, User]:
@@ -145,3 +148,76 @@ async def test_a_user_without_an_active_membership_cannot_log_in(
     )
 
     assert response.status_code == 401
+
+
+async def test_an_expired_session_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    _workspace, user = await seed_member(db_session)
+    token = generate_token()
+    now = datetime.now(UTC)
+    db_session.add(
+        Session(
+            user_id=user.id,
+            token_hash=hash_token(token),
+            expires_at=now - timedelta(seconds=1),
+            last_seen_at=now,
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        "/api/auth/me", headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 401
+
+
+async def test_malformed_login_body_returns_the_error_envelope(
+    client: AsyncClient,
+) -> None:
+    response = await client.post("/api/auth/login", json={"email": "not-an-email"})
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error"]["code"] == "invalid"
+    assert body["error"]["message"]
+
+
+async def test_a_non_bearer_auth_scheme_is_unauthorized(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await seed_member(db_session)
+
+    response = await client.get(
+        "/api/auth/me", headers={"Authorization": "Token abc"}
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthorized"
+
+
+async def test_an_empty_bearer_token_is_unauthorized(client: AsyncClient) -> None:
+    response = await client.get(
+        "/api/auth/me", headers={"Authorization": "Bearer "}
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthorized"
+
+
+async def test_login_clamps_an_oversized_user_agent(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await seed_member(db_session)
+
+    response = await client.post(
+        "/api/auth/login",
+        json={"email": "nilesh@relaydesk.dev", "password": "correct-horse"},
+        headers={"User-Agent": "x" * 500},
+    )
+
+    assert response.status_code == 200
+    row = await db_session.scalar(sa.select(Session))
+    assert row is not None
+    assert len(row.user_agent) == 400
