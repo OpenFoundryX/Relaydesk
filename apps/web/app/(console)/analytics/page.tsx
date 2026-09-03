@@ -3,13 +3,13 @@ import { MetricCard } from "@/components/analytics/metric-card";
 import { PageHeader } from "@/components/console/page-header";
 import { PageShell } from "@/components/console/page-shell";
 import { TrialStrip } from "@/components/console/trial-strip";
+import { getWorkspace } from "@/lib/api/workspace";
 import { getMetrics } from "@/lib/mock/analytics";
-import { workspace } from "@/lib/mock/workspace";
 
 export const metadata = { title: "Analytics" };
 
 export default async function AnalyticsPage() {
-  const metrics = await getMetrics();
+  const [metrics, workspace] = await Promise.all([getMetrics(), getWorkspace()]);
 
   return (
     <PageShell>

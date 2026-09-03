@@ -22,8 +22,9 @@ interface AccountSettingsProps {
     email: string;
     monogram: string;
     timeZone: string;
-    emailNotifications: boolean;
-    slackNotifications: boolean;
+    /** Not yet returned by the API; defaults to off until notifications ship. */
+    emailNotifications?: boolean;
+    slackNotifications?: boolean;
   };
   timeZones: string[];
 }
@@ -32,10 +33,10 @@ export function AccountSettings({ user, timeZones }: AccountSettingsProps) {
   const [name, setName] = useState(user.name);
   const [timeZone, setTimeZone] = useState(user.timeZone);
   const [emailNotifications, setEmailNotifications] = useState(
-    user.emailNotifications,
+    user.emailNotifications ?? false,
   );
   const [slackNotifications, setSlackNotifications] = useState(
-    user.slackNotifications,
+    user.slackNotifications ?? false,
   );
 
   const nameChanged = name !== user.name;

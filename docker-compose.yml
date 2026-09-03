@@ -48,6 +48,7 @@ services:
   web:
     build: ./apps/web
     environment:
+      API_URL: ${API_URL:-http://api:8000}
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
       WATCHPACK_POLLING: "true"
     ports:

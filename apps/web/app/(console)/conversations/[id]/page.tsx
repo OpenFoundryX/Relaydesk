@@ -13,7 +13,7 @@ import {
   getMessages,
 } from "@/lib/mock/conversations";
 import { getTeam } from "@/lib/mock/settings";
-import { workspace } from "@/lib/mock/workspace";
+import { getWorkspace } from "@/lib/api/workspace";
 
 export default async function ConversationPage({
   params,
@@ -24,13 +24,14 @@ export default async function ConversationPage({
   const conversation = await getConversation(id);
   if (!conversation) notFound();
 
-  const [messages, draft, activity, labels, team, siblings] = await Promise.all([
+  const [messages, draft, activity, labels, team, siblings, workspace] = await Promise.all([
     getMessages(id),
     getDraft(id),
     getActivity(id),
     getLabels(),
     getTeam(),
     getConversations(conversation.status),
+    getWorkspace(),
   ]);
 
   const index = siblings.findIndex((entry) => entry.id === id);

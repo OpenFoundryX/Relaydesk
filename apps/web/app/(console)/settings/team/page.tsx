@@ -4,13 +4,13 @@ import { PageHeader } from "@/components/console/page-header";
 import { SettingSection } from "@/components/console/setting-section";
 import { InviteDialog } from "@/components/settings/invite-dialog";
 import { Badge } from "@/components/ui/badge";
+import { getWorkspace } from "@/lib/api/workspace";
 import { getTeam } from "@/lib/mock/settings";
-import { workspace } from "@/lib/mock/workspace";
 
 export const metadata = { title: "Team" };
 
 export default async function TeamPage() {
-  const team = await getTeam();
+  const [team, workspace] = await Promise.all([getTeam(), getWorkspace()]);
 
   return (
     <>

@@ -7,7 +7,7 @@ import { StatusIcon, statusMeta } from "@/components/inbox/status-meta";
 import { getConversations, getLabels, savedViews, statuses } from "@/lib/mock/conversations";
 import { getTeam } from "@/lib/mock/settings";
 import type { Conversation, ConversationStatus } from "@/lib/mock/types";
-import { currentUser } from "@/lib/mock/workspace";
+import { getCurrentUser } from "@/lib/api/workspace";
 
 export const metadata = { title: "Inbox" };
 
@@ -20,20 +20,25 @@ function isStatus(value: string): value is ConversationStatus {
   return (statuses as string[]).includes(value);
 }
 
-/** Saved views are fixed filters for now; they become user-defined later. */
-const viewFilters: Record<string, (conversation: Conversation) => boolean> = {
-  urgent: (c) => c.priority === "urgent" && c.assignee === null && c.status === "open",
-  mine: (c) => c.assignee === currentUser.name && c.status !== "trash",
-  waiting: (c) => c.status === "pending",
-};
-
 export default async function ConversationsPage({
   searchParams,
 }: {
   searchParams: Promise<{ status?: string; view?: string; label?: string }>;
 }) {
   const { status = "open", view, label } = await searchParams;
-  const [all, labels, team] = await Promise.all([getConversations(), getLabels(), getTeam()]);
+  const [all, labels, team, currentUser] = await Promise.all([
+    getConversations(),
+    getLabels(),
+    getTeam(),
+    getCurrentUser(),
+  ]);
+
+  /** Saved views are fixed filters for now; they become user-defined later. */
+  const viewFilters: Record<string, (conversation: Conversation) => boolean> = {
+    urgent: (c) => c.priority === "urgent" && c.assignee === null && c.status === "open",
+    mine: (c) => c.assignee === currentUser.name && c.status !== "trash",
+    waiting: (c) => c.status === "pending",
+  };
 
   let conversations: Conversation[];
   let title: string;

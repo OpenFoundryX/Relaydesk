@@ -9,12 +9,12 @@ import { CategoryList } from "@/components/knowledge-base/category-list";
 import { NewCategoryDialog } from "@/components/knowledge-base/new-category-dialog";
 import { SourceDialog } from "@/components/knowledge-base/source-dialog";
 import { Button } from "@/components/ui/button";
+import { getWorkspace } from "@/lib/api/workspace";
 import {
   externalSuggestions,
   getKnowledgeBase,
   internalSuggestions,
 } from "@/lib/mock/knowledge-base";
-import { workspace } from "@/lib/mock/workspace";
 import { cn } from "@/lib/utils";
 
 export const metadata = { title: "Knowledge base" };
@@ -31,7 +31,7 @@ export default async function KnowledgeBasePage({
 }) {
   const { tab } = await searchParams;
   const scope = tab === "external" ? "external" : "internal";
-  const categories = await getKnowledgeBase(scope);
+  const [categories, workspace] = await Promise.all([getKnowledgeBase(scope), getWorkspace()]);
 
   const isInternal = scope === "internal";
 

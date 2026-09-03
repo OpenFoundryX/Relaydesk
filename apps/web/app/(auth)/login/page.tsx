@@ -10,7 +10,13 @@ import { signIn } from "./actions";
 
 export const metadata: Metadata = { title: "Sign in" };
 
-export default function LoginPage() {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
+  const { error } = await searchParams;
+
   return (
     <div className="grid w-full max-w-5xl overflow-hidden rounded-xl border border-ink-200 bg-white shadow-overlay lg:min-h-[600px] lg:grid-cols-[minmax(0,26rem)_1fr]">
       <div className="px-8 py-12 sm:px-12 lg:py-20">
@@ -28,6 +34,15 @@ export default function LoginPage() {
           Or continue with email
           <span className="h-px flex-1 bg-ink-200" />
         </div>
+
+        {error ? (
+          <p
+            role="alert"
+            className="mb-4 rounded-md border border-danger-200 bg-danger-50 px-3 py-2 text-[13px] text-danger-700"
+          >
+            Email or password is incorrect.
+          </p>
+        ) : null}
 
         <form action={signIn} className="space-y-5">
           <div className="space-y-2">

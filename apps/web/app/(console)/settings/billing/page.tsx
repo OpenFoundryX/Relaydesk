@@ -2,13 +2,13 @@ import { PageHeader } from "@/components/console/page-header";
 import { SettingSection } from "@/components/console/setting-section";
 import { PricingDialog } from "@/components/settings/pricing-dialog";
 import { Badge } from "@/components/ui/badge";
+import { getWorkspace } from "@/lib/api/workspace";
 import { getPlans } from "@/lib/mock/settings";
-import { workspace } from "@/lib/mock/workspace";
 
 export const metadata = { title: "Billing" };
 
 export default async function BillingPage() {
-  const plans = await getPlans();
+  const [plans, workspace] = await Promise.all([getPlans(), getWorkspace()]);
 
   return (
     <>
