@@ -64,7 +64,7 @@
 
 **API — modified:** `pyproject.toml`, `config.py`, `main.py`, `db/session.py`, `api/router.py`, `migrations/env.py`, `Dockerfile`.
 
-**Web — created:** `lib/types.ts`, `lib/api/client.ts`, `lib/api/{conversations,workspace,team,labels,views}.ts`, `lib/session.ts`, `middleware.ts`, `app/(auth)/login/google/callback/route.ts`.
+**Web — created:** `lib/types.ts`, `lib/api/client.ts`, `lib/api/{conversations,workspace,team,labels,views}.ts`, `lib/session.ts`, `lib/session-cookie.ts`, `middleware.ts`, `app/signed-out/route.ts`, `app/(auth)/login/google/callback/route.ts`.
 
 **Web — modified:** `lib/mock/types.ts` (becomes a re-export), `lib/mock/workspace.ts` (reduced to `getPortalSettings`), `lib/mock/settings.ts` (`getTeam` removed), `app/(auth)/login/{page,actions}.tsx`, `app/(console)/layout.tsx`, `app/(console)/conversations/{page.tsx,actions.ts,[id]/page.tsx}`, `app/(console)/settings/{layout,team/page,account/page,billing/page}.tsx`, `app/(console)/user-portal/layout.tsx`, `app/(console)/{analytics,knowledge-base}/page.tsx`, `components/console/sidebar.tsx`, `components/inbox/pickers.tsx`.
 
@@ -1700,6 +1700,34 @@ export const config = {
 ```
 
 Importing `SESSION_COOKIE` from `lib/session.ts` would pull `server-only` into the middleware runtime. Move the constant into its own file `apps/web/lib/session-cookie.ts` (`export const SESSION_COOKIE = "rd_session";`), import it from both `lib/session.ts` and `middleware.ts`, and delete the original declaration.
+
+The middleware gate tests only whether the cookie **exists**, which on its own
+creates an unrecoverable loop: a cookie that is present but no longer valid
+server-side makes the console 401, `apiFetch` redirects to `/login`, and the
+middleware bounces it straight back. Break it with a route handler that clears
+the rejected cookie — `apiFetch`'s 401 branch redirects to `/signed-out`, not
+`/login`. It must be a route handler: `apiFetch` runs during Server Component
+render, where Next throws `Cookies can only be modified in a Server Action or
+Route Handler`, so clearing the cookie inline is not an option.
+
+Create `apps/web/app/signed-out/route.ts`:
+
+```typescript
+import { NextResponse, type NextRequest } from "next/server";
+
+import { SESSION_COOKIE } from "@/lib/session-cookie";
+
+export async function GET(request: NextRequest) {
+  const response = NextResponse.redirect(new URL("/login?expired=1", request.url));
+  response.cookies.delete(SESSION_COOKIE);
+  return response;
+}
+```
+
+`/signed-out` must not appear in `PROTECTED` or in the middleware `matcher`, so it
+passes through untouched. The login page reads `expired` alongside `error` and shows
+a distinct message for it — someone bounced here by a revoked session has done
+nothing wrong and must not be told their password was incorrect.
 
 - [ ] **Step 10: Seed a user by hand and verify in the browser**
 
