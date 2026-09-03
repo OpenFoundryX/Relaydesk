@@ -110,7 +110,12 @@ Add to the `[tool.pytest.ini_options]` block:
 ```toml
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
 ```
+
+Both loop scopes are required. With only the fixture scope set, tests default to
+a function-scoped loop and fail against the session-scoped engine with "attached
+to a different loop".
 
 Then run `uv lock` so `uv.lock` matches.
 
@@ -253,7 +258,9 @@ TEST_DATABASE = "relaydesk_test"
 
 def _test_url() -> str:
     url = sa.engine.make_url(get_settings().database_url)
-    return str(url.set(database=TEST_DATABASE))
+    # str(URL) masks the password as "***"; render it for real or asyncpg
+    # rejects the connection.
+    return url.set(database=TEST_DATABASE).render_as_string(hide_password=False)
 
 
 async def _recreate_database() -> None:
