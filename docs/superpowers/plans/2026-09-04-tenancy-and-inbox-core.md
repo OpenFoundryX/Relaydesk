@@ -2032,7 +2032,9 @@ Add to `apps/api/src/relaydesk/api/auth.py`:
 
 ```python
 @router.get("/google/url", response_model=GoogleUrlResponse)
-async def google_url(redirect_uri: str) -> GoogleUrlResponse:
+async def google_url(
+    redirect_uri: Annotated[str, Query(alias="redirectUri")],
+) -> GoogleUrlResponse:
     state = generate_token()
     return GoogleUrlResponse(url=authorization_url(redirect_uri, state), state=state)
 
@@ -2050,7 +2052,13 @@ async def google_exchange(
     return TokenResponse(token=token, expires_at=row.expires_at)
 ```
 
-with the matching imports for `authorization_url`, `exchange_code`, `generate_token`, and the two new schemas.
+with the matching imports for `authorization_url`, `exchange_code`, `generate_token`, `Query`, and the two new schemas.
+
+The `Query(alias="redirectUri")` is required, not decorative. `alias_generator=to_camel`
+on `CamelModel` renames fields of Pydantic **body** models; it does nothing for query
+parameters, which bind by their Python name. Without the alias the web client's
+`?redirectUri=` is unbound and the request 422s before reaching Google — a failure that
+appears only once OAuth credentials are configured, so no test in this slice can catch it.
 
 - [ ] **Step 7: Wire the web side**
 
