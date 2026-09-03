@@ -2183,6 +2183,9 @@ git commit -m "feat: add Google sign-in for existing members"
 - Modify: `apps/api/src/relaydesk/api/router.py`, `models/__init__.py`
 - Modify: `apps/web/lib/mock/settings.ts` (remove `getTeam` and the `teamMembers` constant)
 - Modify: `apps/web/app/(console)/settings/team/page.tsx`, `app/(console)/layout.tsx`
+- Create: `apps/web/app/(console)/settings/team/actions.ts`
+- Modify: `apps/web/components/settings/invite-dialog.tsx` (wire the Send button; its
+  copy must stop promising an email this slice does not send)
 - Test: `apps/api/tests/test_team_api.py`
 
 **Interfaces:**
@@ -2666,6 +2669,21 @@ class WorkspacePatch(CamelModel):
 ```
 
 Create `apps/api/src/relaydesk/api/team.py` with `GET /team`, `POST /team/invites` (201), `DELETE /team/invites/{id}` (204), `PATCH /team/members/{id}`, `DELETE /team/members/{id}`, all calling `scope.require_admin()` except the list; plus a separate public router for `GET /invites/{token}` and `POST /invites/{token}/accept`. Build the invite URL as `f"{get_settings().web_url}/invite/{token}"`. Map the request's `"Admin"`/`"Agent"` strings to `Role` with `Role.admin if payload.role == "Admin" else Role.agent`.
+
+No email is sent in this slice — which means the invite dialog must actually be wired,
+or the feature is unreachable from the console and this task's own step-9 verification
+cannot pass. The dialog gets a server action, a copy-link success state, inline errors,
+and corrected copy: it currently promises "They will get an email with a link", which
+this slice does not do.
+
+Two guards belong with these routes, and neither is optional:
+
+- **Duplicate pending invite.** Inviting the same address twice raises `Conflict` rather
+  than creating a second row; otherwise the team list shows the person twice.
+- **Last admin.** Demoting the final active admin to Agent, or deleting their membership,
+  raises `Conflict`. Without it an admin can leave a workspace nobody can administer, with
+  no in-app path to recover. Count only *active* admins in *that* workspace, and guard both
+  `PATCH` and `DELETE` — guarding one lets the other bypass it.
 
 Create `apps/api/src/relaydesk/api/workspace.py` with `GET /workspace` (reusing `WorkspaceOut` from `schemas/auth.py`), `PATCH /workspace` (admin only), and `GET /workspace/setup-tasks`.
 
