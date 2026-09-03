@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relaydesk.config import get_settings
@@ -155,11 +156,22 @@ async def login_with_google(session: AsyncSession, profile: GoogleProfile) -> Us
             UserIdentity.provider_account_id == profile.sub,
         )
     )
-    if identity is None:
-        session.add(
-            UserIdentity(
-                user_id=user.id, provider="google", provider_account_id=profile.sub
-            )
-        )
-        await session.commit()
+    if identity is not None:
+        if identity.user_id != user.id:
+            # The (provider, provider_account_id) unique constraint means
+            # this Google account is already linked to a different local
+            # user than the one this email just resolved to.
+            raise Unauthorized("This Google account is linked to a different user.")
+        return user
+
+    # ON CONFLICT DO NOTHING makes this tolerant of two concurrent
+    # first-time logins for the same Google account: both would see
+    # `identity is None` above, and without this the loser's plain INSERT
+    # would hit the unique constraint as an unhandled IntegrityError -> 500.
+    await session.execute(
+        pg_insert(UserIdentity)
+        .values(user_id=user.id, provider="google", provider_account_id=profile.sub)
+        .on_conflict_do_nothing(index_elements=["provider", "provider_account_id"])
+    )
+    await session.commit()
     return user

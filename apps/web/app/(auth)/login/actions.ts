@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { ApiError, apiFetch } from "@/lib/api/client";
+import { googleRedirectUri } from "@/lib/google-oauth";
 import { clearSessionCookie, setSessionCookie } from "@/lib/session";
 
 interface TokenResponse {
@@ -32,7 +33,7 @@ export async function signIn(formData: FormData) {
 }
 
 export async function signInWithGoogle() {
-  const redirectUri = `${process.env.NEXT_PUBLIC_WEB_URL ?? "http://localhost:3000"}/login/google/callback`;
+  const redirectUri = googleRedirectUri();
 
   let url: string;
   let state: string;
@@ -42,7 +43,10 @@ export async function signInWithGoogle() {
       { auth: false },
     ));
   } catch (error) {
-    if (error instanceof ApiError) redirect("/login?error=1");
+    // A distinct banner from the password form's: telling someone their
+    // password is wrong when they clicked "Continue with Google" (most
+    // commonly because GOOGLE_CLIENT_ID isn't set) would be misleading.
+    if (error instanceof ApiError) redirect("/login?error=google");
     throw error;
   }
 

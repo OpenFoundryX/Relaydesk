@@ -35,7 +35,14 @@ export default async function LoginPage({
           <span className="h-px flex-1 bg-ink-200" />
         </div>
 
-        {error ? (
+        {error === "google" ? (
+          <p
+            role="alert"
+            className="mb-4 rounded-md border border-danger-200 bg-danger-50 px-3 py-2 text-[13px] text-danger-700"
+          >
+            Google sign-in was cancelled or failed. Please try again.
+          </p>
+        ) : error ? (
           <p
             role="alert"
             className="mb-4 rounded-md border border-danger-200 bg-danger-50 px-3 py-2 text-[13px] text-danger-700"
