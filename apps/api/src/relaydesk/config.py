@@ -10,6 +10,12 @@ class Settings(BaseSettings):
         "postgresql+asyncpg://relaydesk:relaydesk@postgres:5432/relaydesk"
     )
     cors_origins: str = "http://localhost:3000"
+    session_ttl_days: int = 30
+    login_max_attempts: int = 5
+    login_lockout_minutes: int = 15
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    web_url: str = "http://localhost:3000"
 
     model_config = SettingsConfigDict(
         env_file=".env",
