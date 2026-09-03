@@ -13,9 +13,9 @@ export const metadata: Metadata = { title: "Sign in" };
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; expired?: string }>;
 }) {
-  const { error } = await searchParams;
+  const { error, expired } = await searchParams;
 
   return (
     <div className="grid w-full max-w-5xl overflow-hidden rounded-xl border border-ink-200 bg-white shadow-overlay lg:min-h-[600px] lg:grid-cols-[minmax(0,26rem)_1fr]">
@@ -41,6 +41,15 @@ export default async function LoginPage({
             className="mb-4 rounded-md border border-danger-200 bg-danger-50 px-3 py-2 text-[13px] text-danger-700"
           >
             Email or password is incorrect.
+          </p>
+        ) : null}
+
+        {expired ? (
+          <p
+            role="alert"
+            className="mb-4 rounded-md border border-danger-200 bg-danger-50 px-3 py-2 text-[13px] text-danger-700"
+          >
+            Your session has expired. Please sign in again.
           </p>
         ) : null}
 

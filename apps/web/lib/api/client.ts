@@ -23,8 +23,11 @@ type Options = RequestInit & { auth?: boolean };
  * Server-side fetch against the Relaydesk API.
  *
  * Attaches the session token as a bearer header. A 401 on an authenticated
- * call means the session died underneath us, so we send the user to /login
- * rather than surfacing a raw error inside a console screen.
+ * call means the session died underneath us, so we send the user to
+ * /signed-out (a route handler that clears the stale cookie before bouncing
+ * to /login) rather than surfacing a raw error inside a console screen. We
+ * cannot clear the cookie here: this runs during Server Component render,
+ * where Next forbids mutating cookies.
  */
 export async function apiFetch<T>(path: string, options: Options = {}): Promise<T> {
   const { auth = true, headers, ...init } = options;
@@ -46,7 +49,7 @@ export async function apiFetch<T>(path: string, options: Options = {}): Promise<
     const body = await response.json().catch(() => null);
     const code = body?.error?.code ?? "error";
     const message = body?.error?.message ?? `Request failed with ${response.status}`;
-    if (response.status === 401 && auth) redirect("/login");
+    if (response.status === 401 && auth) redirect("/signed-out");
     throw new ApiError(response.status, code, message);
   }
 

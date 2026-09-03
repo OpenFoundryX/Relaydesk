@@ -1,5 +1,7 @@
 import "server-only";
 
+import { cache } from "react";
+
 import { apiFetch } from "@/lib/api/client";
 import type { CurrentUser, Workspace } from "@/lib/types";
 
@@ -9,9 +11,9 @@ interface MeResponse {
   membership: { role: "admin" | "agent" };
 }
 
-export async function getMe(): Promise<MeResponse> {
+export const getMe = cache(async (): Promise<MeResponse> => {
   return apiFetch<MeResponse>("/auth/me");
-}
+});
 
 export async function getWorkspace(): Promise<Workspace> {
   return (await getMe()).workspace;

@@ -1,9 +1,9 @@
 /**
  * Domain types for the Relaydesk console.
  *
- * These are deliberately shaped like the API responses we expect to fetch
- * later, so wiring the real backend means changing the body of each getter in
- * `lib/mock/*` rather than touching any page.
+ * Some of these (e.g. `Workspace`, `CurrentUser`) are now the real shape of
+ * API responses, fetched by getters in `lib/api/*`. The rest still back the
+ * in-memory stores under `lib/mock/*` until each area gets its own endpoint.
  */
 
 export type ConversationStatus =
