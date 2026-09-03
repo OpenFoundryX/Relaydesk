@@ -15,6 +15,7 @@
 - Python `>=3.12,<3.13`. Ruff `target-version = "py312"`, `line-length = 88`, lint rules `["E", "F", "I", "UP", "B"]`. All code must pass `ruff check .`.
 - SQLAlchemy 2.0 declarative style: `Mapped[...]` / `mapped_column(...)`. No legacy `Column()` declarations.
 - All enums use `sa.Enum(..., native_enum=False)` so they compile to `VARCHAR + CHECK`.
+- Python enums subclass `enum.StrEnum` (never `(str, enum.Enum)`, which ruff `UP042` rejects). SQLAlchemy persists the member *name*, and every enum here has `name == value`, so the stored values and `CHECK` constraints are identical either way.
 - Every domain table carries `workspace_id` directly, including `messages` and `drafts`.
 - Cross-workspace identifiers return **404, never 403**.
 - All JSON is camelCase, produced by `alias_generator=to_camel` with `populate_by_name=True`. Python identifiers stay snake_case.
@@ -542,12 +543,12 @@ from sqlalchemy.orm import Mapped, mapped_column
 from relaydesk.db.base import Base, TimestampMixin, UUIDMixin
 
 
-class Role(str, enum.Enum):
+class Role(enum.StrEnum):
     admin = "admin"
     agent = "agent"
 
 
-class MembershipStatus(str, enum.Enum):
+class MembershipStatus(enum.StrEnum):
     active = "active"
     invited = "invited"
 
@@ -2717,7 +2718,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from relaydesk.db.base import Base, TimestampMixin, UUIDMixin
 
 
-class LabelColor(str, enum.Enum):
+class LabelColor(enum.StrEnum):
     citron = "citron"
     slate = "slate"
     amber = "amber"
@@ -2767,14 +2768,14 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from relaydesk.db.base import Base, TimestampMixin, UUIDMixin
 
 
-class Channel(str, enum.Enum):
+class Channel(enum.StrEnum):
     email = "email"
     discord = "discord"
     portal = "portal"
     api = "api"
 
 
-class ConversationStatus(str, enum.Enum):
+class ConversationStatus(enum.StrEnum):
     open = "open"
     pending = "pending"
     resolved = "resolved"
@@ -2783,14 +2784,14 @@ class ConversationStatus(str, enum.Enum):
     trash = "trash"
 
 
-class Priority(str, enum.Enum):
+class Priority(enum.StrEnum):
     urgent = "urgent"
     high = "high"
     medium = "medium"
     low = "low"
 
 
-class SummaryState(str, enum.Enum):
+class SummaryState(enum.StrEnum):
     none = "none"
     ready = "ready"
     failed = "failed"
@@ -2875,7 +2876,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from relaydesk.db.base import Base, TimestampMixin, UUIDMixin
 
 
-class MessageRole(str, enum.Enum):
+class MessageRole(enum.StrEnum):
     customer = "customer"
     agent = "agent"
     ai = "ai"
@@ -2954,7 +2955,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from relaydesk.db.base import Base, TimestampMixin, UUIDMixin
 
 
-class ActivityKind(str, enum.Enum):
+class ActivityKind(enum.StrEnum):
     created = "created"
     status = "status"
     priority = "priority"
