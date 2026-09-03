@@ -20,7 +20,7 @@
 - Cross-workspace identifiers return **404, never 403**.
 - All JSON is camelCase, produced by `alias_generator=to_camel` with `populate_by_name=True`. Python identifiers stay snake_case.
 - Services raise `AppError` subclasses and never import `fastapi`.
-- Error responses are `{"error": {"code": "...", "message": "..."}}`.
+- Error responses are `{"error": {"code": "...", "message": "..."}}` — for framework errors too. Task 3 registered handlers for `AppError`, `RequestValidationError`, and Starlette's `HTTPException`, so validation failures and unmatched routes use the same envelope. Do not reintroduce FastAPI's default `{"detail": ...}` shape.
 - The API is mounted at `/api` (see `main.py`); paths in this plan are written relative to that prefix.
 - Web: TypeScript `strict` is on. Imports use the `@/*` path alias. Files under `lib/api/` are server-only.
 - Tests run against real Postgres, never SQLite.
@@ -2117,7 +2117,7 @@ git commit -m "feat: add Google sign-in for existing members"
 **Files:**
 - Create: `apps/api/src/relaydesk/models/invite.py`
 - Create: `apps/api/src/relaydesk/services/team.py`
-- Create: `apps/api/src/relaydesk/services/workspaces.py`
+- Modify: `apps/api/src/relaydesk/services/workspaces.py` (created in Task 3; **append** to it)
 - Create: `apps/api/src/relaydesk/schemas/team.py`
 - Create: `apps/api/src/relaydesk/schemas/workspace.py`
 - Create: `apps/api/src/relaydesk/api/team.py`
@@ -2492,9 +2492,14 @@ async def accept_invite(session: AsyncSession, token: str, name: str, password: 
     return user
 ```
 
-- [ ] **Step 5: Implement the workspace service**
+- [ ] **Step 5: Extend the workspace service**
 
-Create `apps/api/src/relaydesk/services/workspaces.py`:
+`apps/api/src/relaydesk/services/workspaces.py` already exists — Task 3 created it
+with `active_seat_count(session, workspace_id) -> int` when the seats query was moved
+out of the auth router. **Append** to that module; do not overwrite it, and leave
+`active_seat_count` in place, since `GET /auth/me` calls it.
+
+Add to `apps/api/src/relaydesk/services/workspaces.py`:
 
 ```python
 import uuid
