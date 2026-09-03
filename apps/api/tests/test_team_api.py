@@ -213,3 +213,185 @@ async def test_accepting_an_invite_for_an_existing_user_links_it(
         json={"email": "sara@relaydesk.dev", "password": "saras-own-password"},
     )
     assert login.status_code == 200
+
+
+async def invite_and_accept(
+    client: AsyncClient, headers: dict, email: str = "sara@relaydesk.dev"
+) -> str:
+    """Invite `email` as an Agent and accept it, returning the membership id."""
+    invite_url = (
+        await client.post(
+            "/api/team/invites",
+            headers=headers,
+            json={"email": email, "role": "Agent"},
+        )
+    ).json()["inviteUrl"]
+    token = invite_url.rsplit("/", 1)[-1]
+    await client.post(
+        f"/api/invites/{token}/accept",
+        json={"name": "Sara Duval", "password": "another-horse"},
+    )
+    team = (await client.get("/api/team", headers=headers)).json()
+    member = next(entry for entry in team if entry["email"] == email)
+    return member["id"]
+
+
+async def test_an_agent_cannot_change_a_members_role(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    headers = await sign_in(client, db_session, role=Role.agent)
+    team = (await client.get("/api/team", headers=headers)).json()
+    membership_id = team[0]["id"]
+
+    response = await client.patch(
+        f"/api/team/members/{membership_id}",
+        headers=headers,
+        json={"role": "Admin"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "forbidden"
+
+
+async def test_an_agent_cannot_remove_a_member(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    headers = await sign_in(client, db_session, role=Role.agent)
+    team = (await client.get("/api/team", headers=headers)).json()
+    membership_id = team[0]["id"]
+
+    response = await client.delete(
+        f"/api/team/members/{membership_id}", headers=headers
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "forbidden"
+
+
+async def test_admin_can_change_a_members_role(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    headers = await sign_in(client, db_session)
+    membership_id = await invite_and_accept(client, headers)
+
+    response = await client.patch(
+        f"/api/team/members/{membership_id}",
+        headers=headers,
+        json={"role": "Admin"},
+    )
+    assert response.status_code == 204
+
+    team = (await client.get("/api/team", headers=headers)).json()
+    sara = next(entry for entry in team if entry["email"] == "sara@relaydesk.dev")
+    assert sara["role"] == "Admin"
+
+
+async def test_admin_can_remove_a_member(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    headers = await sign_in(client, db_session)
+    membership_id = await invite_and_accept(client, headers)
+
+    response = await client.delete(
+        f"/api/team/members/{membership_id}", headers=headers
+    )
+    assert response.status_code == 204
+
+    team = (await client.get("/api/team", headers=headers)).json()
+    assert all(entry["email"] != "sara@relaydesk.dev" for entry in team)
+
+
+async def test_member_routes_404_for_a_membership_in_another_workspace(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    headers = await sign_in(client, db_session)
+
+    other_workspace = Workspace(name="Other Co", slug="other-co", monogram="OC")
+    other_user = User(
+        email="stranger@elsewhere.dev",
+        name="A Stranger",
+        monogram="AS",
+        password_hash=hash_password("does-not-matter"),
+    )
+    db_session.add_all([other_workspace, other_user])
+    await db_session.flush()
+    other_membership = Membership(
+        workspace_id=other_workspace.id,
+        user_id=other_user.id,
+        role=Role.admin,
+        status=MembershipStatus.active,
+    )
+    db_session.add(other_membership)
+    await db_session.commit()
+
+    patch_response = await client.patch(
+        f"/api/team/members/{other_membership.id}",
+        headers=headers,
+        json={"role": "Agent"},
+    )
+    delete_response = await client.delete(
+        f"/api/team/members/{other_membership.id}", headers=headers
+    )
+
+    assert patch_response.status_code == 404
+    assert delete_response.status_code == 404
+
+
+async def test_demoting_the_last_admin_conflicts(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    headers = await sign_in(client, db_session)
+    team = (await client.get("/api/team", headers=headers)).json()
+    self_membership_id = team[0]["id"]
+
+    response = await client.patch(
+        f"/api/team/members/{self_membership_id}",
+        headers=headers,
+        json={"role": "Agent"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "conflict"
+
+
+async def test_removing_the_last_admin_conflicts(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    headers = await sign_in(client, db_session)
+    team = (await client.get("/api/team", headers=headers)).json()
+    self_membership_id = team[0]["id"]
+
+    response = await client.delete(
+        f"/api/team/members/{self_membership_id}", headers=headers
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "conflict"
+
+
+async def test_demoting_one_of_several_admins_succeeds(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Sanity check that the last-admin guard doesn't over-trigger."""
+    headers = await sign_in(client, db_session)
+    second_admin_id = await invite_and_accept(
+        client, headers, email="second-admin@relaydesk.dev"
+    )
+    await client.patch(
+        f"/api/team/members/{second_admin_id}",
+        headers=headers,
+        json={"role": "Admin"},
+    )
+
+    team = (await client.get("/api/team", headers=headers)).json()
+    self_membership_id = next(
+        entry["id"] for entry in team if entry["email"] == "nilesh@relaydesk.dev"
+    )
+
+    response = await client.patch(
+        f"/api/team/members/{self_membership_id}",
+        headers=headers,
+        json={"role": "Agent"},
+    )
+
+    assert response.status_code == 204

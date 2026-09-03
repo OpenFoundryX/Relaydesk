@@ -12,6 +12,7 @@ from relaydesk.security.tokens import generate_token, hash_token
 
 INVITE_TTL = timedelta(days=14)
 ROLE_LABEL = {Role.admin: "Admin", Role.agent: "Agent"}
+LAST_ADMIN_MESSAGE = "A workspace must keep at least one admin."
 
 
 @dataclass(slots=True)
@@ -113,6 +114,19 @@ async def create_invite(
     return invite, token
 
 
+async def _active_admin_count(session: AsyncSession, workspace_id: uuid.UUID) -> int:
+    count = await session.scalar(
+        sa.select(sa.func.count())
+        .select_from(Membership)
+        .where(
+            Membership.workspace_id == workspace_id,
+            Membership.status == MembershipStatus.active,
+            Membership.role == Role.admin,
+        )
+    )
+    return count or 0
+
+
 async def update_member_role(
     session: AsyncSession,
     workspace_id: uuid.UUID,
@@ -126,6 +140,10 @@ async def update_member_role(
     )
     if membership is None:
         raise NotFound("Member not found.")
+    if membership.role is Role.admin and role is not Role.admin:
+        admin_count = await _active_admin_count(session, workspace_id)
+        if admin_count <= 1:
+            raise Conflict(LAST_ADMIN_MESSAGE)
     membership.role = role
     await session.commit()
 
@@ -140,6 +158,10 @@ async def remove_member(
     )
     if membership is None:
         raise NotFound("Member not found.")
+    if membership.role is Role.admin:
+        admin_count = await _active_admin_count(session, workspace_id)
+        if admin_count <= 1:
+            raise Conflict(LAST_ADMIN_MESSAGE)
     await session.delete(membership)
     await session.commit()
 
