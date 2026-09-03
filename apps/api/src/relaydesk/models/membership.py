@@ -8,12 +8,12 @@ from sqlalchemy.orm import Mapped, mapped_column
 from relaydesk.db.base import Base, TimestampMixin, UUIDMixin
 
 
-class Role(str, enum.Enum):  # noqa: UP042
+class Role(enum.StrEnum):
     admin = "admin"
     agent = "agent"
 
 
-class MembershipStatus(str, enum.Enum):  # noqa: UP042
+class MembershipStatus(enum.StrEnum):
     active = "active"
     invited = "invited"
 
