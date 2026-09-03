@@ -6,6 +6,7 @@ Alembic autogenerates a migration.
 
 from relaydesk.db.base import Base
 from relaydesk.models.membership import Membership, MembershipStatus, Role
+from relaydesk.models.session import Session
 from relaydesk.models.user import User, UserIdentity
 from relaydesk.models.workspace import Workspace
 
@@ -14,6 +15,7 @@ __all__ = [
     "Membership",
     "MembershipStatus",
     "Role",
+    "Session",
     "User",
     "UserIdentity",
     "Workspace",

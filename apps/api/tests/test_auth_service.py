@@ -65,6 +65,16 @@ async def test_unknown_email_raises_the_same_error(db_session: AsyncSession) -> 
         await auth.authenticate(db_session, "nobody@relaydesk.dev", "whatever")
 
 
+async def test_unknown_email_still_raises_unauthorized_with_timing_fix(
+    db_session: AsyncSession,
+) -> None:
+    """The dummy argon2 verification added to close the timing side channel
+    must not change the outcome: an unknown email still raises Unauthorized.
+    """
+    with pytest.raises(Unauthorized):
+        await auth.authenticate(db_session, "still-nobody@relaydesk.dev", "whatever")
+
+
 async def test_password_only_account_without_hash_cannot_log_in(
     db_session: AsyncSession,
 ) -> None:
