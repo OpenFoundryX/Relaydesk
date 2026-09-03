@@ -5,25 +5,24 @@ import { TopBar } from "@/components/console/top-bar";
 import { OnboardingProvider } from "@/components/onboarding/onboarding-provider";
 import { TrialBanner } from "@/components/console/trial-banner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { getSetupTasks } from "@/lib/api/team";
 import { getCurrentUser, getWorkspace } from "@/lib/api/workspace";
 import { getDraftCount, getLabels, getStatusCounts } from "@/lib/mock/conversations";
-import type { SetupTask } from "@/lib/types";
-
-/** Replaced by GET /workspace/setup-tasks in Task 6. */
-const setupTasks: SetupTask[] = [];
 
 export default async function ConsoleLayout({
   children,
 }: {
   children: ReactNode;
 }) {
-  const [statusCounts, draftCount, labels, workspace, currentUser] = await Promise.all([
-    getStatusCounts(),
-    getDraftCount(),
-    getLabels(),
-    getWorkspace(),
-    getCurrentUser(),
-  ]);
+  const [statusCounts, draftCount, labels, workspace, currentUser, setupTasks] =
+    await Promise.all([
+      getStatusCounts(),
+      getDraftCount(),
+      getLabels(),
+      getWorkspace(),
+      getCurrentUser(),
+      getSetupTasks(),
+    ]);
 
   return (
     <TooltipProvider delayDuration={250}>

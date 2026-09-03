@@ -4,8 +4,8 @@ import { PageHeader } from "@/components/console/page-header";
 import { SettingSection } from "@/components/console/setting-section";
 import { InviteDialog } from "@/components/settings/invite-dialog";
 import { Badge } from "@/components/ui/badge";
+import { getTeam } from "@/lib/api/team";
 import { getWorkspace } from "@/lib/api/workspace";
-import { getTeam } from "@/lib/mock/settings";
 
 export const metadata = { title: "Team" };
 

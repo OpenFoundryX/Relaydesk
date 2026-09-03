@@ -4,6 +4,8 @@ import { ConversationHeader } from "@/components/inbox/conversation-header";
 import { DetailsSidebar } from "@/components/inbox/details-sidebar";
 import { ReplyComposer } from "@/components/inbox/reply-composer";
 import { Thread } from "@/components/inbox/thread";
+import { getTeam } from "@/lib/api/team";
+import { getWorkspace } from "@/lib/api/workspace";
 import {
   getActivity,
   getConversation,
@@ -12,8 +14,6 @@ import {
   getLabels,
   getMessages,
 } from "@/lib/mock/conversations";
-import { getTeam } from "@/lib/mock/settings";
-import { getWorkspace } from "@/lib/api/workspace";
 
 export default async function ConversationPage({
   params,

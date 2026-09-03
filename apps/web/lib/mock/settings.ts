@@ -6,7 +6,6 @@ import type {
   McpServer,
   Plan,
   Snippet,
-  TeamMember,
   Webhook,
 } from "./types";
 
@@ -125,30 +124,6 @@ const integrations: Integration[] = [
   { id: "asana", name: "Asana", category: "Development", monogram: "AS", connected: false },
 ];
 
-const team: TeamMember[] = [
-  {
-    id: "u_nilesh",
-    name: "Nilesh Pant",
-    email: "nilesh@relaydesk.dev",
-    role: "Admin",
-    status: "active",
-  },
-  {
-    id: "u_sara",
-    name: "Sara Duval",
-    email: "sara@relaydesk.dev",
-    role: "Agent",
-    status: "active",
-  },
-  {
-    id: "u_jonah",
-    name: "Jonah Adeyemi",
-    email: "jonah@relaydesk.dev",
-    role: "Agent",
-    status: "invited",
-  },
-];
-
 const plans: Plan[] = [
   {
     id: "starter",
@@ -252,9 +227,6 @@ export async function getMcpServers(): Promise<McpServer[]> {
 }
 export async function getIntegrations(): Promise<Integration[]> {
   return integrations;
-}
-export async function getTeam(): Promise<TeamMember[]> {
-  return team;
 }
 export async function getPlans(): Promise<Plan[]> {
   return plans;

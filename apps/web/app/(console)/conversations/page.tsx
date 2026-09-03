@@ -4,10 +4,10 @@ import { EmptyState } from "@/components/console/empty-state";
 import { InboxList } from "@/components/inbox/inbox-list";
 import { ListToolbar } from "@/components/inbox/list-toolbar";
 import { StatusIcon, statusMeta } from "@/components/inbox/status-meta";
-import { getConversations, getLabels, savedViews, statuses } from "@/lib/mock/conversations";
-import { getTeam } from "@/lib/mock/settings";
-import type { Conversation, ConversationStatus } from "@/lib/mock/types";
+import { getTeam } from "@/lib/api/team";
 import { getCurrentUser } from "@/lib/api/workspace";
+import { getConversations, getLabels, savedViews, statuses } from "@/lib/mock/conversations";
+import type { Conversation, ConversationStatus } from "@/lib/mock/types";
 
 export const metadata = { title: "Inbox" };
 
