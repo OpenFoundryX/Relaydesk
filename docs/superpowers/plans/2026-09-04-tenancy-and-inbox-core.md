@@ -2079,7 +2079,25 @@ export async function signInWithGoogle() {
 
 with `import { cookies } from "next/headers";` at the top. Change the Google `<form action={signIn}>` in `login/page.tsx` to `<form action={signInWithGoogle}>`.
 
-Create `apps/web/app/(auth)/login/google/callback/route.ts`:
+Create `apps/web/app/(auth)/login/google/callback/route.ts`. Note what it must
+**not** do: `new URL(path, request.url)` resolves against the server's bind
+address, not the client's host — Task 4 proved this with a forged `Host` header,
+getting `http://0.0.0.0:3000/...` back regardless. Here that would be worse than a
+bad redirect, because Google requires the `redirect_uri` in the exchange to match
+the one in the authorization request exactly; a bind-address value fails that check
+and breaks sign-in outright. So derive the origin from `NEXT_PUBLIC_WEB_URL` (the
+same source `signInWithGoogle` uses) and emit relative `Location` headers:
+
+```typescript
+function webUrl(): string {
+  return process.env.NEXT_PUBLIC_WEB_URL ?? "http://localhost:3000";
+}
+
+function redirectTo(path: string): NextResponse {
+  return new NextResponse(null, { status: 307, headers: { Location: path } });
+}
+```
+
 
 ```typescript
 import { cookies } from "next/headers";
@@ -2099,10 +2117,12 @@ export async function GET(request: NextRequest) {
   // A missing or mismatched state means this callback did not originate
   // from our own redirect, so it is a CSRF attempt and gets no session.
   if (!code || !state || !expected || state !== expected) {
-    return NextResponse.redirect(new URL("/login?error=1", request.url));
+    return redirectTo("/login?error=1");
   }
 
-  const redirectUri = new URL("/login/google/callback", request.url).toString();
+  // Must be byte-identical to the redirect_uri sent in the authorization
+  // request, or Google rejects the exchange. Both derive from WEB_URL.
+  const redirectUri = `${webUrl()}/login/google/callback`;
   try {
     const token = await apiFetch<{ token: string; expiresAt: string }>(
       "/auth/google/exchange",
@@ -2114,10 +2134,10 @@ export async function GET(request: NextRequest) {
     );
     await setSessionCookie(token.token, token.expiresAt);
   } catch {
-    return NextResponse.redirect(new URL("/login?error=1", request.url));
+    return redirectTo("/login?error=1");
   }
 
-  return NextResponse.redirect(new URL("/conversations?status=open", request.url));
+  return redirectTo("/conversations?status=open");
 }
 ```
 
