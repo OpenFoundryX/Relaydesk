@@ -5,7 +5,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relaydesk.errors import NotFound
-from relaydesk.models import Membership, MembershipStatus, Workspace
+from relaydesk.models import Label, Membership, MembershipStatus, Workspace
 
 
 async def active_seat_count(session: AsyncSession, workspace_id: uuid.UUID) -> int:
@@ -37,9 +37,6 @@ async def setup_tasks(
     Tasks whose subsystem does not exist yet report ``done: False``; their
     slices flip them by making the underlying count real.
     """
-    # Label is introduced in Task 7. Hardcoded until then; the setup-tasks
-    # test in Task 6 does not assert on the labels task, so this keeps the
-    # suite green without a forward reference to a model that doesn't exist.
     members = await session.scalar(
         sa.select(sa.func.count())
         .select_from(Membership)
@@ -48,7 +45,11 @@ async def setup_tasks(
             Membership.status == MembershipStatus.active,
         )
     )
-    labels = 0
+    labels = await session.scalar(
+        sa.select(sa.func.count())
+        .select_from(Label)
+        .where(Label.workspace_id == workspace_id)
+    )
 
     return [
         SetupTask("channel", "Connect a channel", "/settings/channels", False),
@@ -56,7 +57,9 @@ async def setup_tasks(
         SetupTask(
             "integrations", "Connect an integration", "/settings/integrations", False
         ),
-        SetupTask("labels", "Create your first label", "/conversations", labels > 0),
+        SetupTask(
+            "labels", "Create your first label", "/conversations", (labels or 0) > 0
+        ),
         SetupTask("portal", "Launch your user portal", "/user-portal/general", False),
         SetupTask("triage", "Turn on AI triage", "/settings/ai-triage", False),
         SetupTask("billing", "Choose a plan", "/settings/billing", False),
