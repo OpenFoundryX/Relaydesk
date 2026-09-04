@@ -29,8 +29,10 @@ async def login(
     user_agent: Annotated[str | None, Header()] = None,
 ) -> TokenResponse:
     user = await auth.authenticate(session, payload.email, payload.password)
-    await auth.active_membership(session, user)
-    token, row = await auth.create_session(session, user, user_agent=user_agent, ip=ip)
+    membership = await auth.default_membership(session, user)
+    token, row = await auth.create_session(
+        session, user, membership, user_agent=user_agent, ip=ip
+    )
     return TokenResponse(token=token, expires_at=row.expires_at)
 
 
@@ -63,7 +65,10 @@ async def google_exchange(
 ) -> TokenResponse:
     profile = await exchange_code(payload.code, payload.redirect_uri)
     user = await auth.login_with_google(session, profile)
-    token, row = await auth.create_session(session, user, user_agent=user_agent, ip=ip)
+    membership = await auth.default_membership(session, user)
+    token, row = await auth.create_session(
+        session, user, membership, user_agent=user_agent, ip=ip
+    )
     return TokenResponse(token=token, expires_at=row.expires_at)
 
 

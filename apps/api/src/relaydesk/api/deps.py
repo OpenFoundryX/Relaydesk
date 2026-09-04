@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from relaydesk.db.session import get_session
 from relaydesk.errors import Forbidden, Unauthorized
-from relaydesk.models import Membership, Role, User, Workspace
+from relaydesk.models import Membership, Role, Session, User, Workspace
 from relaydesk.services import auth
 
 DbSession = Annotated[AsyncSession, Depends(get_session)]
@@ -22,10 +22,16 @@ def bearer_token(authorization: Annotated[str | None, Header()] = None) -> str:
     return token
 
 
-async def current_user(
+async def current_session(
     session: DbSession, token: Annotated[str, Depends(bearer_token)]
-) -> User:
+) -> tuple[User, Session]:
     return await auth.resolve_session(session, token)
+
+
+async def current_user(
+    resolved: Annotated[tuple[User, Session], Depends(current_session)],
+) -> User:
+    return resolved[0]
 
 
 @dataclass(slots=True)
@@ -46,9 +52,11 @@ class WorkspaceScope:
 
 
 async def workspace_scope(
-    session: DbSession, user: Annotated[User, Depends(current_user)]
+    session: DbSession,
+    resolved: Annotated[tuple[User, Session], Depends(current_session)],
 ) -> WorkspaceScope:
-    membership = await auth.active_membership(session, user)
+    user, row = resolved
+    membership = await auth.active_membership(session, user, row.workspace_id)
     workspace = await session.get(Workspace, membership.workspace_id)
     if workspace is None:
         raise Unauthorized("Workspace is unavailable.")

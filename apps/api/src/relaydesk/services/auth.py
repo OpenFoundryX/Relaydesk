@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import sqlalchemy as sa
@@ -61,18 +62,39 @@ async def authenticate(session: AsyncSession, email: str, password: str) -> User
     return user
 
 
-async def active_membership(session: AsyncSession, user: User) -> Membership:
-    """Return the user's one active membership.
+async def default_membership(session: AsyncSession, user: User) -> Membership:
+    """The membership a fresh login resolves to.
 
-    Deliberately scoped by user only, not by workspace: this slice assumes a
-    single active membership per user (the console has no workspace switcher
-    yet). If a user ever holds more than one active membership, ``scalar()``
-    picks whichever row comes back first — don't build multi-workspace
-    behaviour on top of this without revisiting it.
+    Ordered so the answer is stable. There is no workspace switcher yet, so a
+    user with two memberships always lands in the one they joined first
+    rather than in whichever row the planner happened to return.
+    """
+    membership = await session.scalar(
+        sa.select(Membership)
+        .where(
+            Membership.user_id == user.id,
+            Membership.status == MembershipStatus.active,
+        )
+        .order_by(Membership.created_at, Membership.id)
+        .limit(1)
+    )
+    if membership is None:
+        raise Unauthorized(BAD_CREDENTIALS)
+    return membership
+
+
+async def active_membership(
+    session: AsyncSession, user: User, workspace_id: uuid.UUID
+) -> Membership:
+    """The user's active membership in one specific workspace.
+
+    Scoped by workspace because the session names one. A session must never
+    follow its user into a workspace it was not minted for.
     """
     membership = await session.scalar(
         sa.select(Membership).where(
             Membership.user_id == user.id,
+            Membership.workspace_id == workspace_id,
             Membership.status == MembershipStatus.active,
         )
     )
@@ -90,6 +112,7 @@ USER_AGENT_MAX_LENGTH = 400
 async def create_session(
     session: AsyncSession,
     user: User,
+    membership: Membership,
     user_agent: str | None = None,
     ip: str | None = None,
 ) -> tuple[str, Session]:
@@ -99,6 +122,7 @@ async def create_session(
     token = generate_token()
     row = Session(
         user_id=user.id,
+        workspace_id=membership.workspace_id,
         token_hash=hash_token(token),
         expires_at=now + timedelta(days=settings.session_ttl_days),
         last_seen_at=now,
@@ -110,7 +134,7 @@ async def create_session(
     return token, row
 
 
-async def resolve_session(session: AsyncSession, token: str) -> User:
+async def resolve_session(session: AsyncSession, token: str) -> tuple[User, Session]:
     now = datetime.now(UTC)
     row = await session.scalar(
         sa.select(Session).where(Session.token_hash == hash_token(token))
@@ -125,7 +149,7 @@ async def resolve_session(session: AsyncSession, token: str) -> User:
     user = await session.get(User, row.user_id)
     if user is None:
         raise Unauthorized("Session is invalid or has expired.")
-    return user
+    return user, row
 
 
 async def revoke_session(session: AsyncSession, token: str) -> None:
@@ -148,7 +172,7 @@ async def login_with_google(session: AsyncSession, profile: GoogleProfile) -> Us
     if user is None:
         raise Unauthorized("No Relaydesk account matches this Google address.")
 
-    await active_membership(session, user)
+    await default_membership(session, user)
 
     identity = await session.scalar(
         sa.select(UserIdentity).where(

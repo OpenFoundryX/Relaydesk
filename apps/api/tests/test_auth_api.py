@@ -153,12 +153,13 @@ async def test_a_user_without_an_active_membership_cannot_log_in(
 async def test_an_expired_session_is_rejected(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    _workspace, user = await seed_member(db_session)
+    workspace, user = await seed_member(db_session)
     token = generate_token()
     now = datetime.now(UTC)
     db_session.add(
         Session(
             user_id=user.id,
+            workspace_id=workspace.id,
             token_hash=hash_token(token),
             expires_at=now - timedelta(seconds=1),
             last_seen_at=now,

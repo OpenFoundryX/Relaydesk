@@ -36,21 +36,30 @@ async def make_member(
     name: str = "Nilesh Pant",
     role: Role = Role.admin,
     password: str = "relaydesk",
+    user: User | None = None,
 ) -> User:
-    user = User(
-        email=email,
-        name=name,
-        monogram="".join(p[0] for p in name.split()[:2]).upper(),
-        password_hash=hash_password(password),
-    )
-    session.add(user)
-    await session.flush()
+    if user is None:
+        user = User(
+            email=email,
+            name=name,
+            monogram="".join(p[0] for p in name.split()[:2]).upper(),
+            password_hash=hash_password(password),
+        )
+        session.add(user)
+        await session.flush()
     session.add(
         Membership(
             workspace_id=workspace.id,
             user_id=user.id,
             role=role,
             status=MembershipStatus.active,
+            # Explicit, not the server default: everything in a test runs
+            # inside one outer transaction (see conftest's ``db_session``),
+            # and Postgres's ``now()`` is fixed for the whole transaction —
+            # two memberships created back-to-back in the same test would
+            # otherwise get an identical ``created_at``, which is exactly
+            # the ordering ``default_membership`` needs to disambiguate.
+            created_at=datetime.now(UTC),
         )
     )
     await session.flush()
