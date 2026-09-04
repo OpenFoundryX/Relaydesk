@@ -1,5 +1,7 @@
 from email.message import EmailMessage
 
+import pytest
+
 from relaydesk.email_parse import normalize
 from relaydesk.email_parse.classify import Disposition, classify
 
@@ -32,9 +34,33 @@ def test_a_delivery_status_report_is_a_bounce() -> None:
     assert classify(normalize.parse(raw)) is Disposition.bounce
 
 
-def test_a_mailer_daemon_sender_is_a_bounce() -> None:
-    assert classify(_parse(From="MAILER-DAEMON@mx.example.com")) is Disposition.bounce
-    assert classify(_parse(From="postmaster@mx.example.com")) is Disposition.bounce
+def test_delivery_status_report_from_non_daemon_sender_is_a_bounce() -> None:
+    """Catches bounces from addresses like bounces@, mailer@, or VERP addresses
+    that don't match the daemon local parts list. The multipart/report content-type
+    is the only signal these would be caught by."""
+    raw = (
+        b"From: bounces@mx.example.com\r\n"
+        b"To: acme-a3f9c2@inbound.localhost\r\n"
+        b"Subject: Undelivered Mail Returned to Sender\r\n"
+        b'Content-Type: multipart/report; report-type=delivery-status; boundary="b"\r\n'
+        b"\r\n--b\r\nContent-Type: text/plain\r\n\r\nfailed\r\n"
+        b"--b\r\nContent-Type: message/delivery-status\r\n\r\n"
+        b"Action: failed\r\nStatus: 5.1.1\r\n\r\n--b--\r\n"
+    )
+    assert classify(normalize.parse(raw)) is Disposition.bounce
+
+
+@pytest.mark.parametrize(
+    "sender",
+    [
+        "MAILER-DAEMON@mx.example.com",
+        "postmaster@mx.example.com",
+        "no-reply@mx.example.com",
+        "noreply@mx.example.com",
+    ],
+)
+def test_daemon_senders_are_bounces(sender: str) -> None:
+    assert classify(_parse(From=sender)) is Disposition.bounce
 
 
 def test_an_out_of_office_is_an_auto_reply() -> None:
