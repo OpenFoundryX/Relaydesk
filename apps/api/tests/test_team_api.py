@@ -114,7 +114,9 @@ async def test_accepting_an_invite_creates_a_working_login(
         db_session, workspace.id, "sara@relaydesk.dev", Role.agent, admin.id
     )
 
-    user = await team.accept_invite(db_session, token, "Sara Duval", "another-horse")
+    user, _membership = await team.accept_invite(
+        db_session, token, "Sara Duval", "another-horse"
+    )
     assert user.email == "sara@relaydesk.dev"
 
     login = await client.post(
@@ -193,7 +195,7 @@ async def test_accepting_an_invite_adopts_an_unclaimed_account(
         db_session, workspace.id, "sara@relaydesk.dev", Role.agent, admin.id
     )
 
-    accepted_user = await team.accept_invite(
+    accepted_user, _membership = await team.accept_invite(
         db_session, token, "Sara Duval", "saras-new-password"
     )
 
@@ -540,7 +542,7 @@ async def test_a_squatted_then_released_address_is_reclaimed_by_the_real_invitee
         Role.agent,
         squatter_admin.id,
     )
-    squatter = await team.accept_invite(
+    squatter, _membership = await team.accept_invite(
         db_session, squat_token, "Not The Owner", "squatter-password"
     )
     assert squatter.email == "target@outside.dev"
@@ -579,7 +581,7 @@ async def test_a_squatted_then_released_address_is_reclaimed_by_the_real_invitee
     _acme_invite, acme_token = await team.create_invite(
         db_session, acme.id, "target@outside.dev", Role.agent, ada.id
     )
-    real_owner = await team.accept_invite(
+    real_owner, _membership = await team.accept_invite(
         db_session, acme_token, "Real Owner", "real-owner-password"
     )
     assert real_owner.id == squatter.id  # same row, reclaimed

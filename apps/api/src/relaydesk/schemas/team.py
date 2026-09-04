@@ -31,7 +31,19 @@ class InvitePreview(CamelModel):
     role: str
 
 
+class TokenRequest(CamelModel):
+    """The invite token in a request body, never a path segment.
+
+    A path segment lands verbatim in the access log on every request; a
+    body field does not. See the block comment on the invite routes in
+    ``relaydesk.api.team``.
+    """
+
+    token: str
+
+
 class AcceptRequest(CamelModel):
+    token: str
     name: str
     password: str
 

@@ -4,6 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, Response, status
 
 from relaydesk.api.deps import DbSession, Scope, client_ip
+from relaydesk.errors import NotFound
 from relaydesk.models import Role, Workspace
 from relaydesk.schemas.auth import TokenResponse
 from relaydesk.schemas.team import (
@@ -13,6 +14,7 @@ from relaydesk.schemas.team import (
     MemberPatch,
     RoleLabel,
     TeamMemberOut,
+    TokenRequest,
 )
 from relaydesk.services import auth, notifications, team
 
@@ -89,10 +91,27 @@ async def delete_team_member(
 
 # Public: acceptance is gated on possession of a token that was mailed to
 # the invited address, not on a session — the accepter has none yet.
-@invites_router.get("/{token}", response_model=InvitePreview)
-async def preview_invite(token: str, session: DbSession) -> InvitePreview:
-    invite = await team.read_invite(session, token)
+#
+# The token travels in the request BODY on both routes, never in the URL.
+# A path segment (the original `GET /invites/{token}`) is written verbatim
+# to the access log on every request — uvicorn's access log is on by
+# default and there is no config here that disables it — so a preview alone
+# would put a still-usable token in plaintext in every log sink between here
+# and stdout. That is the same takeover this task closes, relocated from the
+# response body to the log. A query string has the identical problem. Do
+# not put the token back in a path or query parameter for either route.
+@invites_router.post("/preview", response_model=InvitePreview)
+async def preview_invite(payload: TokenRequest, session: DbSession) -> InvitePreview:
+    invite = await team.read_invite(session, payload.token)
     workspace = await session.get(Workspace, invite.workspace_id)
+    if workspace is None:
+        # The workspace was deleted out from under a still-live invite (the
+        # FK is ON DELETE CASCADE, so this shouldn't happen in practice —
+        # defensive anyway). Surfacing that as anything but "this invite is
+        # not valid" would leak workspace lifecycle information to an
+        # unauthenticated caller; left unguarded it also crashes on
+        # `workspace.name` below with an unhandled AttributeError -> 500.
+        raise NotFound("This invite is not valid.")
     return InvitePreview(
         workspace_name=workspace.name,
         email=invite.email,
@@ -100,16 +119,16 @@ async def preview_invite(token: str, session: DbSession) -> InvitePreview:
     )
 
 
-@invites_router.post("/{token}/accept", response_model=TokenResponse)
+@invites_router.post("/accept", response_model=TokenResponse)
 async def accept_invite_route(
-    token: str,
     payload: AcceptRequest,
     session: DbSession,
     ip: Annotated[str | None, Depends(client_ip)],
     user_agent: Annotated[str | None, Header()] = None,
 ) -> TokenResponse:
-    user = await team.accept_invite(session, token, payload.name, payload.password)
-    membership = await auth.default_membership(session, user)
+    user, membership = await team.accept_invite(
+        session, payload.token, payload.name, payload.password
+    )
     session_token, row = await auth.create_session(
         session, user, membership, user_agent=user_agent, ip=ip
     )

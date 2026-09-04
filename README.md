@@ -19,8 +19,10 @@ Team invites are sent by email: accepting one lets you choose an account's
 password and sign in as it, so the invite link is only ever mailed to the
 invited address, never returned to whoever created the invite. This means
 invites require SMTP to be configured — the development stack provides
-this out of the box via GreenMail, so invites work with no extra setup when
-running through Docker Compose.
+this out of the box via GreenMail. The API for creating, previewing, and
+accepting invites is complete and tested at this commit; the web
+invite-acceptance page the emailed link opens is not built yet, landing
+alongside the rest of the web work.
 
 ## Requirements
 

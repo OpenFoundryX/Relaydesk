@@ -2,6 +2,7 @@ from relaydesk.config import get_settings
 from relaydesk.models.conversation import Conversation
 from relaydesk.models.user import User
 from relaydesk.services import queue
+from relaydesk.services.team import INVITE_TTL
 
 ASSIGNMENT_TEXT = """\
 {actor} assigned a conversation to you.
@@ -40,8 +41,8 @@ INVITE_TEXT = """\
 
 Accept the invitation: {url}
 
-This link expires in 7 days. If you weren't expecting it, ignore this
-message — no account is created until you accept.
+This link expires in {ttl_days} days. If you weren't expecting it, ignore
+this message — no account is created until you accept.
 """
 
 
@@ -49,13 +50,22 @@ def notify_invite(
     email: str, token: str, workspace_name: str, inviter_name: str
 ) -> None:
     """The token is delivered here and nowhere else — never in a response
-    body, never in a log line. Possession of it is the only proof that the
-    recipient controls ``email``."""
-    url = f"{get_settings().web_url}/invites/{token}"
+    body, never in a log line.
+
+    The token goes in the URL *fragment* (``#token``), not a path segment or
+    query string: a fragment is never sent to any server, including the web
+    app's own, so it never reaches an access log. ``/invites/{token}`` as a
+    path segment was the mistake this replaces — see the block comment on
+    the invite routes in ``relaydesk.api.team``.
+    """
+    url = f"{get_settings().web_url}/invites#{token}"
     queue.enqueue_system_email(
         to=email,
         subject=f"Join {workspace_name} on Relaydesk",
         text_body=INVITE_TEXT.format(
-            inviter=inviter_name, workspace=workspace_name, url=url
+            inviter=inviter_name,
+            workspace=workspace_name,
+            url=url,
+            ttl_days=INVITE_TTL.days,
         ),
     )

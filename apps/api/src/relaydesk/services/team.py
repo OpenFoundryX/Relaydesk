@@ -61,9 +61,7 @@ async def list_members(
     ]
 
     pending = await session.scalars(
-        sa.select(Invite).where(
-            Invite.workspace_id == workspace_id, Invite.accepted_at.is_(None)
-        )
+        sa.select(Invite).where(Invite.workspace_id == workspace_id)
     )
     members.extend(
         TeamMember(
@@ -111,10 +109,18 @@ async def list_members(
 # `accept_invite` also deletes the invite row in the same transaction that
 # creates the membership, instead of setting `accepted_at`: a token that
 # leaks from a mail archive after being used is inert because there is
-# nothing left for it to match, not merely rejected by a check.
+# nothing left for it to match, not merely rejected by a check. (A first
+# pass at this had the public routes take the token as a path segment,
+# `GET/POST /invites/{token}...`; that logs the live token to uvicorn's
+# access log on every preview or accept, which is the same leak relocated
+# rather than closed. Both public routes take the token in the request body
+# instead, and the emailed link carries it as a URL fragment, which is never
+# sent to any server — see `relaydesk.api.team` and
+# `notifications.notify_invite`.)
 #
 # Do not add an invite URL, or the raw token, to any response body, log
-# line, or error message — that is the exact leak this replaced.
+# line, error message, or URL path/query segment — that is the exact leak
+# this replaced.
 async def create_invite(
     session: AsyncSession,
     workspace_id: uuid.UUID,
@@ -134,7 +140,6 @@ async def create_invite(
         sa.select(Invite).where(
             Invite.workspace_id == workspace_id,
             Invite.email == email,
-            Invite.accepted_at.is_(None),
         )
     )
     if pending is not None:
@@ -244,8 +249,18 @@ ALREADY_A_MEMBER = (
 
 async def accept_invite(
     session: AsyncSession, token: str, name: str, password: str
-) -> User:
+) -> tuple[User, Membership]:
     """Turn an invite into an active membership.
+
+    Returns the membership too, not just the user: the caller mints a
+    session for it directly (``auth.create_session(session, user,
+    membership, ...)``) rather than re-deriving "the workspace this login
+    resolves to" via ``auth.default_membership``. That query is scoped to
+    the user and would, today, happen to return the same row — but only
+    because this function refuses to run at all for a user who already
+    holds an active membership elsewhere. Handing back the exact row this
+    call created makes the session's workspace direct, not an inference
+    that depends on a guarantee living in a different function.
 
     This is reachable unauthenticated and whoever holds the token chooses
     the ``password`` in the payload, so the question is whose account the
@@ -309,14 +324,13 @@ async def accept_invite(
             user.monogram = monogram_for(name)
             user.password_hash = hash_password(password)
 
-        session.add(
-            Membership(
-                workspace_id=invite.workspace_id,
-                user_id=user.id,
-                role=invite.role,
-                status=MembershipStatus.active,
-            )
+        membership = Membership(
+            workspace_id=invite.workspace_id,
+            user_id=user.id,
+            role=invite.role,
+            status=MembershipStatus.active,
         )
+        session.add(membership)
         # Single-use by deletion, not by flag: once the row is gone there is
         # nothing left for a replayed token to match against (see
         # `read_invite`).
@@ -325,4 +339,4 @@ async def accept_invite(
     except IntegrityError as error:
         await session.rollback()
         raise Conflict("This invite has already been accepted.") from error
-    return user
+    return user, membership
