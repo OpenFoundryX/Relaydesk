@@ -1,6 +1,7 @@
 import uuid
+from datetime import datetime
 
-from sqlalchemy import ForeignKey, String, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -20,3 +21,6 @@ class Contact(UUIDMixin, TimestampMixin, Base):
     )
     email: Mapped[str] = mapped_column(CITEXT(), nullable=False)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
+    bounced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

@@ -37,6 +37,7 @@ target_metadata = Base.metadata
 ENUM_CHECK_CONSTRAINTS = frozenset(
     {
         "ck_activity_events_kind",
+        "ck_channel_accounts_kind",
         "ck_conversations_channel",
         "ck_conversations_priority",
         "ck_conversations_status",
@@ -45,7 +46,10 @@ ENUM_CHECK_CONSTRAINTS = frozenset(
         "ck_labels_color",
         "ck_memberships_role",
         "ck_memberships_status",
+        "ck_messages_delivery_state",
+        "ck_messages_direction",
         "ck_messages_role",
+        "ck_raw_messages_state",
     }
 )
 
