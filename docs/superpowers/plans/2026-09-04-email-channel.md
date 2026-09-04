@@ -372,8 +372,11 @@ def init_worker_process() -> None:
     """Called once per worker process, from Celery's ``worker_process_init``."""
     global _loop, _session_factory
 
+    # Deliberately no `asyncio.set_event_loop(_loop)`. `run_until_complete`
+    # drives this loop explicitly, and everything inside reaches it through
+    # `get_running_loop()`. Setting it as the thread's current loop would
+    # also replace pytest-asyncio's session loop when the tests import this.
     _loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(_loop)
     engine = create_async_engine(get_settings().database_url, pool_pre_ping=True)
     _session_factory = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False
@@ -414,7 +417,17 @@ Expected: PASS (3 passed).
 
 - [ ] **Step 5: Write the Celery app**
 
-Create `apps/api/src/relaydesk/worker/tasks/__init__.py` (empty) and `apps/api/src/relaydesk/worker/app.py`:
+Create `apps/api/src/relaydesk/worker/tasks/__init__.py` and `apps/api/src/relaydesk/worker/app.py`.
+
+`tasks/__init__.py` is **not** empty — it imports every task module, which is what makes the tasks register:
+
+```python
+from relaydesk.worker.tasks import health  # noqa: F401
+```
+
+**Every later task that adds a module under `worker/tasks/` must add its import line here**, or its tasks never register and Beat cannot find them.
+
+`app.py`:
 
 ```python
 from celery import Celery
@@ -450,7 +463,10 @@ app.conf.update(
     },
 )
 
-app.autodiscover_tasks(["relaydesk.worker.tasks"], force=True)
+# `related_name=None` is required: with Celery's default the call would look
+# for `relaydesk.worker.tasks.tasks` and silently register nothing. Each task
+# module is imported from `worker/tasks/__init__.py`.
+app.autodiscover_tasks(["relaydesk.worker.tasks"], related_name=None, force=True)
 
 
 @worker_process_init.connect
@@ -1358,7 +1374,7 @@ def enqueue_system_email(
     send_system_email.delay(to, subject, text_body, html_body)
 ```
 
-`apps/api/src/relaydesk/worker/tasks/mail.py`:
+`apps/api/src/relaydesk/worker/tasks/mail.py` — and add `from relaydesk.worker.tasks import mail  # noqa: F401` to `worker/tasks/__init__.py`, or the task never registers:
 
 ```python
 from relaydesk.services import mailer
@@ -3322,7 +3338,7 @@ class AioImapReader:
 
 - [ ] **Step 4: Write the task**
 
-`apps/api/src/relaydesk/worker/tasks/inbound.py`:
+`apps/api/src/relaydesk/worker/tasks/inbound.py` — and add `from relaydesk.worker.tasks import inbound  # noqa: F401` to `worker/tasks/__init__.py`, or the task never registers:
 
 ```python
 from relaydesk.config import get_settings
