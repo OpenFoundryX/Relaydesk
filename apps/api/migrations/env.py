@@ -19,10 +19,24 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def include_name(name: str | None, type_: str, parent_names: dict) -> bool:
+    """Keep CHECK constraints out of autogenerate's comparison.
+
+    The CHECK constraints behind ``sa.Enum(..., create_constraint=True)``
+    are "type bound", and Alembic deliberately excludes those from the
+    model side of the diff while still reflecting them from the database.
+    Left alone, every one of them autogenerates as a spurious
+    ``drop_constraint``. Migration 0006 owns them by explicit name; a slice
+    that adds an enum value drops and recreates the constraint there.
+    """
+    return type_ != "check_constraint"
+
+
 def run_migrations_offline() -> None:
     context.configure(
         url=config.get_main_option("sqlalchemy.url"),
         target_metadata=target_metadata,
+        include_name=include_name,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
     )
@@ -31,7 +45,11 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: object) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        include_name=include_name,
+    )
     with context.begin_transaction():
         context.run_migrations()
 

@@ -32,7 +32,13 @@ class Label(UUIDMixin, TimestampMixin, Base):
     # to catch a case-insensitive duplicate before it's inserted.
     name: Mapped[str] = mapped_column(CITEXT(), nullable=False)
     color: Mapped[LabelColor] = mapped_column(
-        Enum(LabelColor, native_enum=False, length=16),
+        Enum(
+            LabelColor,
+            name="ck_labels_color",
+            native_enum=False,
+            length=16,
+            create_constraint=True,
+        ),
         default=LabelColor.slate,
         nullable=False,
     )

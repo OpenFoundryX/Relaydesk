@@ -32,10 +32,24 @@ class Membership(UUIDMixin, TimestampMixin, Base):
         PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     role: Mapped[Role] = mapped_column(
-        Enum(Role, native_enum=False, length=16), default=Role.agent, nullable=False
+        Enum(
+            Role,
+            name="ck_memberships_role",
+            native_enum=False,
+            length=16,
+            create_constraint=True,
+        ),
+        default=Role.agent,
+        nullable=False,
     )
     status: Mapped[MembershipStatus] = mapped_column(
-        Enum(MembershipStatus, native_enum=False, length=16),
+        Enum(
+            MembershipStatus,
+            name="ck_memberships_status",
+            native_enum=False,
+            length=16,
+            create_constraint=True,
+        ),
         default=MembershipStatus.active,
         nullable=False,
     )

@@ -21,7 +21,15 @@ class Invite(UUIDMixin, TimestampMixin, Base):
     )
     email: Mapped[str] = mapped_column(CITEXT(), nullable=False)
     role: Mapped[Role] = mapped_column(
-        Enum(Role, native_enum=False, length=16), default=Role.agent, nullable=False
+        Enum(
+            Role,
+            name="ck_invites_role",
+            native_enum=False,
+            length=16,
+            create_constraint=True,
+        ),
+        default=Role.agent,
+        nullable=False,
     )
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     invited_by: Mapped[uuid.UUID | None] = mapped_column(

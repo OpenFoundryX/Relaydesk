@@ -84,15 +84,34 @@ class Conversation(UUIDMixin, TimestampMixin, Base):
         nullable=False,
     )
     channel: Mapped[Channel] = mapped_column(
-        Enum(Channel, native_enum=False, length=16), nullable=False
+        Enum(
+            Channel,
+            name="ck_conversations_channel",
+            native_enum=False,
+            length=16,
+            create_constraint=True,
+        ),
+        nullable=False,
     )
     status: Mapped[ConversationStatus] = mapped_column(
-        Enum(ConversationStatus, native_enum=False, length=16),
+        Enum(
+            ConversationStatus,
+            name="ck_conversations_status",
+            native_enum=False,
+            length=16,
+            create_constraint=True,
+        ),
         default=ConversationStatus.open,
         nullable=False,
     )
     priority: Mapped[Priority] = mapped_column(
-        Enum(Priority, native_enum=False, length=16),
+        Enum(
+            Priority,
+            name="ck_conversations_priority",
+            native_enum=False,
+            length=16,
+            create_constraint=True,
+        ),
         default=Priority.medium,
         nullable=False,
     )
@@ -106,7 +125,13 @@ class Conversation(UUIDMixin, TimestampMixin, Base):
     unread: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     summary_state: Mapped[SummaryState] = mapped_column(
-        Enum(SummaryState, native_enum=False, length=16),
+        Enum(
+            SummaryState,
+            name="ck_conversations_summary_state",
+            native_enum=False,
+            length=16,
+            create_constraint=True,
+        ),
         default=SummaryState.none,
         nullable=False,
     )

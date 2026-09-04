@@ -31,7 +31,14 @@ class Message(UUIDMixin, TimestampMixin, Base):
         nullable=False,
     )
     role: Mapped[MessageRole] = mapped_column(
-        Enum(MessageRole, native_enum=False, length=16), nullable=False
+        Enum(
+            MessageRole,
+            name="ck_messages_role",
+            native_enum=False,
+            length=16,
+            create_constraint=True,
+        ),
+        nullable=False,
     )
     author_name: Mapped[str] = mapped_column(String(160), nullable=False)
     author_user_id: Mapped[uuid.UUID | None] = mapped_column(

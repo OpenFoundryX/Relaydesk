@@ -38,7 +38,14 @@ class ActivityEvent(UUIDMixin, TimestampMixin, Base):
     )
     actor_name: Mapped[str] = mapped_column(String(160), nullable=False)
     kind: Mapped[ActivityKind] = mapped_column(
-        Enum(ActivityKind, native_enum=False, length=16), nullable=False
+        Enum(
+            ActivityKind,
+            name="ck_activity_events_kind",
+            native_enum=False,
+            length=16,
+            create_constraint=True,
+        ),
+        nullable=False,
     )
     verb: Mapped[str] = mapped_column(String(80), nullable=False)
     value: Mapped[str] = mapped_column(String(200), default="", nullable=False)
