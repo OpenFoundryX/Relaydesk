@@ -552,7 +552,7 @@ fixtures per workspace.
 7. MIME normalization to `InboundMessage`, with fixture tests.
 8. Classification of bounces, auto-replies, and bulk mail.
 9. Channel accounts, ingest addresses, and the channels route (migration
-   `0009`).
+   `0010`).
 10. IMAP poller and `raw_messages`.
 11. Routing, thread resolution, and appending, plus the unrouted-mail CLI.
 12. Attachments, storage and the download route.

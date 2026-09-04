@@ -2726,7 +2726,7 @@ The conversation tag uses the per-workspace `number`, not the uuid — it is sho
 - Create: `apps/api/src/relaydesk/api/channels.py`
 - Modify: `apps/api/src/relaydesk/api/router.py`
 - Modify: `apps/api/src/relaydesk/services/workspaces.py` (create an account with each workspace)
-- Create: `apps/api/migrations/versions/0009_backfill_channel_accounts.py`
+- Create: `apps/api/migrations/versions/0010_backfill_channel_accounts.py`
 - Test: `apps/api/tests/test_channel_accounts.py` (create)
 
 **Interfaces:**
@@ -3059,7 +3059,7 @@ Mount it in `api/router.py`: `api_router.include_router(channels_router, prefix=
 
 In `services/workspaces.py`, wherever a workspace is created, create a default `"Support"` channel account in the same transaction. Read the file to find the creation function; `cli.py`'s `bootstrap` and `seed` both go through it.
 
-Then migration `0009_backfill_channel_accounts.py` for workspaces that already exist:
+Then migration `0010_backfill_channel_accounts.py` for workspaces that already exist (`0009` was taken by Task 6's invite single-use migration, so this chains from it):
 
 ```python
 def upgrade() -> None:
