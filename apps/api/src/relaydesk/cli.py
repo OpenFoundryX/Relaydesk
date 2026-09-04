@@ -7,6 +7,7 @@ create their real workspace and first admin.
 
 import argparse
 import asyncio
+import os
 from datetime import UTC, datetime, timedelta
 
 import sqlalchemy as sa
@@ -15,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from relaydesk.db.session import async_session_factory
 from relaydesk.errors import Conflict
 from relaydesk.models import (
+    ActivityEvent,
+    ActivityKind,
     Channel,
     Contact,
     Conversation,
@@ -34,6 +37,10 @@ from relaydesk.models import (
     Workspace,
 )
 from relaydesk.security.passwords import hash_password
+
+# Read in preference to --password so the admin's password never lands in
+# `ps` output or the shell history file.
+ADMIN_PASSWORD_ENV = "RELAYDESK_ADMIN_PASSWORD"
 
 # (subject, preview, contact_name, contact_email, channel, status, priority,
 #  assignee: "admin" | "agent" | None, label_names, has_draft, minutes_ago)
@@ -334,6 +341,20 @@ async def seed(session: AsyncSession) -> None:
                 sent_at=sent_at,
             )
         )
+        # One opening entry per thread, so the detail panel's History tab
+        # has something in it on a fresh seed rather than reading empty.
+        session.add(
+            ActivityEvent(
+                workspace_id=workspace.id,
+                conversation_id=conversation.id,
+                actor_user_id=admin.id,
+                actor_name=admin.name,
+                kind=ActivityKind.created,
+                verb="opened this conversation via",
+                value=channel.value,
+                at=sent_at,
+            )
+        )
         for label_name in label_names:
             session.add(
                 ConversationLabel(
@@ -395,6 +416,15 @@ async def bootstrap(
     await session.commit()
 
 
+def resolve_admin_password(cli_password: str | None) -> str | None:
+    """Environment first, ``--password`` only as a fallback.
+
+    A password passed in argv is visible to anyone who can run ``ps`` on the
+    host and is written to the operator's shell history.
+    """
+    return os.environ.get(ADMIN_PASSWORD_ENV) or cli_password
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="relaydesk")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -403,8 +433,20 @@ def main() -> None:
     boot.add_argument("--workspace", required=True)
     boot.add_argument("--email", required=True)
     boot.add_argument("--name", required=True)
-    boot.add_argument("--password", required=True)
+    boot.add_argument(
+        "--password",
+        help=(
+            "Admin password. Prefer the RELAYDESK_ADMIN_PASSWORD environment "
+            "variable: a password in argv is visible in `ps` and shell history."
+        ),
+    )
     args = parser.parse_args()
+
+    password = resolve_admin_password(getattr(args, "password", None))
+    if args.command == "bootstrap" and not password:
+        parser.error(
+            f"Set {ADMIN_PASSWORD_ENV} in the environment, or pass --password."
+        )
 
     async def run() -> None:
         async with async_session_factory() as session:
@@ -416,7 +458,7 @@ def main() -> None:
                     workspace_name=args.workspace,
                     admin_email=args.email,
                     admin_name=args.name,
-                    admin_password=args.password,
+                    admin_password=password,
                 )
 
     asyncio.run(run())

@@ -42,13 +42,20 @@ def apply_view(query: sa.Select, view: SavedView, viewer: User) -> sa.Select:
     filters = view.filters or {}
 
     status = filters.get("status")
-    if status is None:
+    parsed_status: ConversationStatus | None = None
+    if status is not None:
+        try:
+            parsed_status = ConversationStatus(status)
+        except ValueError:
+            # Unrecognised status: degrade to the default scope rather than
+            # 500 on stray JSONB — and crucially not to *no* status filter
+            # at all, which would silently surface trashed conversations.
+            parsed_status = None
+
+    if parsed_status is None:
         query = query.where(Conversation.status != ConversationStatus.trash)
     else:
-        try:
-            query = query.where(Conversation.status == ConversationStatus(status))
-        except ValueError:
-            pass  # Unrecognised status: ignore rather than 500 on stray JSONB.
+        query = query.where(Conversation.status == parsed_status)
 
     priority = filters.get("priority")
     if priority is not None:

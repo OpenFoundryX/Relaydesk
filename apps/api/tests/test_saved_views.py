@@ -117,3 +117,41 @@ async def test_a_foreign_view_is_a_404(
     response = await client.get(f"/api/conversations?viewId={view.id}", headers=headers)
 
     assert response.status_code == 404
+
+
+async def test_a_view_with_an_unrecognised_status_still_excludes_trash(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Falling through to "no status filter at all" would silently surface
+    trashed conversations."""
+    workspace = await make_workspace(db_session)
+    user = await make_member(db_session, workspace)
+    await make_conversation(db_session, workspace)
+    await make_conversation(
+        db_session,
+        workspace,
+        subject="Junk",
+        status=ConversationStatus.trash,
+        contact_email="sam@example.com",
+        contact_name="Sam Rowe",
+    )
+    view = SavedView(
+        workspace_id=workspace.id,
+        name="Stale filter",
+        filters={"status": "archived"},
+        position=0,
+    )
+    db_session.add(view)
+    await db_session.commit()
+    headers = await sign_in(client, db_session, user.email)
+
+    listed = await client.get(f"/api/conversations?viewId={view.id}", headers=headers)
+    counted = await client.get("/api/views", headers=headers)
+
+    assert listed.status_code == 200
+    subjects = [entry["subject"] for entry in listed.json()["items"]]
+    assert "Junk" not in subjects
+    assert len(subjects) == 1
+    assert next(
+        entry["count"] for entry in counted.json() if entry["id"] == str(view.id)
+    ) == 1

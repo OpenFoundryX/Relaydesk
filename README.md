@@ -58,12 +58,18 @@ every status. Sign in as `nilesh@relaydesk.dev` with the password `relaydesk`.
 ## Self-hosting your own workspace
 
 ```sh
-docker compose exec api relaydesk bootstrap \
+read -rsp "Admin password: " RELAYDESK_ADMIN_PASSWORD
+export RELAYDESK_ADMIN_PASSWORD
+docker compose exec -e RELAYDESK_ADMIN_PASSWORD api relaydesk bootstrap \
   --workspace "Acme Support" \
   --email you@acme.com \
-  --name "Your Name" \
-  --password "a-strong-password"
+  --name "Your Name"
 ```
+
+The admin password is read from `RELAYDESK_ADMIN_PASSWORD`. There is a
+`--password` flag as a fallback, but prefer the environment variable: a
+password in the command line is visible to anyone who can run `ps` on the
+host and is written to your shell history.
 
 ## Development commands
 
