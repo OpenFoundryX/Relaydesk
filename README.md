@@ -100,10 +100,18 @@ changes are picked up without rebuilding the images.
 With the development stack running:
 
 ```sh
-docker compose exec api pytest
+docker compose exec api pytest -m "not integration"
 docker compose exec api ruff check .
 docker compose exec web pnpm lint
 docker compose exec web pnpm build
+```
+
+Tests marked `integration` exercise a live service in the compose stack (for
+example, a real round trip through GreenMail) and are excluded by default.
+Run them explicitly, with the stack up, via:
+
+```sh
+docker compose exec api pytest -m integration
 ```
 
 ## Contributing

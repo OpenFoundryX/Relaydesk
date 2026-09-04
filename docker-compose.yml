@@ -30,7 +30,7 @@ services:
       INBOUND_DOMAIN: ${INBOUND_DOMAIN:-inbound.localhost}
       IMAP_HOST: ${IMAP_HOST:-greenmail}
       IMAP_PORT: ${IMAP_PORT:-3143}
-      IMAP_USERNAME: ${IMAP_USERNAME:-relaydesk}
+      IMAP_USERNAME: ${IMAP_USERNAME:-relaydesk@localhost}
       IMAP_PASSWORD: ${IMAP_PASSWORD:-relaydesk}
       IMAP_USE_SSL: ${IMAP_USE_SSL:-false}
       IMAP_MAILBOX: ${IMAP_MAILBOX:-INBOX}
@@ -103,7 +103,7 @@ services:
       INBOUND_DOMAIN: ${INBOUND_DOMAIN:-inbound.localhost}
       IMAP_HOST: ${IMAP_HOST:-greenmail}
       IMAP_PORT: ${IMAP_PORT:-3143}
-      IMAP_USERNAME: ${IMAP_USERNAME:-relaydesk}
+      IMAP_USERNAME: ${IMAP_USERNAME:-relaydesk@localhost}
       IMAP_PASSWORD: ${IMAP_PASSWORD:-relaydesk}
       IMAP_USE_SSL: ${IMAP_USE_SSL:-false}
       IMAP_MAILBOX: ${IMAP_MAILBOX:-INBOX}
@@ -134,7 +134,7 @@ services:
       INBOUND_DOMAIN: ${INBOUND_DOMAIN:-inbound.localhost}
       IMAP_HOST: ${IMAP_HOST:-greenmail}
       IMAP_PORT: ${IMAP_PORT:-3143}
-      IMAP_USERNAME: ${IMAP_USERNAME:-relaydesk}
+      IMAP_USERNAME: ${IMAP_USERNAME:-relaydesk@localhost}
       IMAP_PASSWORD: ${IMAP_PASSWORD:-relaydesk}
       IMAP_USE_SSL: ${IMAP_USE_SSL:-false}
       IMAP_MAILBOX: ${IMAP_MAILBOX:-INBOX}

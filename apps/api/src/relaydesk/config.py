@@ -23,7 +23,12 @@ class Settings(BaseSettings):
 
     imap_host: str = "greenmail"
     imap_port: int = 3143
-    imap_username: str = "relaydesk"
+    # GreenMail (auth disabled) keys a mailbox by the exact login string, and
+    # separately by the exact RCPT TO address at delivery time — a bare
+    # "relaydesk" and "relaydesk@localhost" are two different mailboxes. The
+    # single polled inbox is only reachable this way, so the default must be
+    # address-shaped to match where dev/test mail is actually delivered.
+    imap_username: str = "relaydesk@localhost"
     imap_password: str = "relaydesk"
     imap_use_ssl: bool = False
     imap_mailbox: str = "INBOX"

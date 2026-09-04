@@ -8,5 +8,6 @@ their own import to this list.
 
 from relaydesk.worker.tasks import (  # noqa: F401
     health,
+    inbound,
     mail,
 )
