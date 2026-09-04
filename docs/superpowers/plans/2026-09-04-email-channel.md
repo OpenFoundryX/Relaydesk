@@ -4662,6 +4662,7 @@ Makes the reply an agent already writes actually leave the building.
   - `outbound.build_reply(session, message) -> EmailMessage`
   - `outbound.deliver(session, message_id) -> DeliveryState`
   - `outbound.requeue_stalled(session, older_than) -> list[uuid.UUID]`
+  - `ingest.requeue_unprocessed(session, older_than) -> list[uuid.UUID]`
   - `queue.enqueue_reply(message_id: uuid.UUID) -> None`
   - `worker.tasks.mail.send_conversation_message`, `relaydesk.reconcile_outbound`
 
@@ -5017,7 +5018,30 @@ def reconcile_outbound() -> int:
     for message_id in stalled:
         send_conversation_message.delay(str(message_id))
     return len(stalled)
+
+
+@app.task(name="relaydesk.reconcile_inbound")
+def reconcile_inbound() -> int:
+    """Re-enqueue raw messages the poller stored but never got onto the broker.
+
+    `imap_poll` writes `raw_messages` rows and then publishes one
+    `ingest_message` per row. The publish is not part of that transaction, and
+    the queue seam swallows broker failures by design, so a RabbitMQ outage
+    leaves rows sitting in `fetched` with nothing to pick them up. Without
+    this, that mail is silently never ingested — the bytes are safe in the
+    landing zone but no ticket is ever created.
+    """
+    stuck = bridge.run(_requeue_unprocessed())
+    for raw_message_id in stuck:
+        ingest_message.delay(str(raw_message_id))
+    return len(stuck)
 ```
+
+`_requeue_unprocessed` wraps `ingest.requeue_unprocessed(session, timedelta(minutes=2))`, which selects `RawMessage.id` where `state == RawMessageState.fetched` and `created_at < cutoff`. Re-enqueuing is safe because `ingest_raw` returns early for any row whose state is not `fetched`, so a row already being processed is a no-op.
+
+Add `"reconcile-inbound"` to the Beat schedule in `worker/app.py` alongside `reconcile-outbound`, on the same 300-second cadence, and import `ingest_message` from `worker.tasks.inbound` where this task lives.
+
+Add a test: store a `RawMessage` in `fetched` with a `created_at` older than the window, assert `requeue_unprocessed` returns it, and assert a fresh one is not returned.
 
 with `_deliver`, `_mark_failed`, and `_requeue_stalled` as `bridge.session_scope()` wrappers around the `outbound` functions. `_requeue_stalled` uses `timedelta(minutes=2)`, matching the Beat schedule declared in Task 2.
 
