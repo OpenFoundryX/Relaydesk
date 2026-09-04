@@ -7,6 +7,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from relaydesk.errors import Invalid, NotFound
 from relaydesk.models import Label, Membership, MembershipStatus, Workspace
+from relaydesk.models.channel_account import ChannelAccount
+from relaydesk.services import channel_accounts
+
+
+async def create_default_channel_account(
+    session: AsyncSession, workspace_id: uuid.UUID
+) -> ChannelAccount:
+    """Give a newly created workspace an address mail can arrive at.
+
+    Called from every place a workspace is created (``cli.py``'s
+    ``bootstrap`` and ``seed``), in the same transaction as the workspace
+    itself, so no workspace ever exists without one.
+    """
+    return await channel_accounts.create(session, workspace_id, "Support")
 
 
 async def active_seat_count(session: AsyncSession, workspace_id: uuid.UUID) -> int:

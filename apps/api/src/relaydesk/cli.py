@@ -37,6 +37,7 @@ from relaydesk.models import (
     Workspace,
 )
 from relaydesk.security.passwords import hash_password
+from relaydesk.services import workspaces
 
 # Read in preference to --password so the admin's password never lands in
 # `ps` output or the shell history file.
@@ -217,6 +218,7 @@ async def seed(session: AsyncSession) -> None:
     )
     session.add(workspace)
     await session.flush()
+    await workspaces.create_default_channel_account(session, workspace.id)
 
     admin = User(
         email="nilesh@relaydesk.dev",
@@ -405,6 +407,7 @@ async def bootstrap(
     )
     session.add_all([workspace, user])
     await session.flush()
+    await workspaces.create_default_channel_account(session, workspace.id)
     session.add(
         Membership(
             workspace_id=workspace.id,
