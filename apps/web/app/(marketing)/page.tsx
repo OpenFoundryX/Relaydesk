@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
-import { BrandIcon, type BrandSlug } from "@/components/marketing/brand-icons";
+import { BrandIcon, type BrandSlug } from "@/components/brand-icons";
 import { InboxPreview } from "@/components/marketing/inbox-preview";
 import { Pricing } from "@/components/marketing/pricing";
 import { Button } from "@/components/ui/button";

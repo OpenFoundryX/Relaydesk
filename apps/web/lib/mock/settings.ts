@@ -102,26 +102,26 @@ const mcpServers: McpServer[] = [
 ];
 
 const integrations: Integration[] = [
-  { id: "slack", name: "Slack", category: "Notifications", monogram: "SL", connected: true },
-  { id: "stripe", name: "Stripe", category: "Payments", monogram: "ST", connected: true },
-  { id: "revenuecat", name: "RevenueCat", category: "Payments", monogram: "RC", connected: false },
-  { id: "shopify", name: "Shopify", category: "Payments", monogram: "SH", connected: false },
-  { id: "google-play", name: "Google Play", category: "Payments", monogram: "GP", connected: false },
-  { id: "paypal", name: "PayPal", category: "Payments", monogram: "PP", connected: false },
-  { id: "square", name: "Square", category: "Payments", monogram: "SQ", connected: false },
-  { id: "paddle", name: "Paddle", category: "Payments", monogram: "PD", connected: false },
-  { id: "mongodb", name: "MongoDB", category: "Data", monogram: "MG", connected: false },
-  { id: "supabase", name: "Supabase", category: "Data", monogram: "SB", connected: true },
-  { id: "postgresql", name: "PostgreSQL", category: "Data", monogram: "PG", connected: false },
-  { id: "mysql", name: "MySQL", category: "Data", monogram: "MY", connected: false },
-  { id: "convex", name: "Convex", category: "Data", monogram: "CV", connected: false },
-  { id: "snowflake", name: "Snowflake", category: "Data", monogram: "SF", connected: false },
+  { id: "slack", brand: "slack", name: "Slack", category: "Notifications", monogram: "SL", connected: true },
+  { id: "stripe", brand: "stripe", name: "Stripe", category: "Payments", monogram: "ST", connected: true },
+  { id: "revenuecat", brand: "revenuecat", name: "RevenueCat", category: "Payments", monogram: "RC", connected: false },
+  { id: "shopify", brand: "shopify", name: "Shopify", category: "Payments", monogram: "SH", connected: false },
+  { id: "google-play", brand: "googleplay", name: "Google Play", category: "Payments", monogram: "GP", connected: false },
+  { id: "paypal", brand: "paypal", name: "PayPal", category: "Payments", monogram: "PP", connected: false },
+  { id: "square", brand: "square", name: "Square", category: "Payments", monogram: "SQ", connected: false },
+  { id: "paddle", brand: "paddle", name: "Paddle", category: "Payments", monogram: "PD", connected: false },
+  { id: "mongodb", brand: "mongodb", name: "MongoDB", category: "Data", monogram: "MG", connected: false },
+  { id: "supabase", brand: "supabase", name: "Supabase", category: "Data", monogram: "SB", connected: true },
+  { id: "postgresql", brand: "postgresql", name: "PostgreSQL", category: "Data", monogram: "PG", connected: false },
+  { id: "mysql", brand: "mysql", name: "MySQL", category: "Data", monogram: "MY", connected: false },
+  { id: "convex", brand: "convex", name: "Convex", category: "Data", monogram: "CV", connected: false },
+  { id: "snowflake", brand: "snowflake", name: "Snowflake", category: "Data", monogram: "SF", connected: false },
   { id: "dynamodb", name: "DynamoDB", category: "Data", monogram: "DD", connected: false },
-  { id: "firebase", name: "Firebase", category: "Data", monogram: "FB", connected: false },
-  { id: "github", name: "GitHub", category: "Development", monogram: "GH", connected: true },
-  { id: "linear", name: "Linear", category: "Development", monogram: "LN", connected: false },
-  { id: "jira", name: "Jira", category: "Development", monogram: "JR", connected: false },
-  { id: "asana", name: "Asana", category: "Development", monogram: "AS", connected: false },
+  { id: "firebase", brand: "firebase", name: "Firebase", category: "Data", monogram: "FB", connected: false },
+  { id: "github", brand: "github", name: "GitHub", category: "Development", monogram: "GH", connected: true },
+  { id: "linear", brand: "linear", name: "Linear", category: "Development", monogram: "LN", connected: false },
+  { id: "jira", brand: "jira", name: "Jira", category: "Development", monogram: "JR", connected: false },
+  { id: "asana", brand: "asana", name: "Asana", category: "Development", monogram: "AS", connected: false },
 ];
 
 const plans: Plan[] = [
@@ -186,9 +186,9 @@ const discordAccounts: ChannelAccount[] = [];
 
 const importSources: ImportSource[] = [
   { id: "freshdesk", name: "Freshdesk", host: "*.freshdesk.com", monogram: "FD", comingSoon: false },
-  { id: "zendesk", name: "Zendesk", host: "*.zendesk.com", monogram: "ZD", comingSoon: false },
-  { id: "helpscout", name: "Help Scout", host: "api.helpscout.net", monogram: "HS", comingSoon: false },
-  { id: "zohodesk", name: "Zoho Desk", host: "*.zohodesk.com", monogram: "ZO", comingSoon: true },
+  { id: "zendesk", brand: "zendesk", name: "Zendesk", host: "*.zendesk.com", monogram: "ZD", comingSoon: false },
+  { id: "helpscout", brand: "helpscout", name: "Help Scout", host: "api.helpscout.net", monogram: "HS", comingSoon: false },
+  { id: "zohodesk", brand: "zoho", name: "Zoho Desk", host: "*.zohodesk.com", monogram: "ZO", comingSoon: true },
 ];
 
 export const triageDefaults = {

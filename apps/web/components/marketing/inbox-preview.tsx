@@ -1,6 +1,6 @@
 import { Bot, Inbox, Mail, Sparkles } from "lucide-react";
 
-import { BrandIcon } from "@/components/marketing/brand-icons";
+import { BrandIcon } from "@/components/brand-icons";
 
 import { PriorityPip } from "@/components/inbox/priority-pip";
 import type { Priority } from "@/lib/mock/types";

@@ -31,13 +31,13 @@ const channelGroups = [
   {
     label: "Email",
     options: [
-      { id: "gmail", label: "Gmail", monogram: "GM" },
+      { id: "gmail", brand: "gmail" as const, label: "Gmail", monogram: "GM" },
       { id: "forwarding", label: "Email forwarding", monogram: "FW" },
     ],
   },
   {
     label: "Social",
-    options: [{ id: "discord", label: "Discord", monogram: "DC" }],
+    options: [{ id: "discord", brand: "discord" as const, label: "Discord", monogram: "DC" }],
   },
   {
     label: "API",
@@ -49,24 +49,24 @@ const integrationGroups = [
   {
     label: "Payments",
     options: [
-      { id: "stripe", label: "Stripe", monogram: "ST" },
-      { id: "revenuecat", label: "RevenueCat", monogram: "RC" },
-      { id: "google-play", label: "Google Play", monogram: "GP" },
+      { id: "stripe", brand: "stripe" as const, label: "Stripe", monogram: "ST" },
+      { id: "revenuecat", brand: "revenuecat" as const, label: "RevenueCat", monogram: "RC" },
+      { id: "google-play", brand: "googleplay" as const, label: "Google Play", monogram: "GP" },
     ],
   },
   {
     label: "Data",
     options: [
-      { id: "mongodb", label: "MongoDB", monogram: "MG" },
-      { id: "supabase", label: "Supabase", monogram: "SB" },
-      { id: "postgresql", label: "PostgreSQL", monogram: "PG" },
-      { id: "mysql", label: "MySQL", monogram: "MY" },
-      { id: "convex", label: "Convex", monogram: "CV" },
+      { id: "mongodb", brand: "mongodb" as const, label: "MongoDB", monogram: "MG" },
+      { id: "supabase", brand: "supabase" as const, label: "Supabase", monogram: "SB" },
+      { id: "postgresql", brand: "postgresql" as const, label: "PostgreSQL", monogram: "PG" },
+      { id: "mysql", brand: "mysql" as const, label: "MySQL", monogram: "MY" },
+      { id: "convex", brand: "convex" as const, label: "Convex", monogram: "CV" },
     ],
   },
   {
     label: "Development",
-    options: [{ id: "github", label: "GitHub", monogram: "GH" }],
+    options: [{ id: "github", brand: "github" as const, label: "GitHub", monogram: "GH" }],
   },
 ];
 
@@ -176,6 +176,7 @@ export function OnboardingWizard({
                     <SelectTile
                       key={option.id}
                       label={option.label}
+                      brand={"brand" in option ? option.brand : undefined}
                       monogram={option.monogram}
                       selected={channel === option.id}
                       onSelect={() => setChannel(option.id)}
@@ -235,6 +236,7 @@ export function OnboardingWizard({
                     <SelectTile
                       key={option.id}
                       label={option.label}
+                      brand={"brand" in option ? option.brand : undefined}
                       monogram={option.monogram}
                       selected={integrations.includes(option.id)}
                       onSelect={() => toggleIntegration(option.id)}

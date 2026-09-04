@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowRight, Check } from "lucide-react";
 
-import { BrandIcon } from "@/components/marketing/brand-icons";
+import { BrandIcon } from "@/components/brand-icons";
 import { Button } from "@/components/ui/button";
 import { competitors, getCompetitor } from "@/lib/marketing/compare";
 

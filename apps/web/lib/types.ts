@@ -1,3 +1,5 @@
+import type { BrandSlug } from "@/components/brand-icons";
+
 /**
  * Domain types for the Relaydesk console.
  *
@@ -164,7 +166,9 @@ export interface Integration {
   id: string;
   name: string;
   category: IntegrationCategory;
-  /** Two-letter monogram shown in the tile, since we ship no vendor logos. */
+  /** Vendor mark. Absent when Simple Icons has none, e.g. DynamoDB. */
+  brand?: BrandSlug;
+  /** Fallback shown when `brand` is absent. */
   monogram: string;
   connected: boolean;
 }
@@ -219,6 +223,9 @@ export interface ImportSource {
   id: string;
   name: string;
   host: string;
+  /** Vendor mark. Absent when Simple Icons has none, e.g. Freshdesk. */
+  brand?: BrandSlug;
+  /** Fallback shown when `brand` is absent. */
   monogram: string;
   comingSoon: boolean;
 }

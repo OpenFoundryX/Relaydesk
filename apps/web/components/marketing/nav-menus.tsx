@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
-import { BrandIcon } from "@/components/marketing/brand-icons";
+import { BrandIcon } from "@/components/brand-icons";
 import { competitors } from "@/lib/marketing/compare";
 import { cn } from "@/lib/utils";
 

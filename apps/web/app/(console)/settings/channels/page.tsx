@@ -3,6 +3,7 @@ import Link from "next/link";
 
 import { PageHeader } from "@/components/console/page-header";
 import { SectionEmpty, SettingSection } from "@/components/console/setting-section";
+import { BrandIcon } from "@/components/brand-icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -98,7 +99,11 @@ export default async function ChannelsPage() {
                 className="flex items-center gap-3 rounded-md border border-ink-200 px-3 py-2.5"
               >
                 <span className="inline-flex size-7 shrink-0 items-center justify-center rounded bg-ink-100 font-mono text-[10px] font-semibold text-ink-500">
-                  {source.monogram}
+                  {source.brand ? (
+                    <BrandIcon brand={source.brand} className="size-4" />
+                  ) : (
+                    source.monogram
+                  )}
                 </span>
                 <div className="min-w-0">
                   <p className="flex items-center gap-1.5 text-[13px] font-medium text-ink-900">

@@ -2,19 +2,23 @@
 
 import { Check } from "lucide-react";
 
+import { BrandIcon, type BrandSlug } from "@/components/brand-icons";
 import { cn } from "@/lib/utils";
 
 /**
- * Vendor-neutral picker tile. We ship no third-party logos, so each option is
- * identified by a monogram square plus its name.
+ * Picker tile. Options carrying a `brand` show its mark; the rest fall back to
+ * a monogram square. Selected tiles render the mark in `currentColor` so it
+ * reads against the dark chip rather than fighting it.
  */
 export function SelectTile({
   label,
+  brand,
   monogram,
   selected,
   onSelect,
 }: {
   label: string;
+  brand?: BrandSlug;
   monogram: string;
   selected: boolean;
   onSelect: () => void;
@@ -37,7 +41,11 @@ export function SelectTile({
           selected ? "bg-ink-900 text-accent-400" : "bg-ink-100 text-ink-500",
         )}
       >
-        {monogram}
+        {brand ? (
+          <BrandIcon brand={brand} mono={selected} className="size-3.5" />
+        ) : (
+          monogram
+        )}
       </span>
       <span className="truncate font-medium">{label}</span>
       {selected && <Check className="ml-auto size-3.5 shrink-0 text-accent-800" />}

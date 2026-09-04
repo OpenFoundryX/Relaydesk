@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 
+import { BrandIcon } from "@/components/brand-icons";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import type { Integration, IntegrationCategory } from "@/lib/mock/types";
@@ -63,7 +64,11 @@ export function IntegrationGrid({ integrations }: { integrations: Integration[] 
                     className="flex items-center gap-3 rounded-md border border-ink-200 bg-white px-3 py-2.5 text-left transition-colors hover:border-ink-300 hover:bg-ink-50"
                   >
                     <span className="inline-flex size-7 shrink-0 items-center justify-center rounded bg-ink-100 font-mono text-[10px] font-semibold text-ink-500">
-                      {entry.monogram}
+                      {entry.brand ? (
+                        <BrandIcon brand={entry.brand} className="size-4" />
+                      ) : (
+                        entry.monogram
+                      )}
                     </span>
                     <span className="truncate text-[13px] font-medium text-ink-900">
                       {entry.name}
