@@ -1994,7 +1994,9 @@ message — no account is created until you accept.
 def notify_invite(
     email: str, token: str, workspace_name: str, inviter_name: str
 ) -> None:
-    url = f"{get_settings().web_url}/invites/{token}"
+    # Fragment, not a path segment: fragments are never sent to a server, so
+    # neither the web tier's nor the API's access log ever sees the token.
+    url = f"{get_settings().web_url}/invites#{token}"
     queue.enqueue_system_email(
         to=email,
         subject=f"Join {workspace_name} on Relaydesk",
@@ -2072,14 +2074,22 @@ class InvitePreview(CamelModel):
     role: str
 
 
+class TokenRequest(CamelModel):
+    token: str
+
+
 class AcceptRequest(CamelModel):
+    token: str
     name: str
     password: str
 ```
 
+The token travels in the **request body**, never a path segment — a path is written verbatim to uvicorn's access log on every request, which would leave a live token in stdout for anyone with log access.
+
 ```python
-@invites_router.get("/{token}", response_model=InvitePreview)
-async def preview_invite(token: str, session: DbSession) -> InvitePreview:
+@invites_router.post("/preview", response_model=InvitePreview)
+async def preview_invite(payload: TokenRequest, session: DbSession) -> InvitePreview:
+    token = payload.token
     invite = await team.read_invite(session, token)
     workspace = await session.get(Workspace, invite.workspace_id)
     return InvitePreview(
@@ -2089,10 +2099,11 @@ async def preview_invite(token: str, session: DbSession) -> InvitePreview:
     )
 
 
-@invites_router.post("/{token}/accept", response_model=TokenResponse)
+@invites_router.post("/accept", response_model=TokenResponse)
 async def accept_invite_route(
-    token: str, payload: AcceptRequest, request: Request, session: DbSession
+    payload: AcceptRequest, request: Request, session: DbSession
 ) -> TokenResponse:
+    token = payload.token
     user = await team.accept_invite(session, token, payload.name, payload.password)
     membership = await auth.default_membership(session, user)
     session_token, row = await auth.create_session(
@@ -5053,6 +5064,7 @@ Four surfaces, all reading real data for the first time.
 - Modify: `apps/web/components/inbox/thread.tsx`
 - Modify: `apps/web/app/(console)/settings/account/page.tsx`
 - Create: `apps/web/app/(console)/settings/account/actions.ts`
+- Create: `apps/web/app/invites/page.tsx` — the accept page
 - Modify: `apps/web/components/settings/invite-dialog.tsx`
 - Modify: `apps/web/lib/mock/settings.ts` (remove `getEmailAccounts`)
 - Modify: `README.md`
@@ -5153,6 +5165,12 @@ The message body is rendered as **text**, never as HTML. `bodyHtml` is stored by
 - [ ] **Step 5: Add the notification preference**
 
 In `settings/account/page.tsx`, add a toggle for assignment email, reading `notifyOnAssignment` from `getMe()` and writing through a server action calling `PATCH /api/auth/me`. Follow the existing setting-row markup on that page.
+
+- [ ] **Step 5b: Build the invite accept page**
+
+Create `apps/web/app/invites/page.tsx`. It must be a **client** component: the token arrives in the URL fragment (`/invites#<token>`), and a fragment is never sent to the server, so a server component cannot see it. Read `window.location.hash` on mount, `POST /api/invites/preview` with the token to render the workspace name and invited address, then collect a name and password and `POST /api/invites/accept`.
+
+On success the API returns the same `TokenResponse` shape as login, so reuse whatever the login page does to establish the session rather than inventing a second path. On a 404 — an invalid, expired, or already-used token — render a plain "This invitation is no longer valid" with a link to sign in. Never render the token itself, and never put it in a link.
 
 - [ ] **Step 6: Update the invite dialog**
 

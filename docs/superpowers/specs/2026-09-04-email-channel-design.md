@@ -434,11 +434,22 @@ Accordingly:
 
 - `POST /team/invites` and `DELETE /team/invites/{id}` lose their `503` and
   work.
-- The public router (`GET /invites/{token}`, `POST /invites/{token}/accept`)
+- The public router (`POST /invites/preview`, `POST /invites/accept`)
   is mounted.
 - Invites expire after 7 days. Slice 1's model already has the column.
 - The token is single-use: accepting deletes the invite row in the same
   transaction that creates the membership.
+- **The token never appears in a URL path or query string, anywhere.** It
+  travels in a request body. A path segment is written verbatim to
+  uvicorn's access log on every request — access logging is on by default —
+  so a `GET /api/invites/<token>` preview would leave a live, still-
+  acceptable token in stdout, container logs, and any aggregator they are
+  shipped to. That hands the token to anyone with log read access, which is
+  the same takeover this design replaces, relocated from the response body
+  to the log. For the same reason the emailed link carries the token in a
+  URL **fragment** (`/invites#<token>`): fragments are never transmitted to
+  a server, so the web tier logs only `/invites`. The accept page reads
+  `location.hash` in the browser and posts the token to the API.
 - The console's invite dialog reports "Invitation sent to <address>" rather
   than offering a link to copy.
 - The README's "Team invites are not enabled" section is replaced.
@@ -472,8 +483,8 @@ PATCH  /auth/me                       { name?, notifyOnAssignment? } -> MeRespon
 
 POST   /team/invites                  { email, role } -> 202                     admin
 DELETE /team/invites/{id}             -> 204                                     admin
-GET    /invites/{token}               -> { workspaceName, email, role }          public
-POST   /invites/{token}/accept        { name, password } -> { token, expiresAt } public
+POST   /invites/preview               { token } -> { workspaceName, email, role } public
+POST   /invites/accept                { token, name, password } -> { token, expiresAt } public
 ```
 
 `MessageOut` gains `direction`, `deliveryState`, and `attachments`
