@@ -1,7 +1,7 @@
 """backfill channel accounts
 
 Every workspace now gets a default email ``ChannelAccount`` at creation
-time (see ``services.workspaces.create_default_channel_account``), but
+time (see ``services.workspaces.create_workspace``), but
 workspaces created before this deploy have none. Without one, a workspace
 has no ingest address at all, so this backfills a "Support" account with a
 fresh random token for every workspace that is missing one.

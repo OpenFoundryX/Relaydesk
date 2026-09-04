@@ -20,7 +20,13 @@ from relaydesk.models.channel_account import ChannelAccount, ChannelAccountKind
 
 TOKEN_BYTES = 6
 TOKEN_PATTERN = re.compile(r"^[0-9a-f]{12}$")
-_TAG = re.compile(r"\+c(\d+)$")
+# Bounded to 9 digits: comfortably covers any realistic conversation number
+# while keeping ``int()`` on the capture safe. An unbounded ``\d+`` lets an
+# attacker-controlled address carry an arbitrarily long digit run, which
+# raises ValueError under CPython's integer-string-conversion limit — a
+# crash reachable from unvalidated mail headers. Simply not matching (and
+# returning None) is the correct answer for an address that absurd anyway.
+_TAG = re.compile(r"\+c(\d{1,9})$")
 
 
 def new_token() -> str:

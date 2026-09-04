@@ -206,7 +206,8 @@ async def seed(session: AsyncSession) -> None:
     if existing is not None:
         return
 
-    workspace = Workspace(
+    workspace = await workspaces.create_workspace(
+        session,
         name="Chronon",
         slug="chronon",
         monogram="CH",
@@ -216,9 +217,6 @@ async def seed(session: AsyncSession) -> None:
         tickets_this_period=412,
         projected_tickets=480,
     )
-    session.add(workspace)
-    await session.flush()
-    await workspaces.create_default_channel_account(session, workspace.id)
 
     admin = User(
         email="nilesh@relaydesk.dev",
@@ -393,7 +391,8 @@ async def bootstrap(
         raise Conflict("A workspace already exists; bootstrap is a one-time command.")
 
     slug = "".join(c if c.isalnum() else "-" for c in workspace_name.lower()).strip("-")
-    workspace = Workspace(
+    workspace = await workspaces.create_workspace(
+        session,
         name=workspace_name,
         slug=slug or "workspace",
         monogram="".join(part[0] for part in workspace_name.split()[:2]).upper()
@@ -405,9 +404,8 @@ async def bootstrap(
         monogram="".join(part[0] for part in admin_name.split()[:2]).upper() or "AD",
         password_hash=hash_password(admin_password),
     )
-    session.add_all([workspace, user])
+    session.add(user)
     await session.flush()
-    await workspaces.create_default_channel_account(session, workspace.id)
     session.add(
         Membership(
             workspace_id=workspace.id,

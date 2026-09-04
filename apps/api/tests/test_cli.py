@@ -12,6 +12,7 @@ from relaydesk.models import (
     User,
     Workspace,
 )
+from relaydesk.models.channel_account import ChannelAccount
 
 
 async def test_seed_creates_a_demo_workspace(db_session: AsyncSession) -> None:
@@ -104,6 +105,48 @@ async def test_seed_writes_an_opening_activity_event_per_conversation(
     by_conversation = {event.conversation_id: event for event in events}
     for conversation in conversations:
         assert by_conversation[conversation.id].at == conversation.last_message_at
+
+
+async def test_seed_gives_the_workspace_a_channel_account(
+    db_session: AsyncSession,
+) -> None:
+    """Regression net for "no workspace exists without a channel account".
+
+    A workspace with no channel account can never receive mail (Task 11's
+    lookup would find nothing for it), silently and with no error. This
+    fails the moment ``seed`` stops going through
+    ``services.workspaces.create_workspace``.
+    """
+    await seed(db_session)
+
+    workspace = await db_session.scalar(
+        sa.select(Workspace).where(Workspace.slug == "chronon")
+    )
+    account = await db_session.scalar(
+        sa.select(ChannelAccount).where(ChannelAccount.workspace_id == workspace.id)
+    )
+
+    assert account is not None
+
+
+async def test_bootstrap_gives_the_workspace_a_channel_account(
+    db_session: AsyncSession,
+) -> None:
+    """Same net as above, for ``bootstrap`` — the other creation path."""
+    await bootstrap(
+        db_session,
+        workspace_name="Acme Support",
+        admin_email="owner@acme.com",
+        admin_name="Ada Owner",
+        admin_password="a-real-password",
+    )
+
+    workspace = await db_session.scalar(sa.select(Workspace))
+    account = await db_session.scalar(
+        sa.select(ChannelAccount).where(ChannelAccount.workspace_id == workspace.id)
+    )
+
+    assert account is not None
 
 
 def test_the_admin_password_comes_from_the_environment_first(monkeypatch) -> None:

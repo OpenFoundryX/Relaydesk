@@ -41,6 +41,22 @@ def test_an_unrelated_address_yields_no_token() -> None:
     assert channel_accounts.token_from_address("") is None
 
 
+def test_a_wrong_shaped_candidate_is_not_a_token() -> None:
+    """Wrong-length or non-hex candidates look similar but must not match —
+    exactly the shapes the random-token design is meant to be robust to."""
+    assert channel_accounts.token_from_address("acme-a3f9c2b1d4e@x") is None
+    assert channel_accounts.token_from_address("acme-a3f9c2b1d4eg@x") is None
+
+
+def test_an_oversized_conversation_tag_does_not_crash() -> None:
+    """A huge digit run in the +c tag must not reach ``int()`` unbounded:
+    CPython caps integer-string conversion, and this parser sits in the
+    path of unvalidated, attacker-controlled mail headers."""
+    address = f"acme-a3f9c2b1d4e5+c{'5' * 5000}@inbound.localhost"
+
+    assert channel_accounts.conversation_number_from_address(address) is None
+
+
 async def test_tokens_are_not_derived_from_the_slug(db_session: AsyncSession) -> None:
     """A derivable address would let anyone who can guess a workspace name
     post tickets into its queue."""

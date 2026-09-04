@@ -7,20 +7,33 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from relaydesk.errors import Invalid, NotFound
 from relaydesk.models import Label, Membership, MembershipStatus, Workspace
-from relaydesk.models.channel_account import ChannelAccount
 from relaydesk.services import channel_accounts
 
 
-async def create_default_channel_account(
-    session: AsyncSession, workspace_id: uuid.UUID
-) -> ChannelAccount:
-    """Give a newly created workspace an address mail can arrive at.
+async def create_workspace(
+    session: AsyncSession,
+    *,
+    name: str,
+    slug: str,
+    monogram: str,
+    **extra: object,
+) -> Workspace:
+    """Create a workspace and its default ingest channel account together.
 
-    Called from every place a workspace is created (``cli.py``'s
-    ``bootstrap`` and ``seed``), in the same transaction as the workspace
-    itself, so no workspace ever exists without one.
+    This is the only place a ``Workspace`` row should be constructed.
+    Every workspace needs a channel account to receive mail; a call site
+    that built ``Workspace(...)`` directly would silently produce one
+    that can never route inbound mail — Task 11's lookup would simply
+    never find a ``ChannelAccount`` for it, with no error and no signal.
+    ``**extra`` passes through optional columns (``timezone``, ``plan``,
+    demo seed data, ...) without this helper needing to know about all of
+    them.
     """
-    return await channel_accounts.create(session, workspace_id, "Support")
+    workspace = Workspace(name=name, slug=slug, monogram=monogram, **extra)
+    session.add(workspace)
+    await session.flush()
+    await channel_accounts.create(session, workspace.id, "Support")
+    return workspace
 
 
 async def active_seat_count(session: AsyncSession, workspace_id: uuid.UUID) -> int:
