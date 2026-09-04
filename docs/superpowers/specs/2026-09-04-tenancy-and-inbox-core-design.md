@@ -278,6 +278,38 @@ POST   /invites/{token}/accept        { name, password } -> { token }        pub
 
 No email is sent in this slice. The console surfaces a copyable invite URL.
 
+### Invites shipped disabled
+
+The invite routes documented above are implemented but **not mounted/enabled**
+in this release. Three successive security reviews each found a live
+cross-tenant account takeover in acceptance, and each fix closed one path and
+opened another; the root cause is architectural rather than a bug: an invite
+binds an email address that nobody has proved they control, and accepting one
+both adopts a (possibly pre-existing) account and issues a session for it.
+With no mailer and no password-reset flow in this slice, there is no way to
+close that loop here.
+
+`POST /team/invites` and `DELETE /team/invites/{id}` now return `503` (an
+`Unavailable` `AppError`); `GET /invites/{token}` and
+`POST /invites/{token}/accept` are not mounted at all. The models, migration,
+and `services.team` functions (`create_invite`, `read_invite`,
+`accept_invite`, `revoke_invite`) are retained, tested, and documented above
+unchanged, since a future slice builds directly on them. The console's invite
+dialog is a disabled trigger with an inline explanation; `/invite/[token]`
+was deleted rather than left to show a "your link is invalid" error for a
+feature that was never live.
+
+**What the next slice must do to enable this:** gate `accept_invite` on proof
+that the accepter controls the invited address — in practice, an emailed
+confirmation link consumed before (or as part of) acceptance — and only then
+mount the two public routes and let `/team/invites` create real invites
+again. That slice should also resolve the residual issues recorded in the
+block comment above `services.team.create_invite`: a session that outlives
+the membership it was minted for, `user_identities` surviving account
+adoption, two concurrent accepts for different workspaces producing two
+active memberships, and an admin who accepts-and-keeps permanently burning
+an address for other workspaces.
+
 ### Inbox
 
 ```

@@ -1,14 +1,25 @@
+import uuid
+
+import pytest
 import sqlalchemy as sa
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from relaydesk.errors import Conflict
 from relaydesk.models import Membership, MembershipStatus, Role, User, Workspace
 from relaydesk.security.passwords import hash_password
+from relaydesk.services import team
 
 
-async def sign_in(
+async def sign_in_full(
     client: AsyncClient, session: AsyncSession, role: Role = Role.admin
-) -> dict:
+) -> tuple[dict, Workspace, User]:
+    """Like `sign_in`, but also hands back the workspace/user rows.
+
+    Invites are no longer reachable over HTTP, so the tests below that
+    still need one now go through `services.team` directly, which needs a
+    workspace id and an inviter id rather than a bearer token.
+    """
     workspace = Workspace(name="Chronon", slug="chronon", monogram="CH")
     user = User(
         email="nilesh@relaydesk.dev",
@@ -32,7 +43,15 @@ async def sign_in(
         "/api/auth/login",
         json={"email": "nilesh@relaydesk.dev", "password": "relaydesk"},
     )
-    return {"Authorization": f"Bearer {response.json()['token']}"}
+    headers = {"Authorization": f"Bearer {response.json()['token']}"}
+    return headers, workspace, user
+
+
+async def sign_in(
+    client: AsyncClient, session: AsyncSession, role: Role = Role.admin
+) -> dict:
+    headers, _workspace, _user = await sign_in_full(client, session, role)
+    return headers
 
 
 async def test_team_lists_the_signed_in_member(
@@ -50,9 +69,11 @@ async def test_team_lists_the_signed_in_member(
     assert body[0]["status"] == "active"
 
 
-async def test_admin_can_create_an_invite(
+async def test_creating_an_invite_over_http_is_unavailable(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
+    """Invites are disabled pending email-verified acceptance (see the
+    block comment in relaydesk.api.team and relaydesk.services.team)."""
     headers = await sign_in(client, db_session)
 
     response = await client.post(
@@ -61,18 +82,46 @@ async def test_admin_can_create_an_invite(
         json={"email": "sara@relaydesk.dev", "role": "Agent"},
     )
 
-    assert response.status_code == 201
-    assert "/invite/" in response.json()["inviteUrl"]
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "unavailable"
+
+
+async def test_revoking_an_invite_over_http_is_unavailable(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    headers = await sign_in(client, db_session)
+
+    response = await client.delete(
+        f"/api/team/invites/{uuid.uuid4()}",
+        headers=headers,
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "unavailable"
+
+
+async def test_accepting_an_invite_over_http_is_not_routable(
+    client: AsyncClient,
+) -> None:
+    """The public accept/preview router is not mounted at all: the route
+    doesn't exist, rather than existing and refusing."""
+    response = await client.post(
+        f"/api/invites/{uuid.uuid4()}/accept",
+        json={"name": "Someone", "password": "does-not-matter"},
+    )
+
+    assert response.status_code == 404
 
 
 async def test_an_invited_member_shows_as_invited(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    headers = await sign_in(client, db_session)
-    await client.post(
-        "/api/team/invites",
-        headers=headers,
-        json={"email": "sara@relaydesk.dev", "role": "Agent"},
+    """Invite creation is unreachable over HTTP now, so this goes through
+    the service directly — `list_members` (and the team page it backs)
+    still surfaces a pending invite alongside active members."""
+    headers, workspace, admin = await sign_in_full(client, db_session)
+    await team.create_invite(
+        db_session, workspace.id, "sara@relaydesk.dev", Role.agent, admin.id
     )
 
     body = (await client.get("/api/team", headers=headers)).json()
@@ -99,24 +148,16 @@ async def test_an_agent_cannot_create_an_invite(
 async def test_accepting_an_invite_creates_a_working_login(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    headers = await sign_in(client, db_session)
-    invite_url = (
-        await client.post(
-            "/api/team/invites",
-            headers=headers,
-            json={"email": "sara@relaydesk.dev", "role": "Agent"},
-        )
-    ).json()["inviteUrl"]
-    token = invite_url.rsplit("/", 1)[-1]
-
-    accepted = await client.post(
-        f"/api/invites/{token}/accept",
-        json={"name": "Sara Duval", "password": "another-horse"},
+    """Invite creation/acceptance are unreachable over HTTP now (see the
+    503/404 tests above), so this drives `services.team` directly and only
+    checks the HTTP-visible result: the accepted account can log in."""
+    _headers, workspace, admin = await sign_in_full(client, db_session)
+    _invite, token = await team.create_invite(
+        db_session, workspace.id, "sara@relaydesk.dev", Role.agent, admin.id
     )
-    assert accepted.status_code == 200
-    # Acceptance issues a session, matching POST /auth/login's shape.
-    assert accepted.json()["token"]
-    assert accepted.json()["expiresAt"]
+
+    user = await team.accept_invite(db_session, token, "Sara Duval", "another-horse")
+    assert user.email == "sara@relaydesk.dev"
 
     login = await client.post(
         "/api/auth/login",
@@ -128,23 +169,14 @@ async def test_accepting_an_invite_creates_a_working_login(
 async def test_an_invite_cannot_be_accepted_twice(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    headers = await sign_in(client, db_session)
-    invite_url = (
-        await client.post(
-            "/api/team/invites",
-            headers=headers,
-            json={"email": "sara@relaydesk.dev", "role": "Agent"},
-        )
-    ).json()["inviteUrl"]
-    token = invite_url.rsplit("/", 1)[-1]
-    payload = {"name": "Sara Duval", "password": "another-horse"}
+    _headers, workspace, admin = await sign_in_full(client, db_session)
+    _invite, token = await team.create_invite(
+        db_session, workspace.id, "sara@relaydesk.dev", Role.agent, admin.id
+    )
 
-    assert (
-        await client.post(f"/api/invites/{token}/accept", json=payload)
-    ).status_code == 200
-    second = await client.post(f"/api/invites/{token}/accept", json=payload)
-
-    assert second.status_code == 409
+    await team.accept_invite(db_session, token, "Sara Duval", "another-horse")
+    with pytest.raises(Conflict):
+        await team.accept_invite(db_session, token, "Sara Duval", "another-horse")
 
 
 async def test_setup_tasks_reflect_real_state(
@@ -162,23 +194,15 @@ async def test_setup_tasks_reflect_real_state(
 async def test_inviting_the_same_pending_address_twice_conflicts(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    headers = await sign_in(client, db_session)
-    await client.post(
-        "/api/team/invites",
-        headers=headers,
-        json={"email": "sara@relaydesk.dev", "role": "Agent"},
+    _headers, workspace, admin = await sign_in_full(client, db_session)
+    await team.create_invite(
+        db_session, workspace.id, "sara@relaydesk.dev", Role.agent, admin.id
     )
 
-    second = await client.post(
-        "/api/team/invites",
-        headers=headers,
-        json={"email": "sara@relaydesk.dev", "role": "Agent"},
-    )
-
-    assert second.status_code == 409
-    body = (await client.get("/api/team", headers=headers)).json()
-    matches = [entry for entry in body if entry["email"] == "sara@relaydesk.dev"]
-    assert len(matches) == 1
+    with pytest.raises(Conflict):
+        await team.create_invite(
+            db_session, workspace.id, "sara@relaydesk.dev", Role.agent, admin.id
+        )
 
 
 async def test_accepting_an_invite_adopts_an_unclaimed_account(
@@ -193,7 +217,7 @@ async def test_accepting_an_invite_adopts_an_unclaimed_account(
     an address squatted by an earlier admin would stay under his password
     forever.
     """
-    headers = await sign_in(client, db_session)
+    _headers, workspace, admin = await sign_in_full(client, db_session)
     existing = User(
         email="sara@relaydesk.dev",
         name="S Duval",
@@ -203,29 +227,17 @@ async def test_accepting_an_invite_adopts_an_unclaimed_account(
     db_session.add(existing)
     await db_session.commit()
 
-    invite_url = (
-        await client.post(
-            "/api/team/invites",
-            headers=headers,
-            json={"email": "sara@relaydesk.dev", "role": "Agent"},
-        )
-    ).json()["inviteUrl"]
-    token = invite_url.rsplit("/", 1)[-1]
-
-    accepted = await client.post(
-        f"/api/invites/{token}/accept",
-        json={"name": "Sara Duval", "password": "saras-new-password"},
+    _invite, token = await team.create_invite(
+        db_session, workspace.id, "sara@relaydesk.dev", Role.agent, admin.id
     )
 
-    assert accepted.status_code == 200
-    # Acceptance now signs you in, so the response is a session token rather
-    # than the user. Resolve it to check it adopted the existing row rather
-    # than creating a second one.
-    session_headers = {"Authorization": f"Bearer {accepted.json()['token']}"}
-    me = await client.get("/api/auth/me", headers=session_headers)
-    assert me.status_code == 200
-    assert me.json()["user"]["id"] == str(existing.id)
-    assert me.json()["user"]["name"] == "Sara Duval"
+    accepted_user = await team.accept_invite(
+        db_session, token, "Sara Duval", "saras-new-password"
+    )
+
+    # Adopted the existing row rather than creating a second one.
+    assert accepted_user.id == existing.id
+    assert accepted_user.name == "Sara Duval"
 
     new_password = await client.post(
         "/api/auth/login",
@@ -241,23 +253,24 @@ async def test_accepting_an_invite_adopts_an_unclaimed_account(
 
 
 async def invite_and_accept(
-    client: AsyncClient, headers: dict, email: str = "sara@relaydesk.dev"
+    client: AsyncClient,
+    session: AsyncSession,
+    headers: dict,
+    workspace_id: uuid.UUID,
+    invited_by: uuid.UUID,
+    email: str = "sara@relaydesk.dev",
 ) -> str:
-    """Invite `email` as an Agent and accept it, returning the membership id."""
-    invite_url = (
-        await client.post(
-            "/api/team/invites",
-            headers=headers,
-            json={"email": email, "role": "Agent"},
-        )
-    ).json()["inviteUrl"]
-    token = invite_url.rsplit("/", 1)[-1]
-    await client.post(
-        f"/api/invites/{token}/accept",
-        json={"name": "Sara Duval", "password": "another-horse"},
+    """Invite `email` as an Agent and accept it, returning the membership id.
+
+    Invites are not reachable over HTTP in this release, so this drives
+    `services.team` directly rather than the (now-503/404) endpoints.
+    """
+    _invite, token = await team.create_invite(
+        session, workspace_id, email, Role.agent, invited_by
     )
-    team = (await client.get("/api/team", headers=headers)).json()
-    member = next(entry for entry in team if entry["email"] == email)
+    await team.accept_invite(session, token, "Sara Duval", "another-horse")
+    roster = (await client.get("/api/team", headers=headers)).json()
+    member = next(entry for entry in roster if entry["email"] == email)
     return member["id"]
 
 
@@ -296,8 +309,10 @@ async def test_an_agent_cannot_remove_a_member(
 async def test_admin_can_change_a_members_role(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    headers = await sign_in(client, db_session)
-    membership_id = await invite_and_accept(client, headers)
+    headers, workspace, admin = await sign_in_full(client, db_session)
+    membership_id = await invite_and_accept(
+        client, db_session, headers, workspace.id, admin.id
+    )
 
     response = await client.patch(
         f"/api/team/members/{membership_id}",
@@ -306,24 +321,26 @@ async def test_admin_can_change_a_members_role(
     )
     assert response.status_code == 204
 
-    team = (await client.get("/api/team", headers=headers)).json()
-    sara = next(entry for entry in team if entry["email"] == "sara@relaydesk.dev")
+    roster = (await client.get("/api/team", headers=headers)).json()
+    sara = next(entry for entry in roster if entry["email"] == "sara@relaydesk.dev")
     assert sara["role"] == "Admin"
 
 
 async def test_admin_can_remove_a_member(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    headers = await sign_in(client, db_session)
-    membership_id = await invite_and_accept(client, headers)
+    headers, workspace, admin = await sign_in_full(client, db_session)
+    membership_id = await invite_and_accept(
+        client, db_session, headers, workspace.id, admin.id
+    )
 
     response = await client.delete(
         f"/api/team/members/{membership_id}", headers=headers
     )
     assert response.status_code == 204
 
-    team = (await client.get("/api/team", headers=headers)).json()
-    assert all(entry["email"] != "sara@relaydesk.dev" for entry in team)
+    roster = (await client.get("/api/team", headers=headers)).json()
+    assert all(entry["email"] != "sara@relaydesk.dev" for entry in roster)
 
 
 async def test_member_routes_404_for_a_membership_in_another_workspace(
@@ -398,9 +415,14 @@ async def test_demoting_one_of_several_admins_succeeds(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     """Sanity check that the last-admin guard doesn't over-trigger."""
-    headers = await sign_in(client, db_session)
+    headers, workspace, admin = await sign_in_full(client, db_session)
     second_admin_id = await invite_and_accept(
-        client, headers, email="second-admin@relaydesk.dev"
+        client,
+        db_session,
+        headers,
+        workspace.id,
+        admin.id,
+        email="second-admin@relaydesk.dev",
     )
     await client.patch(
         f"/api/team/members/{second_admin_id}",
@@ -408,9 +430,9 @@ async def test_demoting_one_of_several_admins_succeeds(
         json={"role": "Admin"},
     )
 
-    team = (await client.get("/api/team", headers=headers)).json()
+    roster = (await client.get("/api/team", headers=headers)).json()
     self_membership_id = next(
-        entry["id"] for entry in team if entry["email"] == "nilesh@relaydesk.dev"
+        entry["id"] for entry in roster if entry["email"] == "nilesh@relaydesk.dev"
     )
 
     response = await client.patch(
@@ -433,8 +455,12 @@ async def test_accepting_is_refused_for_a_claimed_account(
     account nor give it a second membership. ``services.auth
     .active_membership`` has no tiebreak, so a second active membership
     would also make which workspace a login resolves to arbitrary.
+
+    Invite creation/acceptance are unreachable over HTTP now, so this
+    drives `services.team` directly; the guard being pinned lives in the
+    service, not the route.
     """
-    headers = await sign_in(client, db_session)
+    _headers, workspace, admin = await sign_in_full(client, db_session)
 
     other_workspace = Workspace(name="Other Co", slug="other-co", monogram="OC")
     victim = User(
@@ -455,22 +481,13 @@ async def test_accepting_is_refused_for_a_claimed_account(
     )
     await db_session.commit()
 
-    invite_url = (
-        await client.post(
-            "/api/team/invites",
-            headers=headers,
-            json={"email": "victim@elsewhere.dev", "role": "Agent"},
-        )
-    ).json()["inviteUrl"]
-    token = invite_url.rsplit("/", 1)[-1]
-
-    accepted = await client.post(
-        f"/api/invites/{token}/accept",
-        json={"name": "Vic Tim", "password": "attacker-chosen"},
+    _invite, token = await team.create_invite(
+        db_session, workspace.id, "victim@elsewhere.dev", Role.agent, admin.id
     )
 
-    assert accepted.status_code == 409
-    assert accepted.json()["error"]["code"] == "conflict"
+    with pytest.raises(Conflict) as excinfo:
+        await team.accept_invite(db_session, token, "Vic Tim", "attacker-chosen")
+    assert excinfo.value.code == "conflict"
 
     memberships = (
         await db_session.scalars(
@@ -487,8 +504,10 @@ async def test_a_lowercase_role_is_rejected_rather_than_demoting(
 ) -> None:
     """"admin" is the casing /auth/me returns, so it must not silently
     fall through to Agent."""
-    headers = await sign_in(client, db_session)
-    membership_id = await invite_and_accept(client, headers)
+    headers, workspace, admin = await sign_in_full(client, db_session)
+    membership_id = await invite_and_accept(
+        client, db_session, headers, workspace.id, admin.id
+    )
     await client.patch(
         f"/api/team/members/{membership_id}",
         headers=headers,
@@ -502,14 +521,18 @@ async def test_a_lowercase_role_is_rejected_rather_than_demoting(
     )
 
     assert response.status_code == 422
-    team = (await client.get("/api/team", headers=headers)).json()
-    sara = next(entry for entry in team if entry["email"] == "sara@relaydesk.dev")
+    roster = (await client.get("/api/team", headers=headers)).json()
+    sara = next(entry for entry in roster if entry["email"] == "sara@relaydesk.dev")
     assert sara["role"] == "Admin"
 
 
 async def test_a_lowercase_invite_role_is_rejected(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
+    """Body validation still runs ahead of the route body, even though the
+    route itself now always answers 503 for a well-formed request: FastAPI
+    rejects a malformed body before the handler (and its `Unavailable`)
+    ever runs."""
     headers = await sign_in(client, db_session)
 
     response = await client.post(
@@ -533,27 +556,34 @@ async def test_a_squatted_then_released_address_is_reclaimed_by_the_real_invitee
     If a later, legitimate acceptance merely *linked* to that row, the real
     person's typed password would be discarded and the squatter would hold
     their account in the inviting workspace.
+
+    This is a regression pin for the next slice, kept intact: only the
+    invite creation/acceptance calls move from HTTP to `services.team`
+    directly, since those endpoints are unreachable now. Everything the
+    scenario depends on — deleting a membership, logging in — is still
+    real HTTP against the running app.
     """
-    squatter_headers = await sign_in(client, db_session)
+    squatter_headers, squatter_workspace, squatter_admin = await sign_in_full(
+        client, db_session
+    )
 
     # 1. Mint an invite for an address he does not control, and take it.
-    squat_url = (
-        await client.post(
-            "/api/team/invites",
-            headers=squatter_headers,
-            json={"email": "target@outside.dev", "role": "Agent"},
-        )
-    ).json()["inviteUrl"]
-    squatted = await client.post(
-        f"/api/invites/{squat_url.rsplit('/', 1)[-1]}/accept",
-        json={"name": "Not The Owner", "password": "squatter-password"},
+    _invite, squat_token = await team.create_invite(
+        db_session,
+        squatter_workspace.id,
+        "target@outside.dev",
+        Role.agent,
+        squatter_admin.id,
     )
-    assert squatted.status_code == 200
+    squatter = await team.accept_invite(
+        db_session, squat_token, "Not The Owner", "squatter-password"
+    )
+    assert squatter.email == "target@outside.dev"
 
     # 2. Release it, so the row survives with no active membership.
-    team = (await client.get("/api/team", headers=squatter_headers)).json()
+    roster = (await client.get("/api/team", headers=squatter_headers)).json()
     squatted_id = next(
-        entry["id"] for entry in team if entry["email"] == "target@outside.dev"
+        entry["id"] for entry in roster if entry["email"] == "target@outside.dev"
     )
     released = await client.delete(
         f"/api/team/members/{squatted_id}", headers=squatter_headers
@@ -580,45 +610,24 @@ async def test_a_squatted_then_released_address_is_reclaimed_by_the_real_invitee
         )
     )
     await db_session.commit()
-    acme_headers = {
-        "Authorization": "Bearer "
-        + (
-            await client.post(
-                "/api/auth/login",
-                json={"email": "ada@acme.dev", "password": "relaydesk"},
-            )
-        ).json()["token"]
-    }
-    acme_url = (
-        await client.post(
-            "/api/team/invites",
-            headers=acme_headers,
-            json={"email": "target@outside.dev", "role": "Agent"},
-        )
-    ).json()["inviteUrl"]
 
-    accepted = await client.post(
-        f"/api/invites/{acme_url.rsplit('/', 1)[-1]}/accept",
-        json={"name": "Real Owner", "password": "real-owner-password"},
+    _acme_invite, acme_token = await team.create_invite(
+        db_session, acme.id, "target@outside.dev", Role.agent, ada.id
     )
-    assert accepted.status_code == 200
+    real_owner = await team.accept_invite(
+        db_session, acme_token, "Real Owner", "real-owner-password"
+    )
+    assert real_owner.id == squatter.id  # same row, reclaimed
 
     # 4. The real person holds the account; the squatter is locked out.
-    me = await client.get(
-        "/api/auth/me",
-        headers={"Authorization": f"Bearer {accepted.json()['token']}"},
-    )
-    assert me.json()["user"]["name"] == "Real Owner"
-    assert me.json()["workspace"]["name"] == "Acme"
-
     real = await client.post(
         "/api/auth/login",
         json={"email": "target@outside.dev", "password": "real-owner-password"},
     )
-    squatter = await client.post(
+    squatter_login = await client.post(
         "/api/auth/login",
         json={"email": "target@outside.dev", "password": "squatter-password"},
     )
 
     assert real.status_code == 200
-    assert squatter.status_code == 401
+    assert squatter_login.status_code == 401

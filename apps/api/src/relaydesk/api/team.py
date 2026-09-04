@@ -1,26 +1,23 @@
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Response, status
+from fastapi import APIRouter, Response, status
 
-from relaydesk.api.deps import DbSession, Scope, client_ip
-from relaydesk.config import get_settings
-from relaydesk.errors import NotFound
-from relaydesk.models import Role, Workspace
-from relaydesk.schemas.auth import TokenResponse
+from relaydesk.api.deps import DbSession, Scope
+from relaydesk.errors import Unavailable
+from relaydesk.models import Role
 from relaydesk.schemas.team import (
-    AcceptInviteRequest,
-    InviteCreated,
-    InvitePreview,
     InviteRequest,
     MemberPatch,
     RoleLabel,
     TeamMemberOut,
 )
-from relaydesk.services import auth, team
+from relaydesk.services import team
 
 router = APIRouter()
-invite_router = APIRouter()
+
+INVITES_UNAVAILABLE_MESSAGE = (
+    "Invites require email delivery, which is not available yet."
+)
 
 
 def _role_from_label(label: RoleLabel) -> Role:
@@ -33,33 +30,36 @@ async def list_team(scope: Scope, session: DbSession) -> list[TeamMemberOut]:
     return [TeamMemberOut.model_validate(member) for member in members]
 
 
-@router.post(
-    "/invites", response_model=InviteCreated, status_code=status.HTTP_201_CREATED
-)
-async def create_team_invite(
-    payload: InviteRequest, scope: Scope, session: DbSession
-) -> InviteCreated:
+# --- Invites: disabled, not just unmounted -------------------------------
+#
+# Three successive security reviews each found a live cross-tenant account
+# takeover here, and each fix closed one path and opened another. The root
+# cause is architectural: an invite binds an email address that nobody has
+# proved they control, and accepting one both adopts a (possibly
+# pre-existing) account and issues a 30-day session. There is no mailer and
+# no password-reset flow in this slice, so there is no way to close that
+# loop here — see `relaydesk.services.team` for the full residual-risk list.
+#
+# These two routes are kept mounted (rather than removed) only so the
+# console gets a clear, stable 503 instead of a 404 that looks like a
+# routing bug. The public accept/preview routes (`GET/POST /invites/...`)
+# are not mounted at all — see relaydesk.api.router.
+#
+# Do not gate this behind a config flag or environment variable: a flag
+# that defaults off still ships the vulnerability behind a switch that
+# someone will eventually flip without reading this comment. Re-enabling
+# requires a code change, made only once acceptance proves control of the
+# address (e.g. a confirmation link sent to the invited email).
+@router.post("/invites", status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+async def create_team_invite(payload: InviteRequest, scope: Scope) -> None:
     scope.require_admin()
-    invite, token = await team.create_invite(
-        session,
-        scope.workspace_id,
-        payload.email,
-        _role_from_label(payload.role),
-        scope.user.id,
-    )
-    settings = get_settings()
-    return InviteCreated(
-        id=str(invite.id), invite_url=f"{settings.web_url}/invite/{token}"
-    )
+    raise Unavailable(INVITES_UNAVAILABLE_MESSAGE)
 
 
-@router.delete("/invites/{invite_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_team_invite(
-    invite_id: uuid.UUID, scope: Scope, session: DbSession
-) -> Response:
+@router.delete("/invites/{invite_id}", status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+async def delete_team_invite(invite_id: uuid.UUID, scope: Scope) -> None:
     scope.require_admin()
-    await team.revoke_invite(session, scope.workspace_id, invite_id)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    raise Unavailable(INVITES_UNAVAILABLE_MESSAGE)
 
 
 @router.patch("/members/{membership_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -83,33 +83,3 @@ async def delete_team_member(
     scope.require_admin()
     await team.remove_member(session, scope.workspace_id, membership_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@invite_router.get("/{token}", response_model=InvitePreview)
-async def preview_invite(token: str, session: DbSession) -> InvitePreview:
-    invite = await team.read_invite(session, token)
-    workspace = await session.get(Workspace, invite.workspace_id)
-    if workspace is None:
-        raise NotFound("This invite is not valid.")
-    return InvitePreview(
-        workspace_name=workspace.name,
-        email=invite.email,
-        role=team.ROLE_LABEL[invite.role],
-    )
-
-
-@invite_router.post("/{token}/accept", response_model=TokenResponse)
-async def accept_invite(
-    token: str,
-    payload: AcceptInviteRequest,
-    session: DbSession,
-    ip: Annotated[str | None, Depends(client_ip)],
-    user_agent: Annotated[str | None, Header()] = None,
-) -> TokenResponse:
-    """Accepting an invite signs you in, so the console can go straight to
-    the inbox. Same response shape as POST /auth/login."""
-    user = await team.accept_invite(session, token, payload.name, payload.password)
-    token_value, row = await auth.create_session(
-        session, user, user_agent=user_agent, ip=ip
-    )
-    return TokenResponse(token=token_value, expires_at=row.expires_at)

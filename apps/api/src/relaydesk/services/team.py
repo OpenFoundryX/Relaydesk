@@ -79,6 +79,41 @@ async def list_members(
     return members
 
 
+# --- Invites: retained but not exposed over HTTP -------------------------
+#
+# `create_invite`, `read_invite`, `accept_invite`, and `revoke_invite` below
+# are NOT reachable from the API in this release (see `relaydesk.api.team`
+# and `relaydesk.api.router`). They are kept — and kept tested — because the
+# guards that *are* correct here (claimed-account -> Conflict, the
+# IntegrityError race handling in `accept_invite`) are the foundation the
+# next slice builds on. Do not re-expose any of this over HTTP until
+# acceptance requires proof that the accepter controls the invited address
+# (e.g. an emailed confirmation link) — the root problem is that an invite
+# currently binds an email address that nobody has proved they control, and
+# acceptance both adopts an account and issues a session for it. Specific
+# residual issues the next implementer inherits rather than rediscovers:
+#
+# * Acceptance issues a session that outlives the membership it was minted
+#   for. Sessions are user-scoped, not membership-scoped, and
+#   `services.auth.active_membership` re-derives the workspace from the
+#   user's *current* memberships on every request. So a session survives
+#   its originating membership being deleted, and silently re-points at
+#   whatever workspace that user's account joins next.
+# * `user_identities` (federated/Google credentials) survive account
+#   adoption in `accept_invite`. Adopting an unclaimed row changes who
+#   controls the account without touching any identity row linked to it, so
+#   a federated credential can outlive the change of owner.
+# * Two concurrent `accept_invite` calls for two *different* invites to the
+#   same email collide on nothing — there is no unique constraint stopping
+#   one user from ending up with two active memberships in two workspaces.
+#   `active_membership`'s whole design (a bare `SELECT ... WHERE user_id =`
+#   with no `ORDER BY`) assumes exactly one active membership per user; two
+#   makes which workspace a login resolves to arbitrary.
+# * An admin who accepts an invite for an address he does not own and then
+#   *keeps* the membership (rather than releasing it, as in the squat/
+#   release test below) permanently burns that email address: it is now
+#   "claimed" forever, so the real owner can never accept an invite to any
+#   workspace for it.
 async def create_invite(
     session: AsyncSession,
     workspace_id: uuid.UUID,

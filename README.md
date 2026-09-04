@@ -9,11 +9,20 @@ in its initial development stage.
 ## Project status
 
 Relaydesk is under active early development. Workspaces, sign-in (including
-Google), team management with invites, and the ticket inbox — conversations,
-replies, labels, saved views, and activity history — are implemented on a
+Google), team management, and the ticket inbox — conversations, replies,
+labels, saved views, and activity history — are implemented on a
 multi-tenant Next.js, FastAPI, and PostgreSQL foundation. Channels beyond the
 seeded demo data, AI features, the knowledge base, analytics, and billing are
 not yet implemented.
+
+Team invites are **not enabled** in this release. The invite flow lets
+whoever holds an invite link both choose an account's password and sign in
+as it, and without an email-sending mailer there is no way to confirm the
+invited address belongs to the person accepting it — so the API currently
+answers `503` for invite creation, and there is no invite-acceptance page.
+The underlying invite model and service logic exist in the codebase for a
+future release once acceptance can be gated on proving control of the
+invited address (e.g. a confirmation email).
 
 ## Requirements
 
