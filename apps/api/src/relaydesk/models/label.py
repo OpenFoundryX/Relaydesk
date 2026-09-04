@@ -1,7 +1,8 @@
 import enum
 import uuid
 
-from sqlalchemy import Enum, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Enum, ForeignKey, UniqueConstraint
+from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -26,7 +27,10 @@ class Label(UUIDMixin, TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    # CITEXT, like contacts.email, so "Billing" and "billing" collide at the
+    # database's unique constraint instead of relying on the service layer
+    # to catch a case-insensitive duplicate before it's inserted.
+    name: Mapped[str] = mapped_column(CITEXT(), nullable=False)
     color: Mapped[LabelColor] = mapped_column(
         Enum(LabelColor, native_enum=False, length=16),
         default=LabelColor.slate,

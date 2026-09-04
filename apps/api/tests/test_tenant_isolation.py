@@ -23,7 +23,7 @@ async def two_workspaces(client: AsyncClient, db_session: AsyncSession):
     theirs = await make_workspace(db_session, slug="northwind")
     me = await make_member(db_session, mine, email="me@relaydesk.dev", name="Me Myself")
     await make_member(db_session, theirs, email="them@northwind.io", name="Them Other")
-    foreign = await make_conversation(db_session, theirs)
+    foreign = await make_conversation(db_session, theirs, with_draft=True)
     foreign_label = await make_label(db_session, theirs, name="TheirLabel")
     headers = await sign_in(client, db_session, me.email)
     return headers, foreign, foreign_label
@@ -64,3 +64,18 @@ async def test_counts_exclude_other_workspaces(client, two_workspaces) -> None:
     body = (await client.get("/api/conversations/counts", headers=headers)).json()
 
     assert all(entry["count"] == 0 for entry in body["statuses"])
+    assert body["drafts"] == 0
+
+
+async def test_creating_a_label_matching_a_foreign_name_is_not_a_collision(
+    client, two_workspaces
+) -> None:
+    headers, _, foreign_label = two_workspaces
+
+    response = await client.post(
+        "/api/labels", headers=headers, json={"name": foreign_label.name}
+    )
+
+    assert response.status_code == 201
+    assert response.json()["id"] != str(foreign_label.id)
+    assert response.json()["name"] == foreign_label.name

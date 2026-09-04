@@ -5,7 +5,7 @@ from datetime import datetime
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from relaydesk.errors import NotFound
+from relaydesk.errors import Invalid, NotFound
 from relaydesk.models import (
     ActivityEvent,
     Conversation,
@@ -45,6 +45,10 @@ async def list_conversations(
 
     Ordering by ``(last_message_at, id)`` makes the cursor stable even when
     two conversations share a timestamp.
+
+    ``include_trash`` has no caller yet: every route today either passes an
+    explicit ``status`` or relies on the default (trash excluded). It is
+    plumbed through for a future "trash" view, not evidence one exists.
     """
     query = sa.select(Conversation).where(Conversation.workspace_id == workspace_id)
 
@@ -63,7 +67,12 @@ async def list_conversations(
         query = query.join(Draft, Draft.conversation_id == Conversation.id)
 
     if cursor:
-        moment, identifier = decode_cursor(cursor)
+        try:
+            moment, identifier = decode_cursor(cursor)
+        except ValueError as error:
+            # binascii.Error and UnicodeDecodeError both subclass ValueError,
+            # so this also catches a malformed base64 payload.
+            raise Invalid("Invalid cursor.") from error
         query = query.where(
             sa.tuple_(Conversation.last_message_at, Conversation.id)
             < (moment, identifier)
@@ -100,7 +109,10 @@ async def list_messages(
     return list(
         await session.scalars(
             sa.select(Message)
-            .where(Message.conversation_id == conversation_id)
+            .where(
+                Message.conversation_id == conversation_id,
+                Message.workspace_id == workspace_id,
+            )
             .order_by(Message.sent_at)
         )
     )
@@ -111,7 +123,10 @@ async def get_draft(
 ) -> Draft:
     await get_conversation(session, workspace_id, conversation_id)
     draft = await session.scalar(
-        sa.select(Draft).where(Draft.conversation_id == conversation_id)
+        sa.select(Draft).where(
+            Draft.conversation_id == conversation_id,
+            Draft.workspace_id == workspace_id,
+        )
     )
     if draft is None:
         raise NotFound("No draft for this conversation.")
@@ -125,7 +140,10 @@ async def list_activity(
     return list(
         await session.scalars(
             sa.select(ActivityEvent)
-            .where(ActivityEvent.conversation_id == conversation_id)
+            .where(
+                ActivityEvent.conversation_id == conversation_id,
+                ActivityEvent.workspace_id == workspace_id,
+            )
             .order_by(ActivityEvent.at.desc())
         )
     )

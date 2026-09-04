@@ -49,7 +49,7 @@ def upgrade() -> None:
     op.create_table(
         "labels",
         sa.Column("workspace_id", sa.UUID(), nullable=False),
-        sa.Column("name", sa.String(length=64), nullable=False),
+        sa.Column("name", postgresql.CITEXT(), nullable=False),
         sa.Column(
             "color",
             sa.Enum(

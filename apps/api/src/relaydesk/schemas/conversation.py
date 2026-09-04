@@ -97,6 +97,17 @@ class LabelCreateRequest(CamelModel):
 
 
 def conversation_out(conversation: Conversation, timezone: str) -> ConversationOut:
+    """Serialize a conversation for the wire.
+
+    ``draft`` and ``labels`` are ``lazy="selectin"`` relationships loaded
+    once and cached on the instance. The session's ``expire_on_commit=False``
+    means a mutation in the *same* session that inserts a ``Draft`` or a
+    ``ConversationLabel`` row and then serializes this same in-memory object
+    will silently read the pre-mutation ``labelIds``/``hasDraft: false`` —
+    no exception, just stale output. Call
+    ``await session.refresh(conversation, ["draft", "labels", "assignee"])``
+    after such a mutation and before calling this function.
+    """
     return ConversationOut(
         id=str(conversation.id),
         number=conversation.number,

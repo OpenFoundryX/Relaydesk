@@ -30,8 +30,11 @@ async def list_route(
     status: str | None = None,
     label_id: Annotated[uuid.UUID | None, Query(alias="labelId")] = None,
     assignee_id: Annotated[uuid.UUID | None, Query(alias="assigneeId")] = None,
+    # Accepted for the console's saved-view URLs but not yet forwarded to the
+    # service: saved views are wired up in a later task. Passing it today
+    # has no effect on the results.
     view_id: Annotated[uuid.UUID | None, Query(alias="viewId")] = None,
-    limit: int = 50,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
     cursor: str | None = None,
 ) -> ConversationPage:
     # "all" and "drafts" are sidebar filters, not stored statuses.

@@ -1,7 +1,9 @@
+from datetime import UTC, datetime, timedelta
+
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from relaydesk.models import ConversationStatus
+from relaydesk.models import Channel, Contact, Conversation, ConversationStatus
 from tests.factories import (
     make_conversation,
     make_label,
@@ -127,6 +129,97 @@ async def test_labels_are_listed_and_created(
     assert [entry["name"] for entry in listed] == ["Billing"]
     assert created.status_code == 201
     assert created.json()["color"] in {"citron", "slate", "amber", "rose", "sky"}
+
+
+async def test_a_negative_limit_is_rejected_not_500(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    workspace = await make_workspace(db_session)
+    user = await make_member(db_session, workspace)
+    headers = await sign_in(client, db_session, user.email)
+
+    response = await client.get(
+        "/api/conversations", params={"limit": -5}, headers=headers
+    )
+
+    assert response.status_code == 422
+
+
+async def test_a_malformed_cursor_is_rejected_not_500(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    workspace = await make_workspace(db_session)
+    user = await make_member(db_session, workspace)
+    headers = await sign_in(client, db_session, user.email)
+
+    response = await client.get(
+        "/api/conversations", params={"cursor": "not-valid-base64!!"}, headers=headers
+    )
+
+    assert response.status_code == 422
+
+
+async def test_pagination_does_not_skip_or_duplicate_a_shared_timestamp(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Three conversations sharing one ``last_message_at``, paged by two.
+
+    The keyset cursor orders by ``(last_message_at, id)``, so a tied
+    timestamp must still page cleanly: no row skipped, none repeated, and
+    the last page reports no further cursor.
+    """
+    workspace = await make_workspace(db_session)
+    user = await make_member(db_session, workspace)
+    contact = Contact(
+        workspace_id=workspace.id, email="triage@northwind.io", name="Triage Bot"
+    )
+    db_session.add(contact)
+    await db_session.flush()
+
+    shared_at = datetime.now(UTC) - timedelta(minutes=5)
+    conversations = []
+    for index in range(3):
+        workspace.conversation_seq += 1
+        conversation = Conversation(
+            workspace_id=workspace.id,
+            number=workspace.conversation_seq,
+            subject=f"Ticket {index}",
+            contact_id=contact.id,
+            channel=Channel.email,
+            last_message_at=shared_at,
+            preview="",
+        )
+        db_session.add(conversation)
+        conversations.append(conversation)
+    await db_session.commit()
+    headers = await sign_in(client, db_session, user.email)
+
+    first_page = (
+        await client.get(
+            "/api/conversations",
+            params={"status": "open", "limit": 2},
+            headers=headers,
+        )
+    ).json()
+    assert len(first_page["items"]) == 2
+    assert first_page["nextCursor"] is not None
+
+    second_page = (
+        await client.get(
+            "/api/conversations",
+            params={"status": "open", "limit": 2, "cursor": first_page["nextCursor"]},
+            headers=headers,
+        )
+    ).json()
+    assert len(second_page["items"]) == 1
+    assert second_page["nextCursor"] is None
+
+    first_ids = {item["id"] for item in first_page["items"]}
+    second_ids = {item["id"] for item in second_page["items"]}
+    assert first_ids.isdisjoint(second_ids)
+    assert first_ids | second_ids == {
+        str(conversation.id) for conversation in conversations
+    }
 
 
 async def test_creating_a_duplicate_label_returns_the_existing_one(

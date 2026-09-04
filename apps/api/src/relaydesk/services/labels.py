@@ -33,10 +33,14 @@ async def create_label(
     if not trimmed:
         raise Invalid("A label needs a name.")
 
+    # ``name`` is CITEXT, so this comparison is already case-insensitive at
+    # the database level — no ``func.lower()`` needed, and the column's
+    # unique constraint (workspace_id, name) rejects a case-variant
+    # duplicate too, rather than silently accepting both "Billing" and
+    # "billing".
     existing = await session.scalar(
         sa.select(Label).where(
-            Label.workspace_id == workspace_id,
-            sa.func.lower(Label.name) == trimmed.lower(),
+            Label.workspace_id == workspace_id, Label.name == trimmed
         )
     )
     if existing is not None:
