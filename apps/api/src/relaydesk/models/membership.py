@@ -16,7 +16,6 @@ class Role(enum.StrEnum):
 class MembershipStatus(enum.StrEnum):
     active = "active"
     invited = "invited"
-    removed = "removed"
 
 
 class Membership(UUIDMixin, TimestampMixin, Base):

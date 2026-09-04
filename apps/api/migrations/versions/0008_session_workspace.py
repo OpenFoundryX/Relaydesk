@@ -12,12 +12,13 @@ session's user's active membership, deletes sessions whose user has no
 active membership (they could never authenticate through them anyway), and
 only then tightens the column to ``NOT NULL``.
 
-Also widens ``ck_memberships_status`` with a ``removed`` value: the tests
-covering this fix simulate an agent losing access by transitioning a
-membership to ``removed`` rather than deleting the row, and the existing
-CHECK constraint (from migration 0006) does not autogenerate a change, so
-it is dropped and recreated explicitly (same technique as
-``ck_messages_role`` in migration 0007).
+The backfill picks the same membership ``services.auth.default_membership``
+would: if a session's user already holds two active memberships (invites
+were 503'd in production, so this is a defensive guard rather than an
+expected case), a plain ``UPDATE ... FROM`` with no ordering would let
+Postgres pick one arbitrarily — reproducing, once, at migration time, the
+exact ambiguity this task removes. The ``DISTINCT ON`` subquery orders by
+``(created_at, id)`` to make that deterministic instead.
 
 Revision ID: 0008
 Revises: 0007
@@ -41,12 +42,20 @@ def upgrade() -> None:
         "sessions",
         sa.Column("workspace_id", postgresql.UUID(as_uuid=True), nullable=True),
     )
-    # Backfill from each session user's active membership.
+    # Backfill from each session user's active membership. DISTINCT ON
+    # picks one membership per user deterministically (oldest first, same
+    # ordering as services.auth.default_membership) instead of leaving
+    # Postgres to pick arbitrarily among ties.
     op.execute(
         """
         UPDATE sessions SET workspace_id = m.workspace_id
-        FROM memberships m
-        WHERE m.user_id = sessions.user_id AND m.status = 'active'
+        FROM (
+            SELECT DISTINCT ON (user_id) user_id, workspace_id
+            FROM memberships
+            WHERE status = 'active'
+            ORDER BY user_id, created_at, id
+        ) m
+        WHERE m.user_id = sessions.user_id
         """
     )
     # A session whose user has no active membership could never authenticate
@@ -63,22 +72,8 @@ def upgrade() -> None:
     )
     op.create_index("ix_sessions_workspace_id", "sessions", ["workspace_id"])
 
-    op.drop_constraint("ck_memberships_status", "memberships", type_="check")
-    op.create_check_constraint(
-        "ck_memberships_status",
-        "memberships",
-        sa.text("status IN ('active', 'invited', 'removed')"),
-    )
-
 
 def downgrade() -> None:
-    op.drop_constraint("ck_memberships_status", "memberships", type_="check")
-    op.create_check_constraint(
-        "ck_memberships_status",
-        "memberships",
-        sa.text("status IN ('active', 'invited')"),
-    )
-
     op.drop_index("ix_sessions_workspace_id", table_name="sessions")
     op.drop_constraint("fk_sessions_workspace_id", "sessions", type_="foreignkey")
     op.drop_column("sessions", "workspace_id")

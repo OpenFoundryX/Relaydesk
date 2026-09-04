@@ -67,9 +67,10 @@ async def test_google_login_links_an_existing_member(db_session: AsyncSession) -
         email_verified=True,
     )
 
-    result = await auth.login_with_google(db_session, profile)
+    result, membership = await auth.login_with_google(db_session, profile)
 
     assert result.id == user.id
+    assert membership.user_id == user.id
     identity = await db_session.scalar(
         UserIdentity.__table__.select().where(
             UserIdentity.provider_account_id == "google-123"
@@ -87,10 +88,11 @@ async def test_google_login_is_idempotent(db_session: AsyncSession) -> None:
         email_verified=True,
     )
 
-    first = await auth.login_with_google(db_session, profile)
-    second = await auth.login_with_google(db_session, profile)
+    first, first_membership = await auth.login_with_google(db_session, profile)
+    second, second_membership = await auth.login_with_google(db_session, profile)
 
     assert first.id == second.id
+    assert first_membership.id == second_membership.id
 
 
 async def test_unknown_email_is_rejected(db_session: AsyncSession) -> None:

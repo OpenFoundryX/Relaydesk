@@ -3,7 +3,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relaydesk.errors import Unauthorized
-from relaydesk.models.membership import Membership, MembershipStatus
+from relaydesk.models.membership import Membership
 from relaydesk.models.user import User
 from relaydesk.services import auth
 from tests.factories import make_member, make_workspace
@@ -34,13 +34,18 @@ async def test_a_session_names_the_workspace_it_was_minted_for(
 async def test_a_session_dies_with_its_membership(db_session: AsyncSession) -> None:
     """Previously the session survived and silently re-pointed at whatever
     workspace the user joined next — a removed agent's old token becoming a
-    live token in someone else's workspace."""
+    live token in someone else's workspace.
+
+    ``remove_member`` (``services/team.py``) hard-deletes the membership
+    row rather than flipping a status flag, so this mirrors that: delete
+    the row, not mutate its status.
+    """
     workspace = await make_workspace(db_session)
     user = await make_member(db_session, workspace, email="ada@example.com")
     membership = await _membership(db_session, workspace, user)
     token, _row = await auth.create_session(db_session, user, membership)
 
-    membership.status = MembershipStatus.removed
+    await db_session.delete(membership)
     await db_session.commit()
 
     resolved, row = await auth.resolve_session(db_session, token)

@@ -159,11 +159,15 @@ async def revoke_session(session: AsyncSession, token: str) -> None:
     await session.commit()
 
 
-async def login_with_google(session: AsyncSession, profile: GoogleProfile) -> User:
+async def login_with_google(
+    session: AsyncSession, profile: GoogleProfile
+) -> tuple[User, Membership]:
     """Log in an existing member through Google.
 
     There is no self-serve signup, so an address without an active
-    membership is refused rather than provisioned.
+    membership is refused rather than provisioned. Returns the membership
+    alongside the user so the caller (the login endpoint) doesn't have to
+    re-run ``default_membership`` a second time for the same login.
     """
     if not profile.email_verified or not profile.email:
         raise Unauthorized("Google did not confirm this email address.")
@@ -172,7 +176,7 @@ async def login_with_google(session: AsyncSession, profile: GoogleProfile) -> Us
     if user is None:
         raise Unauthorized("No Relaydesk account matches this Google address.")
 
-    await default_membership(session, user)
+    membership = await default_membership(session, user)
 
     identity = await session.scalar(
         sa.select(UserIdentity).where(
@@ -186,7 +190,7 @@ async def login_with_google(session: AsyncSession, profile: GoogleProfile) -> Us
             # this Google account is already linked to a different local
             # user than the one this email just resolved to.
             raise Unauthorized("This Google account is linked to a different user.")
-        return user
+        return user, membership
 
     # ON CONFLICT DO NOTHING makes this tolerant of two concurrent
     # first-time logins for the same Google account: both would see
@@ -198,4 +202,4 @@ async def login_with_google(session: AsyncSession, profile: GoogleProfile) -> Us
         .on_conflict_do_nothing(index_elements=["provider", "provider_account_id"])
     )
     await session.commit()
-    return user
+    return user, membership

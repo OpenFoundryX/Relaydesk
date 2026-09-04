@@ -64,8 +64,7 @@ async def google_exchange(
     user_agent: Annotated[str | None, Header()] = None,
 ) -> TokenResponse:
     profile = await exchange_code(payload.code, payload.redirect_uri)
-    user = await auth.login_with_google(session, profile)
-    membership = await auth.default_membership(session, user)
+    user, membership = await auth.login_with_google(session, profile)
     token, row = await auth.create_session(
         session, user, membership, user_agent=user_agent, ip=ip
     )
