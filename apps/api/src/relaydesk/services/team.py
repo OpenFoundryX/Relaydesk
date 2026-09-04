@@ -79,41 +79,42 @@ async def list_members(
     return members
 
 
-# --- Invites: retained but not exposed over HTTP -------------------------
+# --- Invites: reachable over HTTP -----------------------------------------
 #
-# `create_invite`, `read_invite`, `accept_invite`, and `revoke_invite` below
-# are NOT reachable from the API in this release (see `relaydesk.api.team`
-# and `relaydesk.api.router`). They are kept — and kept tested — because the
-# guards that *are* correct here (claimed-account -> Conflict, the
-# IntegrityError race handling in `accept_invite`) are the foundation the
-# next slice builds on. Do not re-expose any of this over HTTP until
-# acceptance requires proof that the accepter controls the invited address
-# (e.g. an emailed confirmation link) — the root problem is that an invite
-# currently binds an email address that nobody has proved they control, and
-# acceptance both adopts an account and issues a session for it. Specific
-# residual issues the next implementer inherits rather than rediscovers:
+# Three successive security reviews each found a live cross-tenant account
+# takeover here: an invite bound an email address nobody had proved they
+# controlled, and accepting one both adopted a (possibly pre-existing)
+# account and issued a session for it. Four residual risks were recorded
+# when this was disabled. Two are closed elsewhere; two are closed by this
+# task, and by the same mechanism:
 #
-# * Acceptance issues a session that outlives the membership it was minted
-#   for. Sessions are user-scoped, not membership-scoped, and
-#   `services.auth.active_membership` re-derives the workspace from the
-#   user's *current* memberships on every request. So a session survives
-#   its originating membership being deleted, and silently re-points at
-#   whatever workspace that user's account joins next.
-# * `user_identities` (federated/Google credentials) survive account
-#   adoption in `accept_invite`. Adopting an unclaimed row changes who
-#   controls the account without touching any identity row linked to it, so
-#   a federated credential can outlive the change of owner.
-# * Two concurrent `accept_invite` calls for two *different* invites to the
-#   same email collide on nothing — there is no unique constraint stopping
-#   one user from ending up with two active memberships in two workspaces.
-#   `active_membership`'s whole design (a bare `SELECT ... WHERE user_id =`
-#   with no `ORDER BY`) assumes exactly one active membership per user; two
-#   makes which workspace a login resolves to arbitrary.
-# * An admin who accepts an invite for an address he does not own and then
-#   *keeps* the membership (rather than releasing it, as in the squat/
-#   release test below) permanently burns that email address: it is now
-#   "claimed" forever, so the real owner can never accept an invite to any
-#   workspace for it.
+# * A session outliving the membership it was minted for, and two
+#   concurrent accepts of *different* invites to the same email resolving
+#   to an arbitrary workspace on login — both closed in `services.auth`.
+#   `create_session` now stamps `workspace_id` from the membership it was
+#   minted for, so a session can't outlive it and silently re-point at
+#   whatever workspace the account joins next; `default_membership` now
+#   picks deterministically (`ORDER BY created_at, id`) instead of
+#   arbitrarily.
+# * `user_identities` surviving account adoption, and an admin who invites
+#   an address he does not control keeping the resulting membership and
+#   permanently burning that address — both closed here, by delivery rather
+#   than a new check. `relaydesk.api.team` never puts the invite token or an
+#   invite URL in a response body: `create_team_invite` mails it via
+#   `notifications.notify_invite` and answers the caller with a bare 202.
+#   Only whoever controls the invited mailbox can ever obtain the token, so
+#   only that person can accept — an admin can no longer self-accept an
+#   invite for an address he doesn't own (closing the squat), and whoever
+#   *does* adopt an account has, by construction, just proved control of
+#   its address (closing the identity-adoption risk).
+#
+# `accept_invite` also deletes the invite row in the same transaction that
+# creates the membership, instead of setting `accepted_at`: a token that
+# leaks from a mail archive after being used is inert because there is
+# nothing left for it to match, not merely rejected by a check.
+#
+# Do not add an invite URL, or the raw token, to any response body, log
+# line, or error message — that is the exact leak this replaced.
 async def create_invite(
     session: AsyncSession,
     workspace_id: uuid.UUID,
@@ -220,13 +221,18 @@ async def revoke_invite(
 
 
 async def read_invite(session: AsyncSession, token: str) -> Invite:
+    """Look up a still-usable invite by its plaintext token.
+
+    A once-accepted invite's row is gone (`accept_invite` deletes it), so a
+    replayed token looks exactly like one that never existed: both raise
+    NotFound. There is nothing left to tell them apart by, and no reason to
+    confirm to a caller that a given token used to be valid.
+    """
     invite = await session.scalar(
         sa.select(Invite).where(Invite.token_hash == hash_token(token))
     )
     if invite is None or invite.expires_at <= datetime.now(UTC):
         raise NotFound("This invite is not valid.")
-    if invite.accepted_at is not None:
-        raise Conflict("This invite has already been accepted.")
     return invite
 
 
@@ -311,7 +317,10 @@ async def accept_invite(
                 status=MembershipStatus.active,
             )
         )
-        invite.accepted_at = datetime.now(UTC)
+        # Single-use by deletion, not by flag: once the row is gone there is
+        # nothing left for a replayed token to match against (see
+        # `read_invite`).
+        await session.delete(invite)
         await session.commit()
     except IntegrityError as error:
         await session.rollback()

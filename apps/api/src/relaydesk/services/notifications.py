@@ -33,3 +33,29 @@ def notify_assignment(
             url=url,
         ),
     )
+
+
+INVITE_TEXT = """\
+{inviter} invited you to join {workspace} on Relaydesk.
+
+Accept the invitation: {url}
+
+This link expires in 7 days. If you weren't expecting it, ignore this
+message — no account is created until you accept.
+"""
+
+
+def notify_invite(
+    email: str, token: str, workspace_name: str, inviter_name: str
+) -> None:
+    """The token is delivered here and nowhere else — never in a response
+    body, never in a log line. Possession of it is the only proof that the
+    recipient controls ``email``."""
+    url = f"{get_settings().web_url}/invites/{token}"
+    queue.enqueue_system_email(
+        to=email,
+        subject=f"Join {workspace_name} on Relaydesk",
+        text_body=INVITE_TEXT.format(
+            inviter=inviter_name, workspace=workspace_name, url=url
+        ),
+    )

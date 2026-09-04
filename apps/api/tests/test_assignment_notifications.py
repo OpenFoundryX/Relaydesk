@@ -1,19 +1,7 @@
-import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from relaydesk.services import conversations, queue
+from relaydesk.services import conversations
 from tests.factories import make_conversation, make_member, make_workspace
-
-
-@pytest.fixture
-def outbox(monkeypatch) -> list[dict]:
-    sent: list[dict] = []
-
-    def record(to: str, subject: str, text_body: str, html_body=None) -> None:
-        sent.append({"to": to, "subject": subject, "text": text_body})
-
-    monkeypatch.setattr(queue, "enqueue_system_email", record)
-    return sent
 
 
 async def test_assigning_to_someone_else_emails_them(

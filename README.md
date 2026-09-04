@@ -15,14 +15,12 @@ multi-tenant Next.js, FastAPI, and PostgreSQL foundation. Channels beyond the
 seeded demo data, AI features, the knowledge base, analytics, and billing are
 not yet implemented.
 
-Team invites are **not enabled** in this release. The invite flow lets
-whoever holds an invite link both choose an account's password and sign in
-as it, and without an email-sending mailer there is no way to confirm the
-invited address belongs to the person accepting it — so the API currently
-answers `503` for invite creation, and there is no invite-acceptance page.
-The underlying invite model and service logic exist in the codebase for a
-future release once acceptance can be gated on proving control of the
-invited address (e.g. a confirmation email).
+Team invites are sent by email: accepting one lets you choose an account's
+password and sign in as it, so the invite link is only ever mailed to the
+invited address, never returned to whoever created the invite. This means
+invites require SMTP to be configured — the development stack provides
+this out of the box via GreenMail, so invites work with no extra setup when
+running through Docker Compose.
 
 ## Requirements
 

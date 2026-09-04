@@ -25,18 +25,13 @@ class InviteRequest(CamelModel):
     role: RoleLabel = "Agent"
 
 
-class InviteCreated(CamelModel):
-    id: str
-    invite_url: str
-
-
 class InvitePreview(CamelModel):
     workspace_name: str
     email: str
     role: str
 
 
-class AcceptInviteRequest(CamelModel):
+class AcceptRequest(CamelModel):
     name: str
     password: str
 

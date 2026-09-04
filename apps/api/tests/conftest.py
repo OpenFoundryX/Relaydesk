@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from relaydesk.config import get_settings
 from relaydesk.db.session import get_session
 from relaydesk.main import app
+from relaydesk.services import queue
 
 API_ROOT = Path(__file__).resolve().parents[1]
 TEST_DATABASE = "relaydesk_test"
@@ -94,3 +95,20 @@ async def client(db_session: AsyncSession) -> AsyncIterator[AsyncClient]:
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:
         yield http_client
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def outbox(monkeypatch) -> list[dict]:
+    """Captures system emails without touching the broker.
+
+    Shared by every test that exercises a ``services.notifications.notify_*``
+    call — assignment notifications and invite emails alike — rather than
+    each test module keeping its own copy.
+    """
+    sent: list[dict] = []
+
+    def record(to: str, subject: str, text_body: str, html_body=None) -> None:
+        sent.append({"to": to, "subject": subject, "text": text_body})
+
+    monkeypatch.setattr(queue, "enqueue_system_email", record)
+    return sent

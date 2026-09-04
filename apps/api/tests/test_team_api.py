@@ -5,7 +5,7 @@ import sqlalchemy as sa
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from relaydesk.errors import Conflict
+from relaydesk.errors import Conflict, NotFound
 from relaydesk.models import Membership, MembershipStatus, Role, User, Workspace
 from relaydesk.security.passwords import hash_password
 from relaydesk.services import team
@@ -16,9 +16,10 @@ async def sign_in_full(
 ) -> tuple[dict, Workspace, User]:
     """Like `sign_in`, but also hands back the workspace/user rows.
 
-    Invites are no longer reachable over HTTP, so the tests below that
-    still need one now go through `services.team` directly, which needs a
-    workspace id and an inviter id rather than a bearer token.
+    Invites are reachable over HTTP now, but `services.team.create_invite`
+    still needs a workspace id and an inviter id rather than a bearer token,
+    so the tests below that mint one go through the service directly and
+    only assert on the HTTP-visible result.
     """
     workspace = Workspace(name="Chronon", slug="chronon", monogram="CH")
     user = User(
@@ -69,56 +70,13 @@ async def test_team_lists_the_signed_in_member(
     assert body[0]["status"] == "active"
 
 
-async def test_creating_an_invite_over_http_is_unavailable(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    """Invites are disabled pending email-verified acceptance (see the
-    block comment in relaydesk.api.team and relaydesk.services.team)."""
-    headers = await sign_in(client, db_session)
-
-    response = await client.post(
-        "/api/team/invites",
-        headers=headers,
-        json={"email": "sara@relaydesk.dev", "role": "Agent"},
-    )
-
-    assert response.status_code == 503
-    assert response.json()["error"]["code"] == "unavailable"
-
-
-async def test_revoking_an_invite_over_http_is_unavailable(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    headers = await sign_in(client, db_session)
-
-    response = await client.delete(
-        f"/api/team/invites/{uuid.uuid4()}",
-        headers=headers,
-    )
-
-    assert response.status_code == 503
-    assert response.json()["error"]["code"] == "unavailable"
-
-
-async def test_accepting_an_invite_over_http_is_not_routable(
-    client: AsyncClient,
-) -> None:
-    """The public accept/preview router is not mounted at all: the route
-    doesn't exist, rather than existing and refusing."""
-    response = await client.post(
-        f"/api/invites/{uuid.uuid4()}/accept",
-        json={"name": "Someone", "password": "does-not-matter"},
-    )
-
-    assert response.status_code == 404
-
-
 async def test_an_invited_member_shows_as_invited(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """Invite creation is unreachable over HTTP now, so this goes through
-    the service directly — `list_members` (and the team page it backs)
-    still surfaces a pending invite alongside active members."""
+    """Invite creation over HTTP mails the token (see tests/test_invites.py);
+    this test only cares about the roster, so it goes through the service
+    directly — `list_members` (and the team page it backs) still surfaces a
+    pending invite alongside active members."""
     headers, workspace, admin = await sign_in_full(client, db_session)
     await team.create_invite(
         db_session, workspace.id, "sara@relaydesk.dev", Role.agent, admin.id
@@ -148,9 +106,9 @@ async def test_an_agent_cannot_create_an_invite(
 async def test_accepting_an_invite_creates_a_working_login(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """Invite creation/acceptance are unreachable over HTTP now (see the
-    503/404 tests above), so this drives `services.team` directly and only
-    checks the HTTP-visible result: the accepted account can log in."""
+    """Accepting mints a session, not a login, so this drives
+    `services.team` directly to get the account created and only checks the
+    HTTP-visible result: the accepted account can log in on its own."""
     _headers, workspace, admin = await sign_in_full(client, db_session)
     _invite, token = await team.create_invite(
         db_session, workspace.id, "sara@relaydesk.dev", Role.agent, admin.id
@@ -169,13 +127,17 @@ async def test_accepting_an_invite_creates_a_working_login(
 async def test_an_invite_cannot_be_accepted_twice(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
+    """`accept_invite` deletes the invite row rather than flagging it, so a
+    replayed token is indistinguishable from one that never existed: both
+    raise NotFound (see `tests/test_invites.py` for the HTTP-level version
+    of this pin)."""
     _headers, workspace, admin = await sign_in_full(client, db_session)
     _invite, token = await team.create_invite(
         db_session, workspace.id, "sara@relaydesk.dev", Role.agent, admin.id
     )
 
     await team.accept_invite(db_session, token, "Sara Duval", "another-horse")
-    with pytest.raises(Conflict):
+    with pytest.raises(NotFound):
         await team.accept_invite(db_session, token, "Sara Duval", "another-horse")
 
 
@@ -262,8 +224,9 @@ async def invite_and_accept(
 ) -> str:
     """Invite `email` as an Agent and accept it, returning the membership id.
 
-    Invites are not reachable over HTTP in this release, so this drives
-    `services.team` directly rather than the (now-503/404) endpoints.
+    Accepting over HTTP now mints a session for the invitee rather than
+    handing the caller anything usable here, so this drives `services.team`
+    directly instead.
     """
     _invite, token = await team.create_invite(
         session, workspace_id, email, Role.agent, invited_by
@@ -456,9 +419,9 @@ async def test_accepting_is_refused_for_a_claimed_account(
     .active_membership`` has no tiebreak, so a second active membership
     would also make which workspace a login resolves to arbitrary.
 
-    Invite creation/acceptance are unreachable over HTTP now, so this
-    drives `services.team` directly; the guard being pinned lives in the
-    service, not the route.
+    Accepting over HTTP mints a session that this test has no use for, so
+    this drives `services.team` directly; the guard being pinned lives in
+    the service, not the route.
     """
     _headers, workspace, admin = await sign_in_full(client, db_session)
 
@@ -529,10 +492,8 @@ async def test_a_lowercase_role_is_rejected_rather_than_demoting(
 async def test_a_lowercase_invite_role_is_rejected(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """Body validation still runs ahead of the route body, even though the
-    route itself now always answers 503 for a well-formed request: FastAPI
-    rejects a malformed body before the handler (and its `Unavailable`)
-    ever runs."""
+    """"agent" is not a valid `RoleLabel`: FastAPI rejects the malformed
+    body before the handler — and its email send — ever runs."""
     headers = await sign_in(client, db_session)
 
     response = await client.post(
@@ -549,19 +510,23 @@ async def test_a_squatted_then_released_address_is_reclaimed_by_the_real_invitee
 ) -> None:
     """The full squat-release-adopt chain, end to end.
 
-    An admin can mint an invite for any address, including one with no
-    account, and there is no mailer — so he holds the token and can accept
-    it himself, creating the row under a password only he knows. Deleting
-    his own membership then leaves the address pre-existing but unclaimed.
-    If a later, legitimate acceptance merely *linked* to that row, the real
-    person's typed password would be discarded and the squatter would hold
-    their account in the inviting workspace.
+    Over HTTP, the token this scenario depends on the squatter holding is
+    mailed to the invited address and never returned to the inviter — so
+    the attack is closed at that layer. This test pins the guard one layer
+    down: `services.team.accept_invite` itself must still refuse to *link*
+    to a pre-existing-but-unclaimed row, so a squatter who somehow does
+    obtain a token (a compromised mailbox, a misconfigured mailer) can't
+    turn it into a silent handover when the real owner later accepts.
+    Deleting his own membership leaves the address pre-existing but
+    unclaimed; if acceptance merely linked to that row rather than adopting
+    it, the real person's typed password would be discarded and the
+    squatter would keep their account in the inviting workspace.
 
-    This is a regression pin for the next slice, kept intact: only the
-    invite creation/acceptance calls move from HTTP to `services.team`
-    directly, since those endpoints are unreachable now. Everything the
-    scenario depends on — deleting a membership, logging in — is still
-    real HTTP against the running app.
+    This is a regression pin kept intact from the previous slice: the
+    invite creation/acceptance calls go through `services.team` directly,
+    since accepting over HTTP now mints a session rather than anything this
+    test needs. Everything the scenario depends on — deleting a membership,
+    logging in — is still real HTTP against the running app.
     """
     squatter_headers, squatter_workspace, squatter_admin = await sign_in_full(
         client, db_session
