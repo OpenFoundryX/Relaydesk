@@ -68,7 +68,12 @@ export function DetailsSidebar({
           <PriorityPicker conversationId={conversation.id} priority={conversation.priority} />
         </DetailRow>
         <DetailRow icon={UserRound}>
-          <AssigneePicker conversationId={conversation.id} assignee={conversation.assignee} team={team} />
+          <AssigneePicker
+            conversationId={conversation.id}
+            assignee={conversation.assignee}
+            assigneeId={conversation.assigneeId}
+            team={team}
+          />
         </DetailRow>
         <DetailRow icon={Tag}>
           <LabelPicker conversationId={conversation.id} labelIds={conversation.labelIds} labels={labels} />

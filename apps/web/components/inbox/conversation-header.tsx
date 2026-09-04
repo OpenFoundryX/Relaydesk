@@ -57,6 +57,7 @@ export function ConversationHeader({
       <AssigneePicker
         conversationId={conversation.id}
         assignee={conversation.assignee}
+        assigneeId={conversation.assigneeId}
         team={team}
         variant="icon"
         className="size-7"

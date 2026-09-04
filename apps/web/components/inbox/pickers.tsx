@@ -4,11 +4,12 @@ import { Plus, Tag, UserRound } from "lucide-react";
 import { useTransition, type ReactNode } from "react";
 
 import {
+  addLabelAction,
   createLabelAction,
+  removeLabelAction,
   setAssigneeAction,
   setPriorityAction,
   setStatusAction,
-  toggleLabelAction,
 } from "@/app/(console)/conversations/actions";
 import { CommandPopover } from "@/components/inbox/command-popover";
 import { PriorityPip } from "@/components/inbox/priority-pip";
@@ -150,12 +151,14 @@ function Monogram({ name, className }: { name: string; className?: string }) {
 export function AssigneePicker({
   conversationId,
   assignee,
+  assigneeId,
   team,
   variant = "pill",
   className,
 }: {
   conversationId: string;
   assignee: string | null;
+  assigneeId: string | null;
   team: TeamMember[];
   variant?: Variant;
   className?: string;
@@ -171,15 +174,15 @@ export function AssigneePicker({
           label: "Unassigned",
           icon: <span className="size-4 rounded-full border border-dashed border-ink-300" />,
           shortcut: "1",
-          selected: assignee === null,
+          selected: assigneeId === null,
         },
         ...team.map((member, index) => ({
-          id: member.name,
+          id: member.id,
           label: member.name,
           hint: member.email,
           icon: <Monogram name={member.name} className="size-4 text-[8px]" />,
           shortcut: String(index + 2),
-          selected: member.name === assignee,
+          selected: member.id === assigneeId,
         })),
       ]}
       onSelect={(id) =>
@@ -245,7 +248,13 @@ export function LabelPicker({
         icon: <LabelSwatch color={label.color} />,
         selected: labelIds.includes(label.id),
       }))}
-      onSelect={(id) => start(() => toggleLabelAction(conversationId, id))}
+      onSelect={(id) =>
+        start(() =>
+          labelIds.includes(id)
+            ? removeLabelAction(conversationId, id)
+            : addLabelAction(conversationId, id),
+        )
+      }
       footer={(query, close) => {
         const name = query.trim();
         const exists = labels.some((label) => label.name.toLowerCase() === name.toLowerCase());

@@ -1,18 +1,21 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, status
 
 from relaydesk.api.deps import DbSession, Scope
 from relaydesk.errors import Invalid
-from relaydesk.models import ConversationStatus
+from relaydesk.models import ConversationStatus, Priority
 from relaydesk.schemas.conversation import (
     ActivityEventOut,
+    BulkStatusRequest,
     ConversationOut,
     ConversationPage,
+    ConversationPatch,
     CountsResponse,
     DraftOut,
     MessageOut,
+    ReplyRequest,
     StatusCountOut,
     activity_out,
     conversation_out,
@@ -21,6 +24,20 @@ from relaydesk.schemas.conversation import (
 from relaydesk.services import conversations
 
 router = APIRouter()
+
+
+def _parsed_status(raw: str) -> ConversationStatus:
+    try:
+        return ConversationStatus(raw)
+    except ValueError:
+        raise Invalid(f"Unknown status {raw!r}.") from None
+
+
+def _parsed_priority(raw: str) -> Priority:
+    try:
+        return Priority(raw)
+    except ValueError:
+        raise Invalid(f"Unknown priority {raw!r}.") from None
 
 
 @router.get("", response_model=ConversationPage)
@@ -77,6 +94,17 @@ async def counts_route(scope: Scope, session: DbSession) -> CountsResponse:
     )
 
 
+@router.post("/bulk-status", status_code=status.HTTP_204_NO_CONTENT)
+async def bulk_status_route(
+    payload: BulkStatusRequest, scope: Scope, session: DbSession
+) -> None:
+    new_status = _parsed_status(payload.status)
+    for raw_id in payload.ids:
+        await conversations.set_status(
+            session, scope.workspace_id, uuid.UUID(raw_id), new_status, scope.user
+        )
+
+
 @router.get("/{conversation_id}", response_model=ConversationOut)
 async def get_route(
     conversation_id: uuid.UUID, scope: Scope, session: DbSession
@@ -84,6 +112,42 @@ async def get_route(
     conversation = await conversations.get_conversation(
         session, scope.workspace_id, conversation_id
     )
+    return conversation_out(conversation, scope.workspace.timezone)
+
+
+@router.patch("/{conversation_id}", response_model=ConversationOut)
+async def patch_conversation(
+    conversation_id: uuid.UUID,
+    payload: ConversationPatch,
+    scope: Scope,
+    session: DbSession,
+) -> ConversationOut:
+    conversation = None
+    if payload.status is not None:
+        conversation = await conversations.set_status(
+            session,
+            scope.workspace_id,
+            conversation_id,
+            _parsed_status(payload.status),
+            scope.user,
+        )
+    if payload.priority is not None:
+        conversation = await conversations.set_priority(
+            session,
+            scope.workspace_id,
+            conversation_id,
+            _parsed_priority(payload.priority),
+            scope.user,
+        )
+    if "assignee_id" in payload.model_fields_set:
+        assignee_id = uuid.UUID(payload.assignee_id) if payload.assignee_id else None
+        conversation = await conversations.set_assignee(
+            session, scope.workspace_id, conversation_id, assignee_id, scope.user
+        )
+    if conversation is None:
+        conversation = await conversations.get_conversation(
+            session, scope.workspace_id, conversation_id
+        )
     return conversation_out(conversation, scope.workspace.timezone)
 
 
@@ -113,3 +177,52 @@ async def list_activity_route(
         session, scope.workspace_id, conversation_id
     )
     return [activity_out(event, scope.workspace.timezone) for event in events]
+
+
+@router.post(
+    "/{conversation_id}/replies",
+    response_model=ConversationOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_reply_route(
+    conversation_id: uuid.UUID, payload: ReplyRequest, scope: Scope, session: DbSession
+) -> ConversationOut:
+    conversation = await conversations.add_reply(
+        session, scope.workspace_id, conversation_id, payload.body, scope.user
+    )
+    if payload.resolve:
+        conversation = await conversations.set_status(
+            session,
+            scope.workspace_id,
+            conversation_id,
+            ConversationStatus.resolved,
+            scope.user,
+        )
+    return conversation_out(conversation, scope.workspace.timezone)
+
+
+@router.delete("/{conversation_id}/draft", status_code=status.HTTP_204_NO_CONTENT)
+async def discard_draft_route(
+    conversation_id: uuid.UUID, scope: Scope, session: DbSession
+) -> None:
+    await conversations.discard_draft(session, scope.workspace_id, conversation_id)
+
+
+@router.put("/{conversation_id}/labels/{label_id}", response_model=ConversationOut)
+async def add_label_route(
+    conversation_id: uuid.UUID, label_id: uuid.UUID, scope: Scope, session: DbSession
+) -> ConversationOut:
+    conversation = await conversations.add_label(
+        session, scope.workspace_id, conversation_id, label_id, scope.user
+    )
+    return conversation_out(conversation, scope.workspace.timezone)
+
+
+@router.delete("/{conversation_id}/labels/{label_id}", response_model=ConversationOut)
+async def remove_label_route(
+    conversation_id: uuid.UUID, label_id: uuid.UUID, scope: Scope, session: DbSession
+) -> ConversationOut:
+    conversation = await conversations.remove_label(
+        session, scope.workspace_id, conversation_id, label_id, scope.user
+    )
+    return conversation_out(conversation, scope.workspace.timezone)

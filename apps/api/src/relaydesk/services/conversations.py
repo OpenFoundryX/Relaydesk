@@ -1,6 +1,6 @@
 import base64
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,11 +8,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from relaydesk.errors import Invalid, NotFound
 from relaydesk.models import (
     ActivityEvent,
+    ActivityKind,
     Conversation,
     ConversationLabel,
     ConversationStatus,
     Draft,
+    Label,
     Message,
+    MessageRole,
+    Priority,
+    User,
 )
 
 DEFAULT_LIMIT = 50
@@ -173,3 +178,233 @@ async def draft_count(session: AsyncSession, workspace_id: uuid.UUID) -> int:
             )
         )
     ) or 0
+
+
+STATUS_LABEL = {
+    ConversationStatus.open: "Open",
+    ConversationStatus.pending: "Pending",
+    ConversationStatus.resolved: "Resolved",
+    ConversationStatus.on_hold: "On hold",
+    ConversationStatus.ignored: "Ignored",
+    ConversationStatus.trash: "Trash",
+}
+PRIORITY_LABEL = {
+    Priority.urgent: "Urgent",
+    Priority.high: "High",
+    Priority.medium: "Medium",
+    Priority.low: "Low",
+}
+
+
+def record(
+    session: AsyncSession,
+    conversation: Conversation,
+    actor: User,
+    kind: ActivityKind,
+    verb: str,
+    value: str,
+    status: str | None = None,
+) -> None:
+    """Append to the conversation's history.
+
+    Every mutation calls this, so the detail panel's timeline is a
+    consequence of the change rather than a second thing to remember.
+    """
+    session.add(
+        ActivityEvent(
+            workspace_id=conversation.workspace_id,
+            conversation_id=conversation.id,
+            actor_user_id=actor.id,
+            actor_name=actor.name,
+            kind=kind,
+            verb=verb,
+            value=value,
+            status=status,
+            at=datetime.now(UTC),
+        )
+    )
+
+
+async def set_status(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    status: ConversationStatus,
+    actor: User,
+) -> Conversation:
+    conversation = await get_conversation(session, workspace_id, conversation_id)
+    if conversation.status is status:
+        return conversation
+    conversation.status = status
+    conversation.unread = False
+    record(
+        session,
+        conversation,
+        actor,
+        ActivityKind.status,
+        "marked this as",
+        STATUS_LABEL[status],
+        status.value,
+    )
+    await session.commit()
+    return conversation
+
+
+async def set_priority(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    priority: Priority,
+    actor: User,
+) -> Conversation:
+    conversation = await get_conversation(session, workspace_id, conversation_id)
+    if conversation.priority is priority:
+        return conversation
+    conversation.priority = priority
+    record(
+        session,
+        conversation,
+        actor,
+        ActivityKind.priority,
+        "set priority to",
+        PRIORITY_LABEL[priority],
+    )
+    await session.commit()
+    return conversation
+
+
+async def set_assignee(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    assignee_id: uuid.UUID | None,
+    actor: User,
+) -> Conversation:
+    conversation = await get_conversation(session, workspace_id, conversation_id)
+    if conversation.assignee_id == assignee_id:
+        return conversation
+
+    previous = conversation.assignee.name if conversation.assignee else None
+    if assignee_id is None:
+        verb, value = "unassigned this from", previous or "everyone"
+    else:
+        assignee = await session.get(User, assignee_id)
+        if assignee is None:
+            raise NotFound("That team member does not exist.")
+        verb, value = "assigned this to", assignee.name
+
+    conversation.assignee_id = assignee_id
+    record(session, conversation, actor, ActivityKind.assignee, verb, value)
+    await session.commit()
+    await session.refresh(conversation, ["draft", "labels", "assignee"])
+    return conversation
+
+
+async def add_label(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    label_id: uuid.UUID,
+    actor: User,
+) -> Conversation:
+    conversation = await get_conversation(session, workspace_id, conversation_id)
+    label = await session.scalar(
+        sa.select(Label).where(Label.id == label_id, Label.workspace_id == workspace_id)
+    )
+    if label is None:
+        raise NotFound("Label not found.")
+    if any(existing.id == label.id for existing in conversation.labels):
+        return conversation
+
+    session.add(ConversationLabel(conversation_id=conversation.id, label_id=label.id))
+    record(session, conversation, actor, ActivityKind.label, "added label", label.name)
+    await session.commit()
+    await session.refresh(conversation, ["draft", "labels", "assignee"])
+    return conversation
+
+
+async def remove_label(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    label_id: uuid.UUID,
+    actor: User,
+) -> Conversation:
+    conversation = await get_conversation(session, workspace_id, conversation_id)
+    label = await session.scalar(
+        sa.select(Label).where(Label.id == label_id, Label.workspace_id == workspace_id)
+    )
+    if label is None:
+        raise NotFound("Label not found.")
+    if not any(existing.id == label.id for existing in conversation.labels):
+        return conversation
+
+    await session.execute(
+        sa.delete(ConversationLabel).where(
+            ConversationLabel.conversation_id == conversation.id,
+            ConversationLabel.label_id == label.id,
+        )
+    )
+    record(
+        session, conversation, actor, ActivityKind.label, "removed label", label.name
+    )
+    await session.commit()
+    await session.refresh(conversation, ["draft", "labels", "assignee"])
+    return conversation
+
+
+async def add_reply(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    body: str,
+    actor: User,
+) -> Conversation:
+    """Append an agent reply, updating the denormalized list fields."""
+    conversation = await get_conversation(session, workspace_id, conversation_id)
+    trimmed = body.strip()
+    if not trimmed:
+        raise Invalid("A reply needs a body.")
+
+    now = datetime.now(UTC)
+    session.add(
+        Message(
+            workspace_id=workspace_id,
+            conversation_id=conversation.id,
+            role=MessageRole.agent,
+            author_name=actor.name,
+            author_user_id=actor.id,
+            to_address=conversation.contact.email,
+            body=trimmed,
+            sent_at=now,
+        )
+    )
+    conversation.preview = trimmed
+    conversation.last_message_at = now
+    conversation.unread = False
+
+    await session.execute(
+        sa.delete(Draft).where(Draft.conversation_id == conversation.id)
+    )
+    record(
+        session,
+        conversation,
+        actor,
+        ActivityKind.reply,
+        "replied to",
+        conversation.contact.name,
+    )
+    await session.commit()
+    await session.refresh(conversation, ["draft", "labels", "assignee"])
+    return conversation
+
+
+async def discard_draft(
+    session: AsyncSession, workspace_id: uuid.UUID, conversation_id: uuid.UUID
+) -> None:
+    conversation = await get_conversation(session, workspace_id, conversation_id)
+    await session.execute(
+        sa.delete(Draft).where(Draft.conversation_id == conversation.id)
+    )
+    await session.commit()
+    await session.refresh(conversation, ["draft", "labels", "assignee"])

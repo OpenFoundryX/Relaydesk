@@ -96,6 +96,22 @@ class LabelCreateRequest(CamelModel):
     name: str
 
 
+class ConversationPatch(CamelModel):
+    status: str | None = None
+    priority: str | None = None
+    assignee_id: str | None = None
+
+
+class BulkStatusRequest(CamelModel):
+    ids: list[str]
+    status: str
+
+
+class ReplyRequest(CamelModel):
+    body: str
+    resolve: bool = False
+
+
 def conversation_out(conversation: Conversation, timezone: str) -> ConversationOut:
     """Serialize a conversation for the wire.
 

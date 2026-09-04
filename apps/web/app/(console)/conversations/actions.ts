@@ -2,7 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 
-import { createLabel as createLabelApi } from "@/lib/api/labels";
+import { apiFetch } from "@/lib/api/client";
+import { createLabel } from "@/lib/api/labels";
 import type { ConversationStatus, Label, Priority } from "@/lib/types";
 
 /** Every mutation touches sidebar counts too, so the whole console refreshes. */
@@ -10,59 +11,76 @@ function refresh() {
   revalidatePath("/", "layout");
 }
 
-/**
- * Task 9 wires each of these to a real PATCH/POST endpoint. Until then they
- * throw rather than no-op: a mutating control that appears to succeed and
- * silently discards the change is worse than one that visibly fails.
- */
-function notImplemented(action: string): never {
-  throw new Error(`${action} is not wired to the API yet (Task 9).`);
+export async function setStatusAction(id: string, status: ConversationStatus) {
+  await apiFetch(`/conversations/${id}`, { method: "PATCH", body: JSON.stringify({ status }) });
+  refresh();
 }
 
-export async function setStatusAction(_id: string, _status: ConversationStatus) {
-  notImplemented("setStatusAction");
+export async function setStatusBulkAction(ids: string[], status: ConversationStatus) {
+  await apiFetch("/conversations/bulk-status", {
+    method: "POST",
+    body: JSON.stringify({ ids, status }),
+  });
+  refresh();
 }
 
-export async function setStatusBulkAction(_ids: string[], _status: ConversationStatus) {
-  notImplemented("setStatusBulkAction");
+export async function setPriorityAction(id: string, priority: Priority) {
+  await apiFetch(`/conversations/${id}`, { method: "PATCH", body: JSON.stringify({ priority }) });
+  refresh();
 }
 
-export async function setPriorityAction(_id: string, _priority: Priority) {
-  notImplemented("setPriorityAction");
+export async function setAssigneeAction(id: string, assigneeId: string | null) {
+  await apiFetch(`/conversations/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ assigneeId }),
+  });
+  refresh();
 }
 
-export async function setAssigneeAction(_id: string, _assignee: string | null) {
-  notImplemented("setAssigneeAction");
+export async function addLabelAction(id: string, labelId: string) {
+  await apiFetch(`/conversations/${id}/labels/${labelId}`, { method: "PUT" });
+  refresh();
 }
 
-export async function toggleLabelAction(_id: string, _labelId: string) {
-  notImplemented("toggleLabelAction");
+export async function removeLabelAction(id: string, labelId: string) {
+  await apiFetch(`/conversations/${id}/labels/${labelId}`, { method: "DELETE" });
+  refresh();
 }
 
-/**
- * Labels themselves DO have a real endpoint already (Task 7/8), so creation
- * is wired for real. Attaching the new label to `conversationId` is not —
- * that half waits on Task 9's conversation-label mutation route.
- */
-export async function createLabelAction(name: string, _conversationId?: string): Promise<Label> {
-  const label = await createLabelApi(name);
+export async function createLabelAction(
+  name: string,
+  conversationId?: string,
+): Promise<Label> {
+  const label = await createLabel(name);
+  if (conversationId) {
+    await apiFetch(`/conversations/${conversationId}/labels/${label.id}`, { method: "PUT" });
+  }
   refresh();
   return label;
 }
 
-export async function sendReplyAction(_id: string, _body: string, _resolve: boolean) {
-  notImplemented("sendReplyAction");
-}
-
-export async function discardDraftAction(_id: string) {
-  notImplemented("discardDraftAction");
-}
-
-/**
- * Deliberate permanent no-op, not a stand-in for missing wiring like the
- * functions above: summary generation belongs to a later agentic slice, and
- * nothing is expected to happen when this is called until that slice lands.
- */
-export async function generateSummaryAction(_id: string) {
+export async function sendReplyAction(id: string, body: string, resolve: boolean) {
+  const trimmed = body.trim();
+  if (trimmed) {
+    await apiFetch(`/conversations/${id}/replies`, {
+      method: "POST",
+      body: JSON.stringify({ body: trimmed, resolve }),
+    });
+  } else if (resolve) {
+    await apiFetch(`/conversations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "resolved" }),
+    });
+  }
   refresh();
+}
+
+export async function discardDraftAction(id: string) {
+  await apiFetch(`/conversations/${id}/draft`, { method: "DELETE" });
+  refresh();
+}
+
+/** No-op until slice 4 gives the agent a summarizer. */
+export async function generateSummaryAction(_id: string) {
+  return;
 }

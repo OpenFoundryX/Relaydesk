@@ -77,6 +77,7 @@ export function ConversationRow({
       <AssigneePicker
         conversationId={conversation.id}
         assignee={conversation.assignee}
+        assigneeId={conversation.assigneeId}
         team={team}
         variant="chip"
       />
