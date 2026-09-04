@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -72,6 +74,42 @@ async def test_replaying_the_same_uid_creates_nothing(
     assert count == 1
 
 
+async def test_a_conflict_does_not_discard_an_earlier_row_in_the_same_batch(
+    db_session: AsyncSession,
+) -> None:
+    """A per-row savepoint scopes the rollback to the one conflicting row.
+
+    Without it, `session.rollback()` on an IntegrityError unwinds the whole
+    transaction, wiping out an earlier row in the same batch that had
+    already flushed cleanly — yet its id was already captured into
+    `created`, so the caller would go on to `.delay()` an ingest task for a
+    row that was never actually committed. `FakeReader` cannot exercise this
+    on its own (it self-filters by `last_uid`, so it never re-offers a UID
+    already recorded through `store_new`); a row is inserted directly here
+    to force a genuine unique-constraint conflict.
+    """
+    existing = RawMessage(
+        mailbox="INBOX",
+        uidvalidity=1,
+        uid=2,
+        raw=_mail("already here"),
+        received_at=datetime.now(UTC),
+    )
+    db_session.add(existing)
+    await db_session.commit()
+
+    reader = FakeReader(1, {1: _mail("new"), 2: _mail("duplicate")})
+    created = await imap.store_new(db_session, "INBOX", reader)
+
+    rows = {
+        row.uid: row.id for row in await db_session.scalars(sa.select(RawMessage))
+    }
+    assert rows.keys() == {1, 2}
+    assert created == [rows[1]]
+    for row_id in created:
+        assert await db_session.get(RawMessage, row_id) is not None
+
+
 async def test_a_uidvalidity_change_resyncs_from_zero(
     db_session: AsyncSession,
 ) -> None:
@@ -104,6 +142,23 @@ async def test_poll_state_records_the_high_water_mark(
     assert state.uidvalidity == 7
 
 
+def test_literal_body_uses_the_declared_length_not_line_length() -> None:
+    """A message far shorter than its own wrapper line must not be misread
+    as the wrapper text itself."""
+    lines = [
+        b"1 FETCH (FLAGS (\\Seen) UID 1 RFC822 {2}",
+        bytearray(b"hi"),
+        b")",
+        b"FETCH completed.",
+    ]
+
+    assert imap._literal_body(lines) == b"hi"
+
+
+def test_literal_body_returns_none_when_the_literal_is_missing() -> None:
+    assert imap._literal_body([b"FETCH completed."]) is None
+
+
 @pytest.mark.integration
 async def test_a_real_round_trip_through_greenmail(db_session: AsyncSession) -> None:
     """The fake reader proves the bookkeeping; this proves the wire protocol.
@@ -119,3 +174,44 @@ async def test_a_real_round_trip_through_greenmail(db_session: AsyncSession) -> 
         created = await imap.store_new(db_session, "INBOX", reader)
 
     assert created
+
+
+@pytest.mark.integration
+async def test_a_workspace_ingest_address_arrives_via_delivered_to(
+    db_session: AsyncSession,
+) -> None:
+    """Every workspace's ingest address is a distinct local part on
+    ``INBOUND_DOMAIN``; a real deployment must catch-all that domain into
+    the one mailbox this poller reads (see the email channel design doc).
+    Local dev simulates that forwarding by delivering to the polled mailbox
+    with a ``Delivered-To`` header naming the real ingest address — the
+    shape a forwarder produces, and the shape Task 11's routing reads first.
+
+    The round-trip test above only proves send-to-self works; it says
+    nothing about whether a message addressed the way real tickets are
+    addressed ever reaches the poller. This does.
+    """
+    from relaydesk.services import channel_accounts, mailer
+    from relaydesk.services.workspaces import create_workspace
+
+    workspace = await create_workspace(
+        db_session, name="Acme", slug="acme-ingest-test", monogram="AI"
+    )
+    await db_session.commit()
+    [account] = await channel_accounts.list_for(db_session, workspace.id)
+    address = channel_accounts.address_for(account, workspace.slug)
+
+    await mailer.send(
+        to=get_settings().imap_username,
+        subject="Ticket via forwarding",
+        text_body="hello",
+        headers={"Delivered-To": address},
+    )
+
+    async with imap.AioImapReader("INBOX") as reader:
+        created = await imap.store_new(db_session, "INBOX", reader)
+
+    rows = await db_session.scalars(
+        sa.select(RawMessage).where(RawMessage.id.in_(created))
+    )
+    assert any(address.encode() in row.raw for row in rows)

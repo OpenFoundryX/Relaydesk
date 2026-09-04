@@ -80,6 +80,14 @@ The admin password is read from `RELAYDESK_ADMIN_PASSWORD`. There is a
 password in the command line is visible to anyone who can run `ps` on the
 host and is written to your shell history.
 
+### Inbound email
+
+Every workspace gets a distinct ingest address (`<slug>-<token>@INBOUND_DOMAIN`),
+but all of them must land in the single mailbox the IMAP poller reads — so
+`INBOUND_DOMAIN` must be configured as a catch-all at your mail provider. A
+provider that files each address into its own mailbox will silently drop
+every ticket, with no error.
+
 ## Development commands
 
 ```sh

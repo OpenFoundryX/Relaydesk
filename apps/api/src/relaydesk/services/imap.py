@@ -6,6 +6,7 @@ stalling every other workspace's mail behind it — and so the bytes survive
 for replay once the parser is fixed.
 """
 
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -21,6 +22,13 @@ from relaydesk.models.poll_state import PollState
 from relaydesk.models.raw_message import RawMessage
 
 FETCH_LIMIT = 200
+
+# A FETCH response header line declares the literal that follows it as
+# "... RFC822 {n}" — n is the exact byte length of the octets on the next
+# line. Trusting that declared length, rather than guessing which line is
+# the body by its length, is what stays correct for a message shorter than
+# its own wrapper line.
+_FETCH_LITERAL = re.compile(rb"\{(\d+)\}\s*$")
 
 
 @dataclass(frozen=True)
@@ -67,13 +75,19 @@ async def store_new(
             raw=fetched.raw,
             received_at=datetime.now(UTC),
         )
-        session.add(row)
         try:
-            await session.flush()
+            # A savepoint scopes the rollback to this one row. Without it,
+            # `session.rollback()` on a conflict unwinds the *whole*
+            # transaction — including any earlier row in this same batch
+            # that already flushed cleanly, and the uidvalidity resync
+            # above — even though that earlier row's id was already
+            # captured into `created`, which would then name a row that
+            # was never actually committed.
+            async with session.begin_nested():
+                session.add(row)
+                await session.flush()
         except IntegrityError:
             # Already stored: another poll, or a redelivered task.
-            await session.rollback()
-            state = await _state(session, mailbox)
             continue
         created.append(row.id)
         state.last_uid = max(state.last_uid, fetched.uid)
@@ -114,6 +128,9 @@ class AioImapReader:
             try:
                 await self._client.logout()
             except Exception:
+                # Deliberate best-effort cleanup, nothing more: the poll's
+                # outcome is already decided by this point, and a failed
+                # logout must not mask it or raise in its place.
                 pass
 
     async def uidvalidity(self) -> int:
@@ -126,16 +143,31 @@ class AioImapReader:
         results: list[Fetched] = []
         for uid in sorted(u for u in uids if u > last_uid)[:FETCH_LIMIT]:
             fetched = await self._client.uid("fetch", str(uid), "(RFC822)")
-            # The literal RFC822 body comes back as its own line — a
-            # ``bytearray``, not ``bytes`` — sandwiched between the
-            # "n FETCH (... {size}" header line and a closing ")". Both of
-            # those are short; the body is not, so the longest line is it.
-            candidates = [
-                bytes(line)
-                for line in fetched.lines
-                if isinstance(line, bytes | bytearray)
-            ]
-            body = max(candidates, key=len, default=None)
-            if body:
+            body = _literal_body(fetched.lines)
+            if body is not None:
                 results.append(Fetched(uid=uid, raw=body))
         return results
+
+
+def _literal_body(lines: list[object]) -> bytes | None:
+    """Extract the RFC822 octets from a FETCH response.
+
+    The literal comes back as its own line — a ``bytearray``, not
+    ``bytes`` — sandwiched between the "n FETCH (... RFC822 {size}" header
+    line and a closing ")". The header line declares the literal's exact
+    byte length; trusting that declared length (rather than assuming the
+    body is simply the longest line) is what stays correct for a message
+    shorter than its own wrapper line.
+    """
+    for index, line in enumerate(lines):
+        if not isinstance(line, bytes | bytearray):
+            continue
+        match = _FETCH_LITERAL.search(bytes(line))
+        if match is None:
+            continue
+        size = int(match.group(1))
+        if index + 1 >= len(lines):
+            return None
+        candidate = bytes(lines[index + 1])
+        return candidate[:size] if len(candidate) >= size else None
+    return None
