@@ -206,20 +206,33 @@ async def accept_invite(
 ) -> User:
     """Turn an invite into an active membership.
 
-    Two rules make this safe to expose unauthenticated, since whoever holds
-    the token chooses the ``password`` in the payload:
+    This is reachable unauthenticated and whoever holds the token chooses
+    the ``password`` in the payload, so the question is whose account the
+    address is. The line is **claimed vs unclaimed**, not new vs
+    pre-existing:
 
-    * An account that already exists keeps its credentials. Writing the
-      submitted password onto a pre-existing user would let the admin who
-      minted the invite (and therefore holds the token) set a password on
-      somebody else's account — including a Google-only account in a
-      *different* workspace — and then sign in as them.
-    * A user who already holds an active membership cannot accept at all.
-      ``services.auth.active_membership`` resolves a user's workspace with
-      no tiebreak, so a second active membership makes login pick a
-      workspace arbitrarily. Refusing here is what actually enforces the
-      one-active-membership-per-user assumption the rest of the system is
-      written against.
+    * **Unclaimed** — no row at all, or a row with no active membership.
+      Nobody is currently using the address to sign in to Relaydesk, so
+      whoever accepts a valid invite for it is the person it now belongs
+      to. Adopt the row: overwrite ``name`` and ``password_hash`` from the
+      accepter's input. A pre-existing row here is a released ex-member, or
+      an address an earlier admin minted-and-abandoned; in both cases the
+      real invitee's typed password has to win, because there is no
+      password-reset flow to recover from it losing.
+    * **Claimed** — the user holds an active membership. Refuse with
+      ``Conflict``. This is what protects a real account (the Google-only
+      member of another workspace), and it is also what enforces the
+      one-active-membership-per-user assumption ``services.auth`` is
+      written against: ``active_membership`` resolves a user's workspace
+      with no tiebreak, so a second active membership would make login pick
+      one arbitrarily.
+
+    Distinguishing on *pre-existing* instead would leave the address
+    squattable: mint an invite for an address with no account, accept it
+    yourself to create the row with your own password, then delete your own
+    membership. The row is pre-existing but unclaimed, and the real person's
+    later acceptance would be given a membership while their typed password
+    was silently discarded — handing their account to the squatter.
     """
     invite = await read_invite(session, token)
 
@@ -241,14 +254,19 @@ async def accept_invite(
             session.add(user)
             await session.flush()
         else:
-            existing = await session.scalar(
+            claimed = await session.scalar(
                 sa.select(Membership).where(
                     Membership.user_id == user.id,
                     Membership.status == MembershipStatus.active,
                 )
             )
-            if existing is not None:
+            if claimed is not None:
                 raise Conflict(ALREADY_A_MEMBER)
+            # Unclaimed: adopt the row rather than link to it. The monogram
+            # is derived from the name, so it moves with it.
+            user.name = name
+            user.monogram = monogram_for(name)
+            user.password_hash = hash_password(password)
 
         session.add(
             Membership(

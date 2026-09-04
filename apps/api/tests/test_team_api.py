@@ -181,15 +181,24 @@ async def test_inviting_the_same_pending_address_twice_conflicts(
     assert len(matches) == 1
 
 
-async def test_accepting_an_invite_for_an_existing_user_links_it(
+async def test_accepting_an_invite_adopts_an_unclaimed_account(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
+    """A row with no active membership is unclaimed, so the accepter's
+    password wins.
+
+    Keeping the old credentials here would be the bug, not the fix: there
+    is no password-reset flow anywhere in the repo, so a re-invited
+    ex-member whose typed password was discarded could never sign in, and
+    an address squatted by an earlier admin would stay under his password
+    forever.
+    """
     headers = await sign_in(client, db_session)
     existing = User(
         email="sara@relaydesk.dev",
-        name="Sara Duval",
+        name="S Duval",
         monogram="SD",
-        password_hash=hash_password("saras-own-password"),
+        password_hash=hash_password("saras-old-password"),
     )
     db_session.add(existing)
     await db_session.commit()
@@ -205,23 +214,30 @@ async def test_accepting_an_invite_for_an_existing_user_links_it(
 
     accepted = await client.post(
         f"/api/invites/{token}/accept",
-        json={"name": "Sara Duval", "password": "a-different-password"},
+        json={"name": "Sara Duval", "password": "saras-new-password"},
     )
 
     assert accepted.status_code == 200
     # Acceptance now signs you in, so the response is a session token rather
-    # than the user. Resolve it to check it belongs to the existing account.
+    # than the user. Resolve it to check it adopted the existing row rather
+    # than creating a second one.
     session_headers = {"Authorization": f"Bearer {accepted.json()['token']}"}
     me = await client.get("/api/auth/me", headers=session_headers)
     assert me.status_code == 200
     assert me.json()["user"]["id"] == str(existing.id)
+    assert me.json()["user"]["name"] == "Sara Duval"
 
-    # The existing password still works: accept must not have overwritten it.
-    login = await client.post(
+    new_password = await client.post(
         "/api/auth/login",
-        json={"email": "sara@relaydesk.dev", "password": "saras-own-password"},
+        json={"email": "sara@relaydesk.dev", "password": "saras-new-password"},
     )
-    assert login.status_code == 200
+    old_password = await client.post(
+        "/api/auth/login",
+        json={"email": "sara@relaydesk.dev", "password": "saras-old-password"},
+    )
+
+    assert new_password.status_code == 200
+    assert old_password.status_code == 401
 
 
 async def invite_and_accept(
@@ -406,59 +422,17 @@ async def test_demoting_one_of_several_admins_succeeds(
     assert response.status_code == 204
 
 
-async def test_accepting_does_not_set_a_password_on_a_passwordless_user(
+async def test_accepting_is_refused_for_a_claimed_account(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """The account-takeover chain, closed at its first link.
+    """The original takeover, pinned.
 
-    A Google-only user has ``password_hash IS NULL``. Whoever holds the
-    invite token picks the password in the accept payload, and with no
-    mailer that is the admin who minted it — so writing that password onto
-    a pre-existing account would hand them a working login as somebody
-    else.
-    """
-    headers = await sign_in(client, db_session)
-    google_only = User(
-        email="sara@relaydesk.dev",
-        name="Sara Duval",
-        monogram="SD",
-        password_hash=None,
-    )
-    db_session.add(google_only)
-    await db_session.commit()
-
-    invite_url = (
-        await client.post(
-            "/api/team/invites",
-            headers=headers,
-            json={"email": "sara@relaydesk.dev", "role": "Agent"},
-        )
-    ).json()["inviteUrl"]
-    token = invite_url.rsplit("/", 1)[-1]
-
-    accepted = await client.post(
-        f"/api/invites/{token}/accept",
-        json={"name": "Sara Duval", "password": "attacker-chosen"},
-    )
-    assert accepted.status_code == 200
-
-    await db_session.refresh(google_only)
-    assert google_only.password_hash is None
-
-    login = await client.post(
-        "/api/auth/login",
-        json={"email": "sara@relaydesk.dev", "password": "attacker-chosen"},
-    )
-    assert login.status_code == 401
-
-
-async def test_accepting_is_refused_when_the_user_already_has_a_membership(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    """The second link: a member of another workspace cannot be pulled in.
-
-    ``services.auth.active_membership`` has no tiebreak, so a second active
-    membership would make which workspace a login resolves to arbitrary.
+    A Google-only user (``password_hash IS NULL``) who is an active member
+    of another workspace is *claimed*: acceptance must be refused outright,
+    so the admin holding the token can neither set a password on the
+    account nor give it a second membership. ``services.auth
+    .active_membership`` has no tiebreak, so a second active membership
+    would also make which workspace a login resolves to arbitrary.
     """
     headers = await sign_in(client, db_session)
 
@@ -545,3 +519,106 @@ async def test_a_lowercase_invite_role_is_rejected(
     )
 
     assert response.status_code == 422
+
+
+async def test_a_squatted_then_released_address_is_reclaimed_by_the_real_invitee(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The full squat-release-adopt chain, end to end.
+
+    An admin can mint an invite for any address, including one with no
+    account, and there is no mailer — so he holds the token and can accept
+    it himself, creating the row under a password only he knows. Deleting
+    his own membership then leaves the address pre-existing but unclaimed.
+    If a later, legitimate acceptance merely *linked* to that row, the real
+    person's typed password would be discarded and the squatter would hold
+    their account in the inviting workspace.
+    """
+    squatter_headers = await sign_in(client, db_session)
+
+    # 1. Mint an invite for an address he does not control, and take it.
+    squat_url = (
+        await client.post(
+            "/api/team/invites",
+            headers=squatter_headers,
+            json={"email": "target@outside.dev", "role": "Agent"},
+        )
+    ).json()["inviteUrl"]
+    squatted = await client.post(
+        f"/api/invites/{squat_url.rsplit('/', 1)[-1]}/accept",
+        json={"name": "Not The Owner", "password": "squatter-password"},
+    )
+    assert squatted.status_code == 200
+
+    # 2. Release it, so the row survives with no active membership.
+    team = (await client.get("/api/team", headers=squatter_headers)).json()
+    squatted_id = next(
+        entry["id"] for entry in team if entry["email"] == "target@outside.dev"
+    )
+    released = await client.delete(
+        f"/api/team/members/{squatted_id}", headers=squatter_headers
+    )
+    assert released.status_code == 204
+
+    # 3. A different workspace invites the same address, and the real
+    #    person accepts with a password of their own choosing.
+    acme = Workspace(name="Acme", slug="acme", monogram="AC")
+    ada = User(
+        email="ada@acme.dev",
+        name="Ada Admin",
+        monogram="AA",
+        password_hash=hash_password("relaydesk"),
+    )
+    db_session.add_all([acme, ada])
+    await db_session.flush()
+    db_session.add(
+        Membership(
+            workspace_id=acme.id,
+            user_id=ada.id,
+            role=Role.admin,
+            status=MembershipStatus.active,
+        )
+    )
+    await db_session.commit()
+    acme_headers = {
+        "Authorization": "Bearer "
+        + (
+            await client.post(
+                "/api/auth/login",
+                json={"email": "ada@acme.dev", "password": "relaydesk"},
+            )
+        ).json()["token"]
+    }
+    acme_url = (
+        await client.post(
+            "/api/team/invites",
+            headers=acme_headers,
+            json={"email": "target@outside.dev", "role": "Agent"},
+        )
+    ).json()["inviteUrl"]
+
+    accepted = await client.post(
+        f"/api/invites/{acme_url.rsplit('/', 1)[-1]}/accept",
+        json={"name": "Real Owner", "password": "real-owner-password"},
+    )
+    assert accepted.status_code == 200
+
+    # 4. The real person holds the account; the squatter is locked out.
+    me = await client.get(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {accepted.json()['token']}"},
+    )
+    assert me.json()["user"]["name"] == "Real Owner"
+    assert me.json()["workspace"]["name"] == "Acme"
+
+    real = await client.post(
+        "/api/auth/login",
+        json={"email": "target@outside.dev", "password": "real-owner-password"},
+    )
+    squatter = await client.post(
+        "/api/auth/login",
+        json={"email": "target@outside.dev", "password": "squatter-password"},
+    )
+
+    assert real.status_code == 200
+    assert squatter.status_code == 401

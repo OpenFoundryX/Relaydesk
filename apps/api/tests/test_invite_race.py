@@ -74,6 +74,10 @@ async def test_two_concurrent_accepts_conflict_rather_than_500(
         workspace_id = workspace.id
 
     # Both callers read the invite as unaccepted, then proceed together.
+    # `asyncio.Barrier` has no timeout of its own and the project has no
+    # pytest-timeout dependency, so if one caller raised before reaching
+    # `wait()` the other would block the whole suite forever — hence the
+    # `wait_for` around the gather below.
     read_invite = team.read_invite
     barrier = asyncio.Barrier(2)
 
@@ -95,7 +99,9 @@ async def test_two_concurrent_accepts_conflict_rather_than_500(
         return None
 
     try:
-        outcomes = await asyncio.gather(attempt(), attempt())
+        outcomes = await asyncio.wait_for(
+            asyncio.gather(attempt(), attempt()), timeout=30
+        )
 
         succeeded = [result for result in outcomes if result is None]
         failed = [result for result in outcomes if result is not None]

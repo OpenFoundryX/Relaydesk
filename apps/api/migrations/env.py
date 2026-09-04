@@ -19,17 +19,41 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
-def include_name(name: str | None, type_: str, parent_names: dict) -> bool:
-    """Keep CHECK constraints out of autogenerate's comparison.
+# The CHECK constraints behind ``sa.Enum(..., create_constraint=True)`` are
+# "type bound": Alembic reflects them from the database but
+# ``sqla_compat.all_table_check_constraints()`` excludes them from the model
+# side of the diff, so each would autogenerate as a spurious
+# ``drop_constraint``. Migration 0006 owns exactly these ten by name.
+#
+# THIS LIST IS EXHAUSTIVE AND MUST STAY THAT WAY. Every other CHECK
+# constraint is compared normally: a hand-written ``CheckConstraint`` on a
+# model, or one that has drifted into the database on its own, is still
+# reported. If you add a non-enum CHECK constraint, do NOT add it here —
+# hiding it would make real drift invisible. If you add an enum *value*,
+# note that widening one of the constraints below is invisible to
+# autogenerate either way (the model side of a type-bound constraint is
+# never compared), so the migration must drop and recreate it by name —
+# which is why they are named predictably.
+ENUM_CHECK_CONSTRAINTS = frozenset(
+    {
+        "ck_activity_events_kind",
+        "ck_conversations_channel",
+        "ck_conversations_priority",
+        "ck_conversations_status",
+        "ck_conversations_summary_state",
+        "ck_invites_role",
+        "ck_labels_color",
+        "ck_memberships_role",
+        "ck_memberships_status",
+        "ck_messages_role",
+    }
+)
 
-    The CHECK constraints behind ``sa.Enum(..., create_constraint=True)``
-    are "type bound", and Alembic deliberately excludes those from the
-    model side of the diff while still reflecting them from the database.
-    Left alone, every one of them autogenerates as a spurious
-    ``drop_constraint``. Migration 0006 owns them by explicit name; a slice
-    that adds an enum value drops and recreates the constraint there.
-    """
-    return type_ != "check_constraint"
+
+def include_name(name: str | None, type_: str, parent_names: dict) -> bool:
+    if type_ == "check_constraint":
+        return name not in ENUM_CHECK_CONSTRAINTS
+    return True
 
 
 def run_migrations_offline() -> None:
