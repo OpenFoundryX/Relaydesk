@@ -2006,18 +2006,51 @@ api_router.include_router(invites_router, prefix="/invites", tags=["team"])
 
 Create the router in `api/team.py` (or a sibling `api/invites.py` if `team.py` is already long — check its line count and follow the file-size norms in this repo) with the two public routes:
 
+Schemas go in `schemas/team.py` beside the existing team models:
+
+```python
+class InvitePreview(CamelModel):
+    workspace_name: str
+    email: str
+    role: str
+
+
+class AcceptRequest(CamelModel):
+    name: str
+    password: str
+```
+
 ```python
 @invites_router.get("/{token}", response_model=InvitePreview)
-async def preview_invite(token: str, session: DbSession) -> InvitePreview: ...
+async def preview_invite(token: str, session: DbSession) -> InvitePreview:
+    invite = await team.read_invite(session, token)
+    workspace = await session.get(Workspace, invite.workspace_id)
+    return InvitePreview(
+        workspace_name=workspace.name,
+        email=invite.email,
+        role=ROLE_LABEL[invite.role],
+    )
 
 
 @invites_router.post("/{token}/accept", response_model=TokenResponse)
-async def accept_invite(
+async def accept_invite_route(
     token: str, payload: AcceptRequest, request: Request, session: DbSession
-) -> TokenResponse: ...
+) -> TokenResponse:
+    user = await team.accept_invite(session, token, payload.name, payload.password)
+    membership = await auth.default_membership(session, user)
+    session_token, row = await auth.create_session(
+        session,
+        user,
+        membership,
+        user_agent=request.headers.get("user-agent"),
+        ip=request.client.host if request.client else None,
+    )
+    return TokenResponse(token=session_token, expires_at=row.expires_at)
 ```
 
-`accept_invite` calls `team.accept_invite(...)`, then `auth.default_membership(...)`, then `auth.create_session(session, user, membership, ...)` — the Task 5 signature. It returns the same `TokenResponse` shape `POST /auth/login` returns, so the web client's existing sign-in handling works unchanged.
+Both routes are public — no `Scope` dependency — and that is the point: the person accepting has no session yet. Their authorization is possession of a token that was mailed to the address on the invite.
+
+`TokenResponse` is the same model `POST /auth/login` returns, so the web client's existing sign-in handling works unchanged. Read how `api/auth.py` constructs it and match that exactly, including how it reads the user agent and client IP.
 
 - [ ] **Step 7: Make acceptance single-use**
 
@@ -2886,39 +2919,72 @@ Deactivation is a soft delete: mail already forwarded to a removed address keeps
 
 - [ ] **Step 4: Write the router**
 
-`apps/api/src/relaydesk/api/channels.py`, following the response-model and `Scope` conventions in `api/labels.py` (read it first — it is the shortest existing router and the closest match):
+Schemas live in `src/relaydesk/schemas/`, not inline in routers — follow `schemas/conversation.py`. Create `apps/api/src/relaydesk/schemas/channel.py`:
 
 ```python
-class ChannelOut(<the repo's camelCase base model>):
-    id: uuid.UUID
+from relaydesk.schemas.base import CamelModel
+
+
+class ChannelOut(CamelModel):
+    id: str
     address: str
     display_name: str
     active: bool
-    created_at: datetime
 
 
-class ChannelCreate(<same base>):
-    display_name: str = Field(min_length=1, max_length=160)
+class ChannelCreateRequest(CamelModel):
+    display_name: str
+```
+
+`CamelModel` (`schemas/base.py:5`) is the shared base that applies `alias_generator=to_camel`; every response model in this codebase inherits from it.
+
+Then `apps/api/src/relaydesk/api/channels.py`, following the construction style in `api/labels.py` — that router builds its response models explicitly rather than via `from_attributes`, and this one does the same because `address` is computed:
+
+```python
+from fastapi import APIRouter, Response, status
+
+from relaydesk.api.deps import DbSession, Scope
+from relaydesk.schemas.channel import ChannelCreateRequest, ChannelOut
+from relaydesk.services import channel_accounts
+
+router = APIRouter()
+
+
+def _out(account, slug: str) -> ChannelOut:
+    return ChannelOut(
+        id=str(account.id),
+        address=channel_accounts.address_for(account, slug),
+        display_name=account.display_name,
+        active=account.active,
+    )
 
 
 @router.get("/email", response_model=list[ChannelOut])
-async def list_email_channels(scope: Scope, session: DbSession) -> list[ChannelOut]: ...
+async def list_route(scope: Scope, session: DbSession) -> list[ChannelOut]:
+    accounts = await channel_accounts.list_for(session, scope.workspace_id)
+    return [_out(account, scope.workspace.slug) for account in accounts]
 
 
-@router.post("/email", response_model=ChannelOut, status_code=201)
-async def create_email_channel(
-    payload: ChannelCreate, scope: Scope, session: DbSession
+@router.post("/email", response_model=ChannelOut, status_code=status.HTTP_201_CREATED)
+async def create_route(
+    payload: ChannelCreateRequest, scope: Scope, session: DbSession
 ) -> ChannelOut:
     scope.require_admin()
-    ...
+    account = await channel_accounts.create(
+        session, scope.workspace_id, payload.display_name
+    )
+    await session.commit()
+    return _out(account, scope.workspace.slug)
 
 
-@router.delete("/email/{channel_id}", status_code=204)
-async def delete_email_channel(
+@router.delete("/email/{channel_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_route(
     channel_id: uuid.UUID, scope: Scope, session: DbSession
 ) -> Response:
     scope.require_admin()
-    ...
+    await channel_accounts.deactivate(session, scope.workspace_id, channel_id)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 ```
 
 `address` is computed with `channel_accounts.address_for(account, scope.workspace.slug)` — it is derived, never stored, so renaming a workspace cannot leave a stale address in the database.
@@ -3328,3 +3394,1716 @@ git commit -m "feat(api): poll IMAP into a raw message landing zone"
 ```
 
 ---
+
+### Task 11: Routing, threading, and appending
+
+The pipeline's database half. Everything before this task produced facts; this one decides what they become.
+
+**Files:**
+- Create: `apps/api/src/relaydesk/services/contacts.py`
+- Create: `apps/api/src/relaydesk/services/ingest.py`
+- Modify: `apps/api/src/relaydesk/services/conversations.py` (add `allocate_number`, `create_conversation`, `append_message`)
+- Modify: `apps/api/src/relaydesk/cli.py` (seed uses the new helper instead of building rows inline)
+- Modify: `apps/api/src/relaydesk/worker/tasks/inbound.py` (replace the Task 10 stub)
+- Test: `apps/api/tests/test_ingest.py` (create)
+
+**Interfaces:**
+- Consumes: `normalize.parse`, `InboundMessage` (Task 7); `classify`, `Disposition` (Task 8); `channel_accounts.*` (Task 9); `RawMessage`, `RawMessageState` (Task 3).
+- Produces:
+  - `contacts.upsert(session, workspace_id, email, name) -> Contact`
+  - `conversations.allocate_number(session, workspace_id) -> int`
+  - `conversations.create_conversation(session, workspace_id, contact, subject, channel, sent_at) -> Conversation`
+  - `conversations.append_message(session, conversation, *, role, direction, author_name, body, body_html, sent_at, external_id, in_reply_to, channel_account_id, raw_message_id) -> Message`
+  - `ingest.route(session, message) -> ingest.Route | None`
+  - `ingest.resolve_thread(session, workspace_id, message, conversation_number) -> Conversation | None`
+  - `ingest.ingest_raw(session, raw_message_id) -> RawMessageState`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `apps/api/tests/test_ingest.py`:
+
+```python
+from datetime import UTC, datetime, timedelta
+from email.message import EmailMessage
+
+import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from relaydesk.models.contact import Contact
+from relaydesk.models.conversation import Conversation, ConversationStatus
+from relaydesk.models.message import Message, MessageDirection, MessageRole
+from relaydesk.models.raw_message import RawMessage, RawMessageState
+from relaydesk.services import channel_accounts, ingest
+from tests.factories import make_workspace
+
+
+async def _account(session, slug="acme"):
+    workspace = await make_workspace(session, slug=slug)
+    account = await channel_accounts.create(session, workspace.id, "Support")
+    await session.flush()
+    return workspace, account
+
+
+def _raw(to: str, subject="Refund please", sender="ada@example.com", **headers) -> bytes:
+    message = EmailMessage()
+    message["From"] = sender
+    message["To"] = to
+    message["Subject"] = subject
+    message["Date"] = "Tue, 2 Sep 2026 10:00:00 +0000"
+    message["Message-ID"] = headers.pop("message_id", "<a1@example.com>")
+    for name, value in headers.items():
+        message[name.replace("_", "-")] = value
+    message.set_content("Please refund my order.")
+    return message.as_bytes()
+
+
+async def _store(session, raw: bytes, uid: int = 1) -> RawMessage:
+    row = RawMessage(
+        mailbox="INBOX",
+        uidvalidity=1,
+        uid=uid,
+        raw=raw,
+        received_at=datetime.now(UTC),
+    )
+    session.add(row)
+    await session.flush()
+    return row
+
+
+async def test_a_new_message_becomes_a_ticket(db_session: AsyncSession) -> None:
+    workspace, account = await _account(db_session)
+    address = channel_accounts.address_for(account, "acme")
+    row = await _store(db_session, _raw(address))
+
+    state = await ingest.ingest_raw(db_session, row.id)
+
+    assert state is RawMessageState.ingested
+    conversation = await db_session.scalar(sa.select(Conversation))
+    assert conversation is not None
+    assert conversation.workspace_id == workspace.id
+    assert conversation.subject == "Refund please"
+    assert conversation.status is ConversationStatus.open
+    assert conversation.unread is True
+    assert conversation.number == 1
+
+    message = await db_session.scalar(sa.select(Message))
+    assert message.role is MessageRole.customer
+    assert message.direction is MessageDirection.inbound
+    assert message.external_id == "<a1@example.com>"
+
+
+async def test_forwarded_mail_routes_by_delivered_to(db_session: AsyncSession) -> None:
+    """Forwarding does not rewrite To:. A customer mailing support@acme.com
+    produces a message whose To: still says support@acme.com, and the ingest
+    address appears only in Delivered-To."""
+    workspace, account = await _account(db_session)
+    address = channel_accounts.address_for(account, "acme")
+    row = await _store(db_session, _raw("support@acme.com", Delivered_To=address))
+
+    assert await ingest.ingest_raw(db_session, row.id) is RawMessageState.ingested
+    conversation = await db_session.scalar(sa.select(Conversation))
+    assert conversation.workspace_id == workspace.id
+
+
+async def test_mail_we_cannot_route_is_kept_not_dropped(
+    db_session: AsyncSession,
+) -> None:
+    await _account(db_session)
+    row = await _store(db_session, _raw("someone-else@elsewhere.com"))
+
+    state = await ingest.ingest_raw(db_session, row.id)
+
+    assert state is RawMessageState.unrouted
+    assert await db_session.scalar(sa.select(sa.func.count()).select_from(Conversation)) == 0
+    await db_session.refresh(row)
+    assert row.raw  # the bytes survive for replay
+
+
+async def test_a_reply_threads_onto_the_same_conversation(
+    db_session: AsyncSession,
+) -> None:
+    workspace, account = await _account(db_session)
+    address = channel_accounts.address_for(account, "acme")
+    first = await _store(db_session, _raw(address, message_id="<one@example.com>"), uid=1)
+    await ingest.ingest_raw(db_session, first.id)
+
+    second = await _store(
+        db_session,
+        _raw(address, subject="Re: Refund please", message_id="<two@example.com>",
+             In_Reply_To="<one@example.com>"),
+        uid=2,
+    )
+    await ingest.ingest_raw(db_session, second.id)
+
+    assert await db_session.scalar(sa.select(sa.func.count()).select_from(Conversation)) == 1
+    assert await db_session.scalar(sa.select(sa.func.count()).select_from(Message)) == 2
+
+
+async def test_a_forged_reference_cannot_reach_another_workspace(
+    db_session: AsyncSession,
+) -> None:
+    """References is attacker-supplied. Without the workspace predicate a
+    crafted header appends a message to another tenant's conversation."""
+    _victim, victim_account = await _account(db_session, slug="victim")
+    victim_address = channel_accounts.address_for(victim_account, "victim")
+    victim_row = await _store(db_session, _raw(victim_address, message_id="<secret@x>"), uid=1)
+    await ingest.ingest_raw(db_session, victim_row.id)
+
+    _attacker, attacker_account = await _account(db_session, slug="attacker")
+    attacker_address = channel_accounts.address_for(attacker_account, "attacker")
+    attacker_row = await _store(
+        db_session,
+        _raw(attacker_address, message_id="<evil@x>", In_Reply_To="<secret@x>"),
+        uid=2,
+    )
+    await ingest.ingest_raw(db_session, attacker_row.id)
+
+    assert await db_session.scalar(sa.select(sa.func.count()).select_from(Conversation)) == 2
+
+
+async def test_a_tagged_address_threads_only_for_that_contact(
+    db_session: AsyncSession,
+) -> None:
+    """The +c tag uses the conversation number, which is guessable. Requiring
+    the sender to be the conversation's own contact is what stops a stranger
+    who knows the ingest address from posting into an existing thread."""
+    _workspace, account = await _account(db_session)
+    address = channel_accounts.address_for(account, "acme")
+    first = await _store(db_session, _raw(address), uid=1)
+    await ingest.ingest_raw(db_session, first.id)
+    conversation = await db_session.scalar(sa.select(Conversation))
+
+    tagged = channel_accounts.address_for(account, "acme", conversation.number)
+    stranger = await _store(
+        db_session,
+        _raw(tagged, sender="mallory@example.com", message_id="<m@x>"),
+        uid=2,
+    )
+    await ingest.ingest_raw(db_session, stranger.id)
+
+    assert await db_session.scalar(sa.select(sa.func.count()).select_from(Conversation)) == 2
+
+
+async def test_the_same_subject_from_the_same_contact_threads(
+    db_session: AsyncSession,
+) -> None:
+    _workspace, account = await _account(db_session)
+    address = channel_accounts.address_for(account, "acme")
+    first = await _store(db_session, _raw(address, message_id="<one@x>"), uid=1)
+    await ingest.ingest_raw(db_session, first.id)
+
+    second = await _store(
+        db_session, _raw(address, subject="RE: Refund please", message_id="<two@x>"), uid=2
+    )
+    await ingest.ingest_raw(db_session, second.id)
+
+    assert await db_session.scalar(sa.select(sa.func.count()).select_from(Conversation)) == 1
+
+
+async def test_a_resolved_conversation_reopens_on_a_customer_reply(
+    db_session: AsyncSession,
+) -> None:
+    _workspace, account = await _account(db_session)
+    address = channel_accounts.address_for(account, "acme")
+    first = await _store(db_session, _raw(address, message_id="<one@x>"), uid=1)
+    await ingest.ingest_raw(db_session, first.id)
+    conversation = await db_session.scalar(sa.select(Conversation))
+    conversation.status = ConversationStatus.resolved
+    await db_session.commit()
+
+    second = await _store(
+        db_session, _raw(address, message_id="<two@x>", In_Reply_To="<one@x>"), uid=2
+    )
+    await ingest.ingest_raw(db_session, second.id)
+
+    await db_session.refresh(conversation)
+    assert conversation.status is ConversationStatus.open
+
+
+async def test_a_trashed_conversation_does_not_reopen(
+    db_session: AsyncSession,
+) -> None:
+    _workspace, account = await _account(db_session)
+    address = channel_accounts.address_for(account, "acme")
+    first = await _store(db_session, _raw(address, message_id="<one@x>"), uid=1)
+    await ingest.ingest_raw(db_session, first.id)
+    conversation = await db_session.scalar(sa.select(Conversation))
+    conversation.status = ConversationStatus.trash
+    await db_session.commit()
+
+    second = await _store(
+        db_session, _raw(address, message_id="<two@x>", In_Reply_To="<one@x>"), uid=2
+    )
+    await ingest.ingest_raw(db_session, second.id)
+
+    await db_session.refresh(conversation)
+    assert conversation.status is ConversationStatus.trash
+
+
+async def test_a_newsletter_creates_no_ticket(db_session: AsyncSession) -> None:
+    _workspace, account = await _account(db_session)
+    address = channel_accounts.address_for(account, "acme")
+    row = await _store(db_session, _raw(address, List_Id="<news.example.com>"))
+
+    await ingest.ingest_raw(db_session, row.id)
+
+    assert await db_session.scalar(sa.select(sa.func.count()).select_from(Conversation)) == 0
+
+
+async def test_a_bounce_marks_the_contact_and_does_not_open_a_ticket(
+    db_session: AsyncSession,
+) -> None:
+    _workspace, account = await _account(db_session)
+    address = channel_accounts.address_for(account, "acme")
+    first = await _store(db_session, _raw(address, message_id="<one@x>"), uid=1)
+    await ingest.ingest_raw(db_session, first.id)
+
+    bounce = await _store(
+        db_session,
+        _raw(address, sender="MAILER-DAEMON@mx.example.com", message_id="<b@x>",
+             In_Reply_To="<one@x>"),
+        uid=2,
+    )
+    await ingest.ingest_raw(db_session, bounce.id)
+
+    assert await db_session.scalar(sa.select(sa.func.count()).select_from(Conversation)) == 1
+    contact = await db_session.scalar(
+        sa.select(Contact).where(Contact.email == "ada@example.com")
+    )
+    assert contact.bounced_at is not None
+    roles = list(await db_session.scalars(sa.select(Message.role)))
+    assert MessageRole.system in roles
+
+
+async def test_ingesting_the_same_message_twice_appends_once(
+    db_session: AsyncSession,
+) -> None:
+    """The task is at-least-once. A redelivery after a crash must be a
+    no-op, not a duplicate ticket."""
+    _workspace, account = await _account(db_session)
+    address = channel_accounts.address_for(account, "acme")
+    row = await _store(db_session, _raw(address))
+
+    await ingest.ingest_raw(db_session, row.id)
+    await ingest.ingest_raw(db_session, row.id)
+
+    assert await db_session.scalar(sa.select(sa.func.count()).select_from(Message)) == 1
+
+
+async def test_a_flood_from_one_contact_is_throttled(
+    db_session: AsyncSession,
+) -> None:
+    _workspace, account = await _account(db_session)
+    address = channel_accounts.address_for(account, "acme")
+
+    for uid in range(1, ingest.CONTACT_HOURLY_CAP + 2):
+        row = await _store(db_session, _raw(address, message_id=f"<m{uid}@x>"), uid=uid)
+        state = await ingest.ingest_raw(db_session, row.id)
+
+    assert state is RawMessageState.throttled
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `docker compose exec api pytest tests/test_ingest.py -v`
+Expected: FAIL — no module `relaydesk.services.ingest`.
+
+- [ ] **Step 3: Write the contact upsert**
+
+`apps/api/src/relaydesk/services/contacts.py`:
+
+```python
+import uuid
+
+import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from relaydesk.models.contact import Contact
+
+
+async def upsert(
+    session: AsyncSession, workspace_id: uuid.UUID, email: str, name: str
+) -> Contact:
+    """Find or create a contact. ``contacts.email`` is CITEXT, so lookup is
+    already case-insensitive."""
+    contact = await session.scalar(
+        sa.select(Contact).where(
+            Contact.workspace_id == workspace_id, Contact.email == email
+        )
+    )
+    if contact is not None:
+        # A later message may carry a better display name than the first did.
+        if name and contact.name != name and "@" in contact.name:
+            contact.name = name
+        return contact
+
+    contact = Contact(workspace_id=workspace_id, email=email, name=name or email)
+    session.add(contact)
+    try:
+        await session.flush()
+    except IntegrityError:
+        # Two messages from a new address arriving together.
+        await session.rollback()
+        contact = await session.scalar(
+            sa.select(Contact).where(
+                Contact.workspace_id == workspace_id, Contact.email == email
+            )
+        )
+        if contact is None:
+            raise
+    return contact
+```
+
+- [ ] **Step 4: Add the conversation helpers**
+
+In `services/conversations.py`:
+
+```python
+async def allocate_number(session: AsyncSession, workspace_id: uuid.UUID) -> int:
+    """Per-workspace sequential ticket number.
+
+    Allocated with UPDATE ... RETURNING inside the caller's transaction, so
+    concurrent inserts cannot collide and ticket volume does not leak across
+    tenants the way a global sequence would.
+    """
+    number = await session.scalar(
+        sa.update(Workspace)
+        .where(Workspace.id == workspace_id)
+        .values(conversation_seq=Workspace.conversation_seq + 1)
+        .returning(Workspace.conversation_seq)
+    )
+    if number is None:
+        raise NotFound("That workspace does not exist.")
+    return int(number)
+
+
+async def create_conversation(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    contact: Contact,
+    subject: str,
+    channel: Channel,
+    sent_at: datetime,
+) -> Conversation:
+    conversation = Conversation(
+        workspace_id=workspace_id,
+        number=await allocate_number(session, workspace_id),
+        subject=subject[:400],
+        contact_id=contact.id,
+        channel=channel,
+        status=ConversationStatus.open,
+        priority=Priority.medium,
+        preview="",
+        last_message_at=sent_at,
+        unread=True,
+    )
+    session.add(conversation)
+    await session.flush()
+    return conversation
+
+
+async def append_message(
+    session: AsyncSession,
+    conversation: Conversation,
+    *,
+    role: MessageRole,
+    direction: MessageDirection,
+    author_name: str,
+    body: str,
+    sent_at: datetime,
+    body_html: str | None = None,
+    external_id: str | None = None,
+    in_reply_to: str | None = None,
+    channel_account_id: uuid.UUID | None = None,
+    raw_message_id: uuid.UUID | None = None,
+    delivery_state: DeliveryState = DeliveryState.none,
+) -> Message:
+    message = Message(
+        workspace_id=conversation.workspace_id,
+        conversation_id=conversation.id,
+        role=role,
+        direction=direction,
+        author_name=author_name[:160],
+        body=body,
+        body_html=body_html,
+        sent_at=sent_at,
+        external_id=external_id,
+        in_reply_to=in_reply_to,
+        channel_account_id=channel_account_id,
+        raw_message_id=raw_message_id,
+        delivery_state=delivery_state,
+    )
+    session.add(message)
+
+    # Denormalized onto the conversation because the inbox list is the
+    # hottest query in the product and must not join to messages per row.
+    conversation.preview = " ".join(body.split())[:200]
+    conversation.last_message_at = max(conversation.last_message_at, sent_at)
+    await session.flush()
+    return message
+```
+
+Then change `cli.py`'s seed to build its conversations through `create_conversation` and `append_message` rather than constructing rows inline, so there is one code path that knows how a conversation is made. The seed's output must not change — run `make seed` afterwards and confirm the console still shows eleven tickets.
+
+- [ ] **Step 5: Write the pipeline**
+
+`apps/api/src/relaydesk/services/ingest.py`:
+
+```python
+"""Routing, classification, threading, and appending.
+
+Order matters: route, classify, thread, append. Classification runs before
+anything is created so a bounce or a newsletter never becomes a ticket.
+"""
+
+import re
+import uuid
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+
+import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from relaydesk.email_parse import normalize
+from relaydesk.email_parse.classify import Disposition, classify
+from relaydesk.email_parse.normalize import InboundMessage
+from relaydesk.models.activity import ActivityKind
+from relaydesk.models.channel_account import ChannelAccount
+from relaydesk.models.conversation import Channel, Conversation, ConversationStatus
+from relaydesk.models.message import Message, MessageDirection, MessageRole
+from relaydesk.models.raw_message import RawMessage, RawMessageState
+from relaydesk.services import channel_accounts, contacts, conversations
+
+CONTACT_HOURLY_CAP = 20
+SUBJECT_WINDOW = timedelta(days=7)
+REOPENING_STATUSES = frozenset(
+    {ConversationStatus.resolved, ConversationStatus.on_hold, ConversationStatus.pending}
+)
+
+_SUBJECT_NOISE = re.compile(
+    r"^(?:\s*(?:re|fw|fwd|aw|sv|vs)\s*:\s*|\s*\[[^\]]{1,40}\]\s*)+", re.IGNORECASE
+)
+
+
+@dataclass(frozen=True)
+class Route:
+    account: ChannelAccount
+    address: str
+
+
+def normalize_subject(subject: str) -> str:
+    previous = None
+    current = subject.strip()
+    # Repeated prefixes ("Re: Fwd: Re:") need more than one pass.
+    while previous != current:
+        previous = current
+        current = _SUBJECT_NOISE.sub("", current).strip()
+    return current.lower()
+
+
+async def route(session: AsyncSession, message: InboundMessage) -> Route | None:
+    """Delivered-To and X-Original-To first, then To and Cc.
+
+    Forwarding does not rewrite To:, so for a brand-new ticket the ingest
+    address usually appears only in a Delivered-To header the forwarder
+    added. Replies are unaffected: the customer replies straight to the
+    tokenized address.
+    """
+    for address in (*message.delivered_to, *message.to, *message.cc):
+        token = channel_accounts.token_from_address(address)
+        if token is None:
+            continue
+        account = await channel_accounts.find_by_token(session, token)
+        if account is not None:
+            return Route(account=account, address=address)
+    return None
+
+
+async def resolve_thread(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    message: InboundMessage,
+    conversation_number: int | None,
+) -> Conversation | None:
+    # 1. The +c tag. The number is guessable, so it only threads when the
+    #    sender is the conversation's own contact — otherwise a stranger who
+    #    learned the ingest address could post into any open thread.
+    if conversation_number is not None:
+        conversation = await session.scalar(
+            sa.select(Conversation).where(
+                Conversation.workspace_id == workspace_id,
+                Conversation.number == conversation_number,
+            )
+        )
+        if (
+            conversation is not None
+            and conversation.contact is not None
+            and conversation.contact.email.lower() == message.from_email
+        ):
+            return conversation
+
+    # 2. In-Reply-To, then References right to left (nearest ancestor first).
+    #    Always scoped to the workspace: these headers are attacker-supplied.
+    candidates = [message.in_reply_to, *reversed(message.references)]
+    for external_id in [c for c in candidates if c]:
+        conversation = await session.scalar(
+            sa.select(Conversation)
+            .join(Message, Message.conversation_id == Conversation.id)
+            .where(
+                Conversation.workspace_id == workspace_id,
+                Message.workspace_id == workspace_id,
+                Message.external_id == external_id,
+            )
+            .limit(1)
+        )
+        if conversation is not None:
+            return conversation
+
+    # 3. Same contact, same subject, recently.
+    subject = normalize_subject(message.subject)
+    if not subject:
+        return None
+    since = datetime.now(UTC) - SUBJECT_WINDOW
+    result = await session.scalars(
+        sa.select(Conversation)
+        .join(Conversation.contact)
+        .where(
+            Conversation.workspace_id == workspace_id,
+            Conversation.last_message_at >= since,
+        )
+        .order_by(Conversation.last_message_at.desc())
+        .limit(50)
+    )
+    for conversation in result:
+        if (
+            conversation.contact is not None
+            and conversation.contact.email.lower() == message.from_email
+            and normalize_subject(conversation.subject) == subject
+        ):
+            return conversation
+    return None
+
+
+async def _already_ingested(
+    session: AsyncSession, account_id: uuid.UUID, external_id: str | None
+) -> bool:
+    if external_id is None:
+        return False
+    found = await session.scalar(
+        sa.select(Message.id).where(
+            Message.channel_account_id == account_id,
+            Message.external_id == external_id,
+        )
+    )
+    return found is not None
+
+
+async def _over_cap(
+    session: AsyncSession, workspace_id: uuid.UUID, email: str
+) -> bool:
+    since = datetime.now(UTC) - timedelta(hours=1)
+    count = await session.scalar(
+        sa.select(sa.func.count())
+        .select_from(Message)
+        .join(Conversation, Conversation.id == Message.conversation_id)
+        .join(Conversation.contact)
+        .where(
+            Message.workspace_id == workspace_id,
+            Message.direction == MessageDirection.inbound,
+            Message.created_at >= since,
+        )
+    )
+    return int(count or 0) >= CONTACT_HOURLY_CAP
+
+
+async def _handle_bounce(
+    session: AsyncSession, workspace_id: uuid.UUID, message: InboundMessage
+) -> RawMessageState:
+    conversation = await resolve_thread(session, workspace_id, message, None)
+    if conversation is None:
+        return RawMessageState.unrouted
+
+    if conversation.contact is not None:
+        conversation.contact.bounced_at = datetime.now(UTC)
+
+    await conversations.append_message(
+        session,
+        conversation,
+        role=MessageRole.system,
+        direction=MessageDirection.inbound,
+        author_name="Mail delivery",
+        body=f"Delivery failed: {message.subject}",
+        sent_at=message.sent_at,
+    )
+    conversations.record(
+        session,
+        conversation,
+        None,
+        ActivityKind.status,
+        "reported",
+        "a delivery failure",
+        actor_name="Mail delivery",
+    )
+    return RawMessageState.ingested
+
+
+async def ingest_raw(session: AsyncSession, raw_message_id: uuid.UUID) -> RawMessageState:
+    row = await session.get(RawMessage, raw_message_id)
+    if row is None:
+        return RawMessageState.failed
+    if row.state is not RawMessageState.fetched:
+        # Redelivered task for a message already handled.
+        return row.state
+
+    message = normalize.parse(row.raw)
+    row.external_id = message.message_id
+
+    matched = await route(session, message)
+    if matched is None:
+        row.state = RawMessageState.unrouted
+        await session.commit()
+        return row.state
+
+    row.workspace_id = matched.account.workspace_id
+    row.channel_account_id = matched.account.id
+    workspace_id = matched.account.workspace_id
+
+    if await _already_ingested(session, matched.account.id, message.message_id):
+        row.state = RawMessageState.ingested
+        await session.commit()
+        return row.state
+
+    disposition = classify(message)
+    if disposition is Disposition.bounce:
+        row.state = await _handle_bounce(session, workspace_id, message)
+        await session.commit()
+        return row.state
+    if disposition in (Disposition.bulk, Disposition.auto_reply):
+        # Filed, never answered: this is the half of loop prevention that
+        # stops a vacation responder and this inbox mailing each other.
+        row.state = RawMessageState.ingested
+        await session.commit()
+        return row.state
+
+    if await _over_cap(session, workspace_id, message.from_email):
+        row.state = RawMessageState.throttled
+        await session.commit()
+        return row.state
+
+    contact = await contacts.upsert(
+        session, workspace_id, message.from_email, message.from_name
+    )
+    conversation = await resolve_thread(
+        session,
+        workspace_id,
+        message,
+        channel_accounts.conversation_number_from_address(matched.address),
+    )
+    if conversation is None:
+        conversation = await conversations.create_conversation(
+            session,
+            workspace_id,
+            contact,
+            message.subject,
+            Channel.email,
+            message.sent_at,
+        )
+        conversations.record(
+            session,
+            conversation,
+            None,
+            ActivityKind.created,
+            "opened this",
+            contact.name,
+            actor_name=contact.name,
+        )
+    elif conversation.status in REOPENING_STATUSES:
+        conversation.status = ConversationStatus.open
+
+    conversation.unread = True
+    await conversations.append_message(
+        session,
+        conversation,
+        role=MessageRole.customer,
+        direction=MessageDirection.inbound,
+        author_name=contact.name,
+        body=message.text_body,
+        body_html=message.html_body,
+        sent_at=message.sent_at,
+        external_id=message.message_id,
+        in_reply_to=message.in_reply_to,
+        channel_account_id=matched.account.id,
+        raw_message_id=row.id,
+    )
+
+    row.state = RawMessageState.ingested
+    await session.commit()
+    return row.state
+```
+
+`conversations.record` (`services/conversations.py:215`) is currently typed `actor: User` and derives `actor_name` from it. An inbound message has no acting user, so widen it:
+
+```python
+def record(
+    session: AsyncSession,
+    conversation: Conversation,
+    actor: User | None,
+    kind: ActivityKind,
+    verb: str,
+    value: str,
+    status: str | None = None,
+    actor_name: str | None = None,
+) -> None:
+```
+
+with `actor_user_id=actor.id if actor else None` and `actor_name=actor_name or (actor.name if actor else "Relaydesk")`. Every existing caller passes a real `User` positionally and is unaffected.
+
+`_over_cap`'s query must filter by the contact — read the join it builds and add `Contact.email == email` to the `where` clause. The cap is per contact, not per workspace; a workspace-wide cap would let one noisy sender silence every other customer.
+
+- [ ] **Step 6: Replace the ingest task stub**
+
+In `worker/tasks/inbound.py`, replace the Task 10 stub:
+
+```python
+@app.task(
+    name="relaydesk.ingest_message",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    max_retries=5,
+)
+def ingest_message(raw_message_id: str) -> str:
+    return bridge.run(_ingest(uuid.UUID(raw_message_id)))
+
+
+async def _ingest(raw_message_id: uuid.UUID) -> str:
+    async with bridge.session_scope() as session:
+        return str(await ingest.ingest_raw(session, raw_message_id))
+```
+
+- [ ] **Step 7: Run the tests**
+
+Run: `docker compose exec api pytest tests/test_ingest.py -v`
+Expected: PASS (13 passed).
+
+- [ ] **Step 8: Verify the seed still works**
+
+Run: `make seed && docker compose exec api python -c "
+import asyncio, sqlalchemy as sa
+from relaydesk.db.session import async_session_factory
+from relaydesk.models.conversation import Conversation
+async def main():
+    async with async_session_factory() as s:
+        print(await s.scalar(sa.select(sa.func.count()).select_from(Conversation)))
+asyncio.run(main())"`
+Expected: `11`.
+
+- [ ] **Step 9: Add the unrouted-mail CLI**
+
+The spec requires unrouted mail to be visible to a deployment administrator; without this, `state = 'unrouted'` is a value nothing ever reads. In `cli.py`, following the existing `seed` and `bootstrap` command style:
+
+```python
+def unrouted(limit: int = 20) -> None:
+    """List mail that reached the mailbox but matched no workspace.
+
+    Usually a forwarding rule pointing at the wrong address. The bytes are
+    kept, so fixing the rule and re-running `relaydesk reingest <id>` turns
+    these into tickets rather than losing them.
+    """
+```
+
+printing id, received_at, and the `From`/`Subject` parsed from the stored bytes, plus a `reingest <raw_message_id>` command that resets `state` to `fetched` and re-enqueues `ingest_message`.
+
+Add a test asserting `unrouted` lists a message that failed to route and omits one that succeeded.
+
+- [ ] **Step 10: Full suite, lint, commit**
+
+Run: `docker compose exec api pytest -q -m "not integration" && docker compose exec api ruff check .`
+
+```bash
+git add apps/api
+git commit -m "feat(api): route, classify, thread, and append inbound mail"
+```
+
+---
+
+### Task 12: Attachments
+
+Files arriving from strangers. Stored content-addressed, served only through an authenticated, workspace-scoped route.
+
+**Files:**
+- Create: `apps/api/src/relaydesk/services/attachments.py`
+- Create: `apps/api/src/relaydesk/api/attachments.py`
+- Modify: `apps/api/src/relaydesk/api/router.py`
+- Modify: `apps/api/src/relaydesk/services/ingest.py` (store attachments after appending)
+- Modify: `apps/api/src/relaydesk/schemas/conversation.py` (`MessageOut` gains `attachments`)
+- Modify: `apps/api/src/relaydesk/api/conversations.py` (populate it)
+- Test: `apps/api/tests/test_attachments.py` (create)
+
+**Interfaces:**
+- Consumes: `Attachment` (Task 3), `ParsedAttachment` (Task 7), `Settings.attachment_dir` / `attachment_max_bytes` (Task 1).
+- Produces:
+  - `attachments.store(session, message, parsed: Sequence[ParsedAttachment]) -> list[Attachment]`
+  - `attachments.read(session, workspace_id, attachment_id) -> tuple[Attachment, bytes]`
+  - `attachments.safe_content_type(content_type: str) -> str`
+  - `GET /api/attachments/{id}`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `apps/api/tests/test_attachments.py`:
+
+```python
+import hashlib
+from pathlib import Path
+
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from relaydesk.config import get_settings
+from relaydesk.email_parse.normalize import ParsedAttachment
+from relaydesk.errors import NotFound
+from relaydesk.services import attachments, conversations
+from relaydesk.models.message import MessageDirection, MessageRole
+from tests.factories import make_conversation, make_member, make_workspace, sign_in
+
+
+@pytest.fixture(autouse=True)
+def attachment_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(get_settings(), "attachment_dir", str(tmp_path))
+    return tmp_path
+
+
+def _parsed(name="invoice.pdf", content=b"%PDF fake", ctype="application/pdf"):
+    return ParsedAttachment(
+        filename=name, content_type=ctype, content=content, inline=False, content_id=None
+    )
+
+
+async def _message(session, workspace):
+    conversation = await make_conversation(session, workspace)
+    return await conversations.append_message(
+        session,
+        conversation,
+        role=MessageRole.customer,
+        direction=MessageDirection.inbound,
+        author_name="Ada",
+        body="See attached",
+        sent_at=conversation.last_message_at,
+    )
+
+
+async def test_content_is_addressed_by_hash_not_by_filename(
+    db_session: AsyncSession, attachment_dir: Path
+) -> None:
+    """The sender chooses the filename. Writing to it would be a path
+    traversal; writing to its hash cannot be."""
+    workspace = await make_workspace(db_session)
+    message = await _message(db_session, workspace)
+
+    stored = await attachments.store(db_session, message, [_parsed()])
+
+    digest = hashlib.sha256(b"%PDF fake").hexdigest()
+    assert stored[0].sha256 == digest
+    assert stored[0].storage_key.endswith(digest)
+    assert (attachment_dir / str(workspace.id) / digest).read_bytes() == b"%PDF fake"
+    assert stored[0].filename == "invoice.pdf"
+
+
+async def test_identical_files_are_stored_once(
+    db_session: AsyncSession, attachment_dir: Path
+) -> None:
+    workspace = await make_workspace(db_session)
+    first = await _message(db_session, workspace)
+    second = await _message(db_session, workspace)
+
+    await attachments.store(db_session, first, [_parsed()])
+    await attachments.store(db_session, second, [_parsed()])
+
+    digest = hashlib.sha256(b"%PDF fake").hexdigest()
+    files = list((attachment_dir / str(workspace.id)).iterdir())
+    assert [f.name for f in files] == [digest]
+
+
+async def test_the_size_cap_stops_at_the_limit(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    """Past the cap the remaining parts are skipped and the body still
+    ingests — a huge attachment must not cost the ticket."""
+    monkeypatch.setattr(get_settings(), "attachment_max_bytes", 10)
+    workspace = await make_workspace(db_session)
+    message = await _message(db_session, workspace)
+
+    stored = await attachments.store(
+        db_session,
+        message,
+        [_parsed(name="small.txt", content=b"12345"), _parsed(name="big.bin", content=b"x" * 50)],
+    )
+
+    assert [a.filename for a in stored] == ["small.txt"]
+
+
+def test_only_images_keep_their_content_type() -> None:
+    """An inbound .html served inline from our own origin is stored XSS."""
+    assert attachments.safe_content_type("image/png") == "image/png"
+    assert attachments.safe_content_type("text/html") == "application/octet-stream"
+    assert attachments.safe_content_type("image/svg+xml") == "application/octet-stream"
+    assert attachments.safe_content_type("application/pdf") == "application/octet-stream"
+
+
+async def test_another_workspace_gets_a_404(db_session: AsyncSession) -> None:
+    mine = await make_workspace(db_session, slug="acme")
+    theirs = await make_workspace(db_session, slug="other")
+    message = await _message(db_session, mine)
+    stored = await attachments.store(db_session, message, [_parsed()])
+
+    with pytest.raises(NotFound):
+        await attachments.read(db_session, theirs.id, stored[0].id)
+
+
+async def test_the_download_route_forces_a_download(db_session, client) -> None:
+    workspace = await make_workspace(db_session, slug="acme")
+    member = await make_member(db_session, workspace, email="nilesh@example.com")
+    message = await _message(db_session, workspace)
+    stored = await attachments.store(db_session, message, [_parsed()])
+    await db_session.commit()
+    token = await sign_in(db_session, member)
+
+    response = await client.get(
+        f"/api/attachments/{stored[0].id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"%PDF fake"
+    assert "attachment" in response.headers["content-disposition"]
+    assert response.headers["content-type"] == "application/octet-stream"
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
+async def test_the_download_route_needs_a_session(db_session, client) -> None:
+    workspace = await make_workspace(db_session, slug="acme")
+    message = await _message(db_session, workspace)
+    stored = await attachments.store(db_session, message, [_parsed()])
+    await db_session.commit()
+
+    response = await client.get(f"/api/attachments/{stored[0].id}")
+
+    assert response.status_code == 401
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `docker compose exec api pytest tests/test_attachments.py -v`
+Expected: FAIL — no module `relaydesk.services.attachments`.
+
+- [ ] **Step 3: Write the service**
+
+```python
+"""Files that arrived from strangers.
+
+Content-addressed by SHA-256, never by the sender's filename: that string is
+attacker-controlled, and the only safe thing to do with it is show it.
+"""
+
+import hashlib
+import uuid
+from collections.abc import Sequence
+from pathlib import Path
+
+import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from relaydesk.config import get_settings
+from relaydesk.email_parse.normalize import ParsedAttachment
+from relaydesk.errors import NotFound
+from relaydesk.models.attachment import Attachment
+from relaydesk.models.message import Message
+
+# Everything else is served as an opaque download. Note SVG is absent: it
+# executes script when rendered inline.
+INLINE_SAFE_TYPES = frozenset(
+    {"image/png", "image/jpeg", "image/gif", "image/webp"}
+)
+
+
+def safe_content_type(content_type: str) -> str:
+    return (
+        content_type
+        if content_type.lower() in INLINE_SAFE_TYPES
+        else "application/octet-stream"
+    )
+
+
+def _root() -> Path:
+    return Path(get_settings().attachment_dir)
+
+
+async def store(
+    session: AsyncSession, message: Message, parsed: Sequence[ParsedAttachment]
+) -> list[Attachment]:
+    cap = get_settings().attachment_max_bytes
+    directory = _root() / str(message.workspace_id)
+    directory.mkdir(parents=True, exist_ok=True)
+
+    stored: list[Attachment] = []
+    budget = cap
+    for item in parsed:
+        if len(item.content) > budget:
+            # Skip and keep going: a single huge part must not cost the
+            # message body or the parts after it.
+            continue
+        budget -= len(item.content)
+
+        digest = hashlib.sha256(item.content).hexdigest()
+        path = directory / digest
+        if not path.exists():
+            # Write to a temporary name and rename, so a crash mid-write
+            # cannot leave a truncated file at a hash that claims to be whole.
+            temporary = directory / f".{digest}.{uuid.uuid4().hex}"
+            temporary.write_bytes(item.content)
+            temporary.rename(path)
+
+        row = Attachment(
+            workspace_id=message.workspace_id,
+            message_id=message.id,
+            filename=item.filename,
+            content_type=item.content_type,
+            size_bytes=len(item.content),
+            sha256=digest,
+            storage_key=f"{message.workspace_id}/{digest}",
+            inline=item.inline,
+            content_id=item.content_id,
+        )
+        session.add(row)
+        stored.append(row)
+
+    await session.flush()
+    return stored
+
+
+async def read(
+    session: AsyncSession, workspace_id: uuid.UUID, attachment_id: uuid.UUID
+) -> tuple[Attachment, bytes]:
+    row = await session.scalar(
+        sa.select(Attachment).where(
+            Attachment.id == attachment_id,
+            Attachment.workspace_id == workspace_id,
+        )
+    )
+    if row is None:
+        raise NotFound("That attachment does not exist.")
+
+    path = _root() / row.storage_key
+    if not path.is_file():
+        raise NotFound("That attachment does not exist.")
+    return row, path.read_bytes()
+```
+
+- [ ] **Step 4: Write the route**
+
+`apps/api/src/relaydesk/api/attachments.py`:
+
+```python
+@router.get("/{attachment_id}")
+async def download(
+    attachment_id: uuid.UUID, scope: Scope, session: DbSession
+) -> Response:
+    row, content = await attachments.read(session, scope.workspace_id, attachment_id)
+    filename = row.filename.replace('"', "")
+    return Response(
+        content=content,
+        media_type=attachments.safe_content_type(row.content_type),
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+```
+
+Mount at `prefix="/attachments"` in `api/router.py`. It is never served from a static file mount: the scoping above is the only thing standing between one tenant's files and another's.
+
+- [ ] **Step 5: Store attachments during ingestion**
+
+In `services/ingest.py`, after the `append_message` call that creates the customer message:
+
+```python
+    if message.attachments:
+        await attachments.store(session, appended, message.attachments)
+```
+
+capturing the return of `append_message` as `appended`.
+
+- [ ] **Step 6: Expose them on the API**
+
+In `schemas/conversation.py` (where `MessageOut` lives — not in the router):
+
+```python
+class AttachmentOut(CamelModel):
+    id: str
+    filename: str
+    content_type: str
+    size_bytes: int
+```
+
+and `attachments: list[AttachmentOut] = []` on `MessageOut`, populated where `MessageOut` is constructed in `api/conversations.py`. The `Message.attachments` relationship added in Task 3 is `lazy="selectin"`, so no extra query per message is needed.
+
+- [ ] **Step 7: Run the tests, lint, commit**
+
+Run: `docker compose exec api pytest tests/test_attachments.py -v`
+Expected: PASS (7 passed).
+
+Run: `docker compose exec api pytest -q -m "not integration" && docker compose exec api ruff check .`
+
+```bash
+git add apps/api
+git commit -m "feat(api): store and serve inbound attachments"
+```
+
+---
+
+### Task 13: Outbound delivery
+
+Makes the reply an agent already writes actually leave the building.
+
+**Files:**
+- Modify: `apps/api/src/relaydesk/services/conversations.py` (`add_reply`)
+- Modify: `apps/api/src/relaydesk/services/queue.py`
+- Modify: `apps/api/src/relaydesk/worker/tasks/mail.py`
+- Create: `apps/api/src/relaydesk/services/outbound.py`
+- Modify: `apps/api/src/relaydesk/schemas/conversation.py` (`MessageOut.delivery_state`)
+- Test: `apps/api/tests/test_outbound.py` (create)
+
+**Interfaces:**
+- Consumes: `mailer.send_message`, `mailer.build` (Task 4); `channel_accounts.address_for` (Task 9); `DeliveryState` (Task 3).
+- Produces:
+  - `outbound.build_reply(session, message) -> EmailMessage`
+  - `outbound.deliver(session, message_id) -> DeliveryState`
+  - `outbound.requeue_stalled(session, older_than) -> list[uuid.UUID]`
+  - `queue.enqueue_reply(message_id: uuid.UUID) -> None`
+  - `worker.tasks.mail.send_conversation_message`, `relaydesk.reconcile_outbound`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `apps/api/tests/test_outbound.py`:
+
+```python
+from datetime import UTC, datetime, timedelta
+from email import message_from_bytes
+from email.policy import default as default_policy
+
+import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from relaydesk.models.message import DeliveryState, Message, MessageDirection, MessageRole
+from relaydesk.services import channel_accounts, conversations, outbound
+from tests.factories import make_conversation, make_member, make_workspace
+
+
+async def _reply(session, subject="Refund please"):
+    workspace = await make_workspace(session, slug="acme")
+    await channel_accounts.create(session, workspace.id, "Support")
+    member = await make_member(session, workspace, email="nilesh@example.com")
+    conversation = await make_conversation(session, workspace, subject=subject)
+    await conversations.append_message(
+        session,
+        conversation,
+        role=MessageRole.customer,
+        direction=MessageDirection.inbound,
+        author_name="Ada",
+        body="Where is my refund?",
+        sent_at=datetime.now(UTC),
+        external_id="<customer@example.com>",
+    )
+    # add_reply (services/conversations.py:419) takes no `resolve` flag — the
+    # router applies that separately — and returns the Conversation, so the
+    # message is read back here.
+    await conversations.add_reply(
+        session, workspace.id, conversation.id, "On its way.", member.user
+    )
+    message = await session.scalar(
+        sa.select(Message)
+        .where(
+            Message.conversation_id == conversation.id,
+            Message.direction == MessageDirection.outbound,
+        )
+        .order_by(Message.sent_at.desc())
+        .limit(1)
+    )
+    return workspace, conversation, message
+
+
+async def test_a_reply_is_queued_with_a_message_id(db_session: AsyncSession) -> None:
+    """SMTP returns a queue id, not a Message-ID — the sender mints it. Without
+    one stored, a customer's reply has nothing to thread onto."""
+    _workspace, _conversation, message = await _reply(db_session)
+
+    assert message.direction is MessageDirection.outbound
+    assert message.delivery_state is DeliveryState.queued
+    assert message.external_id is not None
+    assert message.external_id.startswith("<") and message.external_id.endswith(">")
+
+
+async def test_the_built_reply_threads_in_the_customers_client(
+    db_session: AsyncSession,
+) -> None:
+    _workspace, conversation, message = await _reply(db_session)
+
+    built = await outbound.build_reply(db_session, message)
+    parsed = message_from_bytes(built.as_bytes(), policy=default_policy)
+
+    assert parsed["In-Reply-To"] == "<customer@example.com>"
+    assert "<customer@example.com>" in parsed["References"]
+    assert parsed["Message-ID"] == message.external_id
+    assert parsed["Subject"] == "Re: Refund please"
+    assert f"+c{conversation.number}@" in parsed["Reply-To"]
+    # Agent replies are written by a person and must not be marked automatic.
+    assert parsed["Auto-Submitted"] is None
+
+
+async def test_a_reply_to_an_already_prefixed_subject_is_not_double_prefixed(
+    db_session: AsyncSession,
+) -> None:
+    _workspace, _conversation, message = await _reply(db_session, subject="Re: Refund")
+
+    built = await outbound.build_reply(db_session, message)
+
+    assert built["Subject"] == "Re: Refund"
+
+
+async def test_delivery_marks_the_message_sent(
+    db_session: AsyncSession, smtp_server
+) -> None:
+    _workspace, _conversation, message = await _reply(db_session)
+
+    state = await outbound.deliver(db_session, message.id)
+
+    assert state is DeliveryState.sent
+    await db_session.refresh(message)
+    assert message.delivery_state is DeliveryState.sent
+    assert len(smtp_server.messages) == 1
+
+
+async def test_delivering_twice_sends_once(
+    db_session: AsyncSession, smtp_server
+) -> None:
+    """The task is at-least-once, so a redelivery must not mail the customer
+    a second copy."""
+    _workspace, _conversation, message = await _reply(db_session)
+
+    await outbound.deliver(db_session, message.id)
+    await outbound.deliver(db_session, message.id)
+
+    assert len(smtp_server.messages) == 1
+
+
+async def test_the_reconciler_finds_a_reply_that_was_never_published(
+    db_session: AsyncSession,
+) -> None:
+    """Publishing to RabbitMQ is not part of the database transaction, so a
+    reply can commit as queued and never reach the broker. Without this, the
+    agent sees a sent reply the customer never gets."""
+    _workspace, _conversation, message = await _reply(db_session)
+    message.created_at = datetime.now(UTC) - timedelta(minutes=5)
+    await db_session.commit()
+
+    stalled = await outbound.requeue_stalled(db_session, timedelta(minutes=2))
+
+    assert message.id in stalled
+
+
+async def test_the_reconciler_ignores_a_fresh_reply(
+    db_session: AsyncSession,
+) -> None:
+    _workspace, _conversation, message = await _reply(db_session)
+
+    stalled = await outbound.requeue_stalled(db_session, timedelta(minutes=2))
+
+    assert stalled == []
+```
+
+Move the `smtp_server` fixture from `tests/test_mailer.py` into `tests/conftest.py` so both modules use it.
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `docker compose exec api pytest tests/test_outbound.py -v`
+Expected: FAIL — no module `relaydesk.services.outbound`.
+
+- [ ] **Step 3: Write the outbound builder and sender**
+
+`apps/api/src/relaydesk/services/outbound.py`:
+
+```python
+"""Turning a stored reply into mail that threads."""
+
+import uuid
+from datetime import UTC, datetime, timedelta
+from email.message import EmailMessage
+from email.utils import make_msgid
+
+import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from relaydesk.config import get_settings
+from relaydesk.models.channel_account import ChannelAccount
+from relaydesk.models.conversation import Conversation
+from relaydesk.models.message import DeliveryState, Message, MessageDirection
+from relaydesk.models.workspace import Workspace
+from relaydesk.services import channel_accounts, mailer
+
+
+def new_message_id() -> str:
+    """SMTP does not return a Message-ID; it returns a queue id local to that
+    server. The sender generates the header, and we must store what we sent
+    or a customer's reply has nothing to thread onto."""
+    return make_msgid(domain=get_settings().inbound_domain)
+
+
+def reply_subject(subject: str) -> str:
+    return subject if subject.lower().startswith("re:") else f"Re: {subject}"
+
+
+async def _context(
+    session: AsyncSession, message: Message
+) -> tuple[Conversation, Workspace, ChannelAccount | None]:
+    conversation = await session.get(Conversation, message.conversation_id)
+    workspace = await session.get(Workspace, message.workspace_id)
+    account = await session.scalar(
+        sa.select(ChannelAccount)
+        .where(
+            ChannelAccount.workspace_id == message.workspace_id,
+            ChannelAccount.active.is_(True),
+        )
+        .order_by(ChannelAccount.created_at)
+        .limit(1)
+    )
+    return conversation, workspace, account
+
+
+async def build_reply(session: AsyncSession, message: Message) -> EmailMessage:
+    conversation, workspace, account = await _context(session, message)
+
+    last_inbound = await session.scalar(
+        sa.select(Message)
+        .where(
+            Message.conversation_id == conversation.id,
+            Message.direction == MessageDirection.inbound,
+            Message.external_id.is_not(None),
+        )
+        .order_by(Message.sent_at.desc())
+        .limit(1)
+    )
+
+    sender = mailer.from_address()
+    reply_to = sender
+    if account is not None:
+        address = channel_accounts.address_for(account, workspace.slug, conversation.number)
+        sender = f'"{workspace.name}" <{address}>'
+        reply_to = address
+
+    headers: dict[str, str] = {"Reply-To": reply_to}
+    if last_inbound is not None and last_inbound.external_id:
+        headers["In-Reply-To"] = last_inbound.external_id
+        headers["References"] = last_inbound.external_id
+
+    built = mailer.build(
+        to=conversation.contact.email,
+        subject=reply_subject(conversation.subject),
+        text_body=message.body,
+        headers=headers,
+        sender=sender,
+    )
+    # Replace the auto-generated Message-ID with the one already stored, so
+    # the header the customer replies to is the one we can match on.
+    del built["Message-ID"]
+    built["Message-ID"] = message.external_id or new_message_id()
+    return built
+
+
+async def deliver(session: AsyncSession, message_id: uuid.UUID) -> DeliveryState:
+    message = await session.get(Message, message_id)
+    if message is None:
+        return DeliveryState.failed
+    if message.delivery_state is not DeliveryState.queued:
+        # Already handled; a redelivered task must not mail a second copy.
+        return message.delivery_state
+
+    built = await build_reply(session, message)
+    await mailer.send_message(built)
+
+    message.delivery_state = DeliveryState.sent
+    message.delivery_error = None
+    await session.commit()
+    return DeliveryState.sent
+
+
+async def mark_failed(
+    session: AsyncSession, message_id: uuid.UUID, error: str
+) -> None:
+    message = await session.get(Message, message_id)
+    if message is None:
+        return
+    message.delivery_state = DeliveryState.failed
+    message.delivery_error = error[:2000]
+    await session.commit()
+
+
+async def requeue_stalled(
+    session: AsyncSession, older_than: timedelta
+) -> list[uuid.UUID]:
+    """Replies committed as queued that never reached the broker.
+
+    Publishing is not part of the database transaction, so the API can commit
+    a reply and then fail to publish it. Without this the agent sees a sent
+    reply that the customer never receives.
+    """
+    cutoff = datetime.now(UTC) - older_than
+    result = await session.scalars(
+        sa.select(Message.id).where(
+            Message.delivery_state == DeliveryState.queued,
+            Message.created_at < cutoff,
+        )
+    )
+    return list(result)
+```
+
+- [ ] **Step 4: Change `add_reply`**
+
+In `services/conversations.py`, in `add_reply`, set the new fields on the message it creates and enqueue after the commit:
+
+```python
+    message.direction = MessageDirection.outbound
+    message.external_id = outbound.new_message_id()
+    message.delivery_state = DeliveryState.queued
+```
+
+and after `await session.commit()`:
+
+```python
+    queue.enqueue_reply(message.id)
+```
+
+Enqueue after commit, for the reason in Task 4: a job for a row that rolled back mails a customer a reply that does not exist.
+
+- [ ] **Step 5: Add the tasks**
+
+In `services/queue.py`:
+
+```python
+def enqueue_reply(message_id: uuid.UUID) -> None:
+    from relaydesk.worker.tasks.mail import send_conversation_message
+
+    send_conversation_message.delay(str(message_id))
+```
+
+In `worker/tasks/mail.py`:
+
+```python
+@app.task(
+    name="relaydesk.send_conversation_message",
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=900,
+    max_retries=6,
+)
+def send_conversation_message(self, message_id: str) -> str:
+    """Greylisting rejects a first delivery attempt by design, so a transient
+    failure here is normal rather than exceptional — hence the backoff."""
+    identifier = uuid.UUID(message_id)
+    try:
+        return str(bridge.run(_deliver(identifier)))
+    except Exception as error:
+        if self.request.retries >= self.max_retries:
+            bridge.run(_mark_failed(identifier, str(error)))
+        raise
+
+
+@app.task(name="relaydesk.reconcile_outbound")
+def reconcile_outbound() -> int:
+    stalled = bridge.run(_requeue_stalled())
+    for message_id in stalled:
+        send_conversation_message.delay(str(message_id))
+    return len(stalled)
+```
+
+with `_deliver`, `_mark_failed`, and `_requeue_stalled` as `bridge.session_scope()` wrappers around the `outbound` functions. `_requeue_stalled` uses `timedelta(minutes=2)`, matching the Beat schedule declared in Task 2.
+
+- [ ] **Step 6: Expose delivery state**
+
+Add `delivery_state: str` to `MessageOut` in `schemas/conversation.py`, serialized as `deliveryState` by `CamelModel`, and populate it where `MessageOut` is built in `api/conversations.py`.
+
+- [ ] **Step 7: Run the tests**
+
+Run: `docker compose exec api pytest tests/test_outbound.py -v`
+Expected: PASS (7 passed).
+
+- [ ] **Step 8: Verify a real round trip**
+
+With the stack up and seeded, reply to a conversation in the console, then:
+
+```bash
+docker compose logs --tail 20 worker
+```
+Expected: `Task relaydesk.send_conversation_message[...] succeeded`.
+
+Then confirm GreenMail holds the message, using the IMAP snippet from Task 4 step 11 against the contact's address.
+
+- [ ] **Step 9: Full suite, lint, commit**
+
+Run: `docker compose exec api pytest -q -m "not integration" && docker compose exec api ruff check .`
+
+```bash
+git add apps/api
+git commit -m "feat(api): deliver agent replies over SMTP with retry and reconciliation"
+```
+
+---
+
+### Task 14: Web wiring
+
+Four surfaces, all reading real data for the first time.
+
+**Files:**
+- Create: `apps/web/lib/api/channels.ts`
+- Modify: `apps/web/lib/types.ts`
+- Modify: `apps/web/app/(console)/settings/channels/page.tsx`
+- Create: `apps/web/app/(console)/settings/channels/actions.ts`
+- Modify: `apps/web/components/inbox/thread.tsx`
+- Modify: `apps/web/app/(console)/settings/account/page.tsx`
+- Create: `apps/web/app/(console)/settings/account/actions.ts`
+- Modify: `apps/web/components/settings/invite-dialog.tsx`
+- Modify: `apps/web/lib/mock/settings.ts` (remove `getEmailAccounts`)
+- Modify: `README.md`
+
+**Interfaces:**
+- Consumes: `GET/POST/DELETE /api/channels/email` (Task 9), `GET /api/attachments/{id}` (Task 12), `PATCH /api/auth/me` (Task 4), `POST /api/team/invites` (Task 6), `MessageOut.attachments` / `deliveryState` (Tasks 12, 13).
+- Produces: no API surface.
+
+- [ ] **Step 1: Extend the types**
+
+In `apps/web/lib/types.ts`, `Message` at line 53 gains the two new fields, and `role` gains `"system"` to match the API:
+
+```typescript
+export interface Attachment {
+  id: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+}
+
+export interface Message {
+  id: string;
+  author: string;
+  /** Address the message was sent to, shown in the bubble header. */
+  to: string;
+  role: "customer" | "agent" | "ai" | "system";
+  body: string;
+  sentAt: string;
+  attachments: Attachment[];
+  deliveryState: "none" | "queued" | "sent" | "failed";
+}
+```
+
+Replace `ChannelAccount` at line 215 with the shape the API returns. The mock's `label`/`detail` pair does not survive:
+
+```typescript
+export interface ChannelAccount {
+  id: string;
+  address: string;
+  displayName: string;
+  active: boolean;
+  createdAt: string;
+}
+```
+
+- [ ] **Step 2: Add the API client module**
+
+`apps/web/lib/api/channels.ts`, following `lib/api/labels.ts` exactly — including the `cache()` wrapper, which `getLabels` and `getViews` lack and which is why `/labels` and `/views` are each fetched twice per page load today:
+
+```typescript
+import { cache } from "react";
+
+import { apiFetch } from "./client";
+import type { ChannelAccount } from "@/lib/types";
+
+export const getEmailChannels = cache(async (): Promise<ChannelAccount[]> => {
+  return apiFetch<ChannelAccount[]>("/channels/email");
+});
+
+export async function createEmailChannel(displayName: string): Promise<ChannelAccount> {
+  return apiFetch<ChannelAccount>("/channels/email", {
+    method: "POST",
+    body: JSON.stringify({ displayName }),
+  });
+}
+
+export async function deleteEmailChannel(id: string): Promise<void> {
+  await apiFetch(`/channels/email/${id}`, { method: "DELETE" });
+}
+```
+
+Read `lib/api/labels.ts` first and match its exact `apiFetch` call style and export conventions rather than assuming the signature above is right.
+
+- [ ] **Step 3: Wire the channels page**
+
+In `settings/channels/page.tsx`, replace `getEmailAccounts` from `@/lib/mock/settings` with `getEmailChannels`. The email section renders each address with a copy control and the forwarding instruction that makes the address meaningful:
+
+> Forward mail from your own support address to this one. Anything that arrives becomes a ticket.
+
+Replace the "Connect Gmail" button with "Add address", posting through a server action in `settings/channels/actions.ts` that mirrors `conversations/actions.ts` — `"use server"`, call the client function, then `revalidatePath("/", "layout")`.
+
+Leave the Discord and one-click-import sections on mock data with their existing "coming soon" treatment; they belong to later slices.
+
+Delete `getEmailAccounts` and the `emailAccounts` array from `lib/mock/settings.ts`.
+
+- [ ] **Step 4: Render attachments and delivery failures in the thread**
+
+In `components/inbox/thread.tsx`, below each message body:
+
+- attachments as a row of download links to `/api/attachments/{id}` showing filename and a human-readable size;
+- for `deliveryState === "failed"`, an inline notice reading "Not delivered" — the agent has to know a reply did not go out;
+- for `deliveryState === "queued"`, nothing. The queued window is normally under a second, and a "sending" flicker on every reply is noise.
+
+Render `role === "system"` messages in the muted style the thread already uses for non-agent, non-customer entries.
+
+The message body is rendered as **text**, never as HTML. `bodyHtml` is stored by the API but deliberately not exposed on `MessageOut`; do not add it.
+
+- [ ] **Step 5: Add the notification preference**
+
+In `settings/account/page.tsx`, add a toggle for assignment email, reading `notifyOnAssignment` from `getMe()` and writing through a server action calling `PATCH /api/auth/me`. Follow the existing setting-row markup on that page.
+
+- [ ] **Step 6: Update the invite dialog**
+
+`components/settings/invite-dialog.tsx` currently expects to show a copyable link. The API now returns `202` with no body, so the dialog reports "Invitation sent to {email}" and closes. Remove any copy-link affordance — there is no longer a link to copy, and that is the point of the change.
+
+- [ ] **Step 7: Update the README**
+
+- Replace the "Team invites are **not enabled**" section with a note that invites are emailed and need SMTP configured, which the development stack provides through GreenMail.
+- Add the new services to the development-commands section, and note that the default test command excludes integration tests: `docker compose exec api pytest -m "not integration"`.
+- Document the forwarding setup: find the workspace's address under Settings → Channels, then forward your own support address to it.
+
+- [ ] **Step 8: Verify in the browser**
+
+With the stack up and seeded, confirm: Settings → Channels shows an `@inbound.localhost` address; Settings → Account toggles the preference and it survives a reload; a conversation with an attachment offers a download; and an invite reports as sent with no link shown.
+
+- [ ] **Step 9: Lint, build, commit**
+
+Run: `docker compose exec web pnpm lint`
+Expected: 0 problems.
+
+Run: `docker compose exec web pnpm build`
+Expected: clean build.
+
+```bash
+git add apps/web README.md
+git commit -m "feat(web): wire channels, attachments, and notification settings"
+```
+
+---
+
+## Done
+
+At the end of Task 14: mail forwarded to a workspace address becomes a ticket, an agent's reply is delivered and threads in the customer's client, their reply threads back, bounces mark the contact, attachments are stored and served safely, and invites work through an emailed token.
+
+Deferred to later slices by design: the customer portal (slice 3), provider webhooks, Discord, one-click import, custom sending domains with per-workspace DKIM, sanitized HTML rendering, and AI (slice 4).

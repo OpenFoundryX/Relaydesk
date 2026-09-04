@@ -397,6 +397,30 @@ sends HTML-only mail is a helpdesk that lands in spam folders.
 
 ## 11. Invites, re-enabled
 
+**Prerequisite: sessions become workspace-scoped.** `services/team.py` records
+four residual risks from slice 1. Mailing the token closes two of them —
+proof of address control, and an admin permanently burning an address he
+does not own. Two are untouched by the delivery channel and must be fixed
+before invites are reachable:
+
+- A session outlives the membership it was minted for. Sessions are
+  user-scoped and `auth.active_membership` re-derives the workspace from the
+  user's *current* memberships on every request, so a removed agent's token
+  silently re-points at whatever workspace that account joins next.
+- Nothing stops one user holding two active memberships, and
+  `active_membership` runs a bare `SELECT ... WHERE user_id =` with no
+  `ORDER BY`. Invites are the feature that puts this within an ordinary
+  user's reach.
+
+Both are closed by recording `workspace_id` on the session at the moment it
+is minted, and resolving the membership against that workspace rather than
+against the user's current set. `create_session` takes the membership;
+`active_membership` takes a workspace id; login picks its membership
+deterministically by `(created_at, id)`. Migration `0008` backfills existing
+sessions from their user's active membership and deletes any that have none,
+since those could never have authenticated.
+
+
 Slice 1 disabled invites because acceptance issued a session for an address
 nobody had proved they controlled, which was a cross-tenant account
 takeover. The mailer resolves this directly, and the fix is the delivery
@@ -509,18 +533,22 @@ fixtures per workspace.
 1. Config, compose services, dependencies, GreenMail.
 2. Celery app, the `asyncio.run()` bridge, Beat schedule, a trivial task
    proving the worker reaches the database.
-3. Migration: new tables and the `messages` columns.
+3. Migration `0007`: new tables and the `messages` columns.
 4. The mailer, plus assignment notifications as its first real consumer.
-5. Invites re-enabled on top of it.
-6. MIME normalization to `InboundMessage`, with fixture tests.
-7. IMAP poller and `raw_messages`.
-8. Routing and classification.
-9. Thread resolution and appending.
-10. Attachments, storage and the download route.
-11. Outbound send, delivery state, and the reconciler.
-12. Web wiring: channels, thread attachments, account toggle, invite dialog.
+5. Workspace-scoped sessions (migration `0008`) — the prerequisite in
+   section 11.
+6. Invites re-enabled on top of both.
+7. MIME normalization to `InboundMessage`, with fixture tests.
+8. Classification of bounces, auto-replies, and bulk mail.
+9. Channel accounts, ingest addresses, and the channels route (migration
+   `0009`).
+10. IMAP poller and `raw_messages`.
+11. Routing, thread resolution, and appending, plus the unrouted-mail CLI.
+12. Attachments, storage and the download route.
+13. Outbound send, delivery state, and the reconciler.
+14. Web wiring: channels, thread attachments, account toggle, invite dialog.
 
-Steps 4 and 5 are early on purpose: they deliver a visible, testable
+Steps 4 through 6 are early on purpose: they deliver a visible, testable
 improvement — a real invite email — before any of the inbound machinery
 exists, and they prove the mailer and the worker in one pass.
 
