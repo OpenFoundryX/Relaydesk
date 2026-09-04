@@ -1453,6 +1453,31 @@ In `apps/api/src/relaydesk/services/conversations.py`, inside `set_assignee`, af
 
 It must come **after** the commit. Enqueuing before would publish a job for an assignment that a later failure rolls back, and the recipient would get mail about a ticket that was never assigned to them.
 
+- [ ] **Step 8b: Add the task-registration regression test**
+
+Forgetting an import in `worker/tasks/__init__.py` unregisters a task **silently** — no error, no log, and Beat simply never finds it. Task 2 hit exactly this. Close it once, generically, so Tasks 10 and 13 cannot repeat it. Add to `apps/api/tests/test_worker_bridge.py`:
+
+```python
+def test_every_task_module_is_registered() -> None:
+    """A module under worker/tasks/ that nobody imports in __init__.py
+    registers no tasks, and fails silently — no error, no log, Beat just
+    never finds the task. This is the guard for that."""
+    import pkgutil
+
+    from relaydesk.worker import tasks
+    from relaydesk.worker.app import app
+
+    on_disk = {name for _finder, name, _pkg in pkgutil.iter_modules(tasks.__path__)}
+    imported = {
+        module.__name__.rsplit(".", 1)[-1]
+        for module in vars(tasks).values()
+        if getattr(module, "__name__", "").startswith("relaydesk.worker.tasks.")
+    }
+
+    assert on_disk == imported, f"not imported in tasks/__init__.py: {on_disk - imported}"
+    assert "relaydesk.send_system_email" in app.tasks
+
+
 - [ ] **Step 9: Run the notification tests**
 
 Run: `docker compose exec api pytest tests/test_assignment_notifications.py -v`
