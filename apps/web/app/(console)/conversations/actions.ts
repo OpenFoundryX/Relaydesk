@@ -1,9 +1,5 @@
 "use server";
 
-/* eslint-disable @typescript-eslint/no-unused-vars -- params kept for call-site
-   compatibility on these temporary no-op stubs; Task 9 wires each to a real
-   mutation endpoint and will use them. */
-
 import { revalidatePath } from "next/cache";
 
 import { createLabel as createLabelApi } from "@/lib/api/labels";
@@ -15,31 +11,32 @@ function refresh() {
 }
 
 /**
- * Task 7 shipped only the read half of the conversations API, and Task 8
- * deleted the mock store these actions used to call. Task 9 wires each of
- * these to a real PATCH/POST endpoint; until then they are no-ops so the
- * console keeps compiling and the UI's mutating controls fail silently
- * instead of throwing on a deleted import.
+ * Task 9 wires each of these to a real PATCH/POST endpoint. Until then they
+ * throw rather than no-op: a mutating control that appears to succeed and
+ * silently discards the change is worse than one that visibly fails.
  */
+function notImplemented(action: string): never {
+  throw new Error(`${action} is not wired to the API yet (Task 9).`);
+}
 
 export async function setStatusAction(_id: string, _status: ConversationStatus) {
-  refresh();
+  notImplemented("setStatusAction");
 }
 
 export async function setStatusBulkAction(_ids: string[], _status: ConversationStatus) {
-  refresh();
+  notImplemented("setStatusBulkAction");
 }
 
 export async function setPriorityAction(_id: string, _priority: Priority) {
-  refresh();
+  notImplemented("setPriorityAction");
 }
 
 export async function setAssigneeAction(_id: string, _assignee: string | null) {
-  refresh();
+  notImplemented("setAssigneeAction");
 }
 
 export async function toggleLabelAction(_id: string, _labelId: string) {
-  refresh();
+  notImplemented("toggleLabelAction");
 }
 
 /**
@@ -54,13 +51,18 @@ export async function createLabelAction(name: string, _conversationId?: string):
 }
 
 export async function sendReplyAction(_id: string, _body: string, _resolve: boolean) {
-  refresh();
+  notImplemented("sendReplyAction");
 }
 
 export async function discardDraftAction(_id: string) {
-  refresh();
+  notImplemented("discardDraftAction");
 }
 
+/**
+ * Deliberate permanent no-op, not a stand-in for missing wiring like the
+ * functions above: summary generation belongs to a later agentic slice, and
+ * nothing is expected to happen when this is called until that slice lands.
+ */
 export async function generateSummaryAction(_id: string) {
   refresh();
 }
