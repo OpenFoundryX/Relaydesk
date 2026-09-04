@@ -4958,14 +4958,24 @@ Enqueue after commit, for the reason in Task 4: a job for a row that rolled back
 
 - [ ] **Step 5: Add the tasks**
 
-In `services/queue.py`:
+In `services/queue.py`. **It must carry the same broker guard `enqueue_system_email` has** — `.delay()` talks to the broker synchronously and raises when RabbitMQ is unreachable, which would propagate into the request *after* the reply row committed. Here swallowing is doubly correct: the message stays `queued` and the Beat reconciler below republishes it.
 
 ```python
 def enqueue_reply(message_id: uuid.UUID) -> None:
     from relaydesk.worker.tasks.mail import send_conversation_message
 
-    send_conversation_message.delay(str(message_id))
+    try:
+        send_conversation_message.delay(str(message_id))
+    except Exception:
+        # The row is committed as `queued`; reconcile_outbound republishes it.
+        logger.warning(
+            "could not publish relaydesk.send_conversation_message for %s",
+            message_id,
+            exc_info=True,
+        )
 ```
+
+Add a test that a raising `.delay()` does not propagate out of `add_reply`, and that the message is still left in `queued` for the reconciler.
 
 In `worker/tasks/mail.py`:
 
