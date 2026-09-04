@@ -113,30 +113,38 @@ def _walk(message: Message) -> tuple[str, str | None, list[ParsedAttachment]]:
     attachments: list[ParsedAttachment] = []
 
     for part in message.walk():
-        if part.get_content_maintype() == "multipart":
-            continue
+        try:
+            if part.get_content_maintype() == "multipart":
+                continue
 
-        disposition = (part.get_content_disposition() or "").lower()
-        content_type = part.get_content_type()
-        is_attachment = disposition == "attachment" or part.get_filename() is not None
-
-        if is_attachment:
-            payload = part.get_payload(decode=True) or b""
-            attachments.append(
-                ParsedAttachment(
-                    filename=_safe_filename(part.get_filename()),
-                    content_type=content_type,
-                    content=payload,
-                    inline=disposition == "inline",
-                    content_id=(part.get("Content-ID") or None),
-                )
+            disposition = (part.get_content_disposition() or "").lower()
+            content_type = part.get_content_type()
+            is_attachment = (
+                disposition == "attachment" or part.get_filename() is not None
             )
-            continue
 
-        if content_type == "text/plain" and text is None:
-            text = _part_text(part)
-        elif content_type == "text/html" and html is None:
-            html = _part_text(part)
+            if is_attachment:
+                payload = part.get_payload(decode=True) or b""
+                content_id = part.get("Content-ID")
+                attachments.append(
+                    ParsedAttachment(
+                        filename=_safe_filename(part.get_filename()),
+                        content_type=content_type,
+                        content=payload,
+                        inline=disposition == "inline",
+                        content_id=(str(content_id) if content_id else None),
+                    )
+                )
+                continue
+
+            if content_type == "text/plain" and text is None:
+                text = _part_text(part)
+            elif content_type == "text/html" and html is None:
+                html = _part_text(part)
+        except Exception:
+            # A single malformed part (an attacker-controlled MIME tree can
+            # have one) must not cost the rest of the message its body.
+            continue
 
     if text is None and html is not None:
         # Real mail is often HTML-only. The console renders the text body, so
@@ -150,12 +158,56 @@ def _message_ids(raw: str) -> tuple[str, ...]:
     return tuple(_MESSAGE_ID.findall(raw or ""))
 
 
-def parse(raw: bytes) -> InboundMessage:
+def _safe_headers(message: Message) -> dict[str, str]:
     try:
-        message = BytesParser(policy=policy.default).parsebytes(raw)
+        return {k.lower(): str(v) for k, v in message.items()}
     except Exception:
-        message = EmailMessage()
+        return {}
 
+
+def _minimal_message(message: Message) -> InboundMessage:
+    """Last-resort construction, used when something inside ``_assemble``
+    blows up in a way the per-part guard in ``_walk`` didn't catch.
+
+    Degrades to headers-only rather than dropping the message: Task 11
+    threads on ``message_id`` and routes on ``delivered_to``, so a message
+    that keeps its headers is still a usable ticket even with no body.
+    """
+    try:
+        from_pairs = getaddresses(message.get_all("From", []))
+        from_name, from_email = from_pairs[0] if from_pairs else ("", "")
+    except Exception:
+        from_name, from_email = "", ""
+
+    try:
+        subject = _decode(message.get("Subject")) or NO_SUBJECT
+    except Exception:
+        subject = NO_SUBJECT
+
+    try:
+        message_id = (_message_ids(str(message.get("Message-ID", ""))) or (None,))[0]
+    except Exception:
+        message_id = None
+
+    return InboundMessage(
+        message_id=message_id,
+        in_reply_to=None,
+        references=(),
+        from_email=from_email.lower(),
+        from_name=_decode(from_name) or from_email,
+        to=(),
+        cc=(),
+        delivered_to=(),
+        subject=subject,
+        text_body="",
+        html_body=None,
+        sent_at=datetime.now(UTC),
+        headers=_safe_headers(message),
+        attachments=(),
+    )
+
+
+def _assemble(message: Message) -> InboundMessage:
     text, html, attachments = _walk(message)
 
     from_pairs = getaddresses(message.get_all("From", []))
@@ -188,6 +240,21 @@ def parse(raw: bytes) -> InboundMessage:
         text_body=text,
         html_body=html,
         sent_at=sent_at,
-        headers={k.lower(): str(v) for k, v in message.items()},
+        headers=_safe_headers(message),
         attachments=tuple(attachments),
     )
+
+
+def parse(raw: bytes) -> InboundMessage:
+    try:
+        message = BytesParser(policy=policy.default).parsebytes(raw)
+    except Exception:
+        message = EmailMessage()
+
+    try:
+        return _assemble(message)
+    except Exception:
+        # A genuine last resort: _walk already isolates a single bad part,
+        # so reaching here means something outside that guard broke. Degrade
+        # to headers-only rather than propagating and losing the message.
+        return _minimal_message(message)

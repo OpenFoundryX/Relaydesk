@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
-from email.message import EmailMessage
+from email.message import EmailMessage, Message
+
+import pytest
 
 from relaydesk.email_parse import normalize
 
@@ -175,3 +177,88 @@ def test_garbage_input_yields_an_empty_message_rather_than_an_exception() -> Non
 
     assert parsed.from_email == ""
     assert parsed.text_body is not None
+
+
+@pytest.mark.parametrize(
+    ("raw_filename", "expected"),
+    [
+        ("../../../etc/passwd", "passwd"),
+        ("..\\..\\windows\\x", "x"),
+        ("..", "attachment"),
+        ("/", "attachment"),
+        # =?utf-8?B?...?= of "../../etc/passwd"
+        ("=?utf-8?B?Li4vLi4vZXRjL3Bhc3N3ZA==?=", "passwd"),
+    ],
+)
+def test_attachment_filenames_never_carry_a_path(
+    raw_filename: str, expected: str
+) -> None:
+    """Pins the traversal cases traced during review: backslash separators,
+    a bare '..', a separator-only name, and an RFC 2047-encoded path all
+    neutralise to a plain, path-free filename."""
+    message = _build()
+    message.set_content("hi")
+    message.add_attachment(
+        b"x", maintype="text", subtype="plain", filename=raw_filename
+    )
+
+    filename = normalize.parse(message.as_bytes()).attachments[0].filename
+
+    assert filename == expected
+
+
+class _ExplodingPart(EmailMessage):
+    """A MIME part that raises the moment it is inspected. Simulates a
+    hostile or corrupted part that survives message.walk() but blows up on
+    any of the per-part accessor calls."""
+
+    def get_filename(self, failobj: object = None) -> str:
+        raise RuntimeError("boom")
+
+
+def test_a_malformed_part_does_not_take_down_the_rest_of_the_message() -> None:
+    """One hostile part must not cost the message its body or its other,
+    well-formed attachments. This can only be exercised in-memory: once a
+    message round-trips through bytes, BytesParser rebuilds fresh Message
+    objects and any subclass behaviour is lost."""
+    root = EmailMessage()
+    root["From"] = "ada@example.com"
+    root["To"] = "support@acme.com"
+    root["Subject"] = "Has a bad part"
+    root.set_content("Good body.")
+    root.add_attachment(
+        b"data", maintype="application", subtype="octet-stream", filename="ok.bin"
+    )
+
+    bad = _ExplodingPart()
+    bad["Content-Type"] = "application/octet-stream"
+    root.attach(bad)
+
+    text, _html, attachments = normalize._walk(root)
+
+    assert text.strip() == "Good body."
+    assert [a.filename for a in attachments] == ["ok.bin"]
+
+
+def test_a_wholly_hostile_message_still_yields_a_valid_inbound_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Even if something outside _walk's per-part guard blows up, parse()
+    must degrade to a headers-only InboundMessage rather than propagate."""
+
+    def _explode(_message: Message) -> tuple[str, str | None, list]:
+        raise RuntimeError("the whole tree is hostile")
+
+    monkeypatch.setattr(normalize, "_walk", _explode)
+
+    message = _build()
+    message.set_content("irrelevant")
+
+    parsed = normalize.parse(message.as_bytes())
+
+    assert parsed.from_email == "ada@example.com"
+    assert parsed.subject == "Refund please"
+    assert parsed.message_id == "<a1@example.com>"
+    assert parsed.text_body == ""
+    assert parsed.html_body is None
+    assert parsed.attachments == ()
