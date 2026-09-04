@@ -332,6 +332,7 @@ async def seed(session: AsyncSession) -> None:
             role=MessageRole.customer,
             direction=MessageDirection.inbound,
             author_name=contact_name,
+            to_address="support@chronon.co",
             body=preview,
             sent_at=sent_at,
         )
@@ -416,11 +417,14 @@ async def bootstrap(
 
 
 async def unrouted(session: AsyncSession, limit: int = 20) -> list[RawMessage]:
-    """List mail that reached the mailbox but matched no workspace.
+    """List mail this deployment could not turn into a ticket.
 
-    Usually a forwarding rule pointing at the wrong address. The bytes are
-    kept, so fixing the rule and re-running ``relaydesk reingest <id>`` turns
-    these into tickets rather than losing them.
+    Most of these matched no workspace at all -- usually a forwarding rule
+    pointing at the wrong address. A few routed fine but are a bounce that
+    could not be threaded to any conversation (state is `unrouted` either
+    way; see `_handle_bounce`). The bytes are kept for both, so fixing the
+    rule and re-running ``relaydesk reingest <id>`` turns these into tickets
+    rather than losing them.
     """
     return list(
         await session.scalars(
@@ -437,11 +441,16 @@ def _print_unrouted(rows: list[RawMessage]) -> None:
         print("No unrouted mail.")
         return
     for row in rows:
-        message = normalize.parse(row.raw)
-        print(
-            f"{row.id}  {row.received_at.isoformat()}  "
-            f"from={message.from_email!r}  subject={message.subject!r}"
-        )
+        # This listing is the operator's tool for diagnosing broken mail, so
+        # one message this deployment's own parser chokes on (it otherwise
+        # never raises, but the bytes are attacker-controlled) must not hide
+        # every other row in the listing.
+        try:
+            message = normalize.parse(row.raw)
+            detail = f"from={message.from_email!r}  subject={message.subject!r}"
+        except Exception:
+            detail = "(unparseable)"
+        print(f"{row.id}  {row.received_at.isoformat()}  {detail}")
 
 
 async def reingest(session: AsyncSession, raw_message_id: uuid.UUID) -> None:
@@ -486,7 +495,7 @@ def main() -> None:
         ),
     )
     unrouted_parser = commands.add_parser(
-        "unrouted", help="List mail that matched no workspace"
+        "unrouted", help="List mail this deployment could not turn into a ticket"
     )
     unrouted_parser.add_argument("--limit", type=int, default=20)
     reingest_parser = commands.add_parser(
@@ -515,8 +524,14 @@ def main() -> None:
                 )
             elif args.command == "unrouted":
                 _print_unrouted(await unrouted(session, args.limit))
-            else:
+            elif args.command == "reingest":
                 await reingest(session, args.raw_message_id)
+            else:
+                # Unreachable: `add_subparsers(required=True)` above already
+                # restricts `args.command` to the four branches above. Kept
+                # explicit rather than trailing on the last `elif` so a fifth
+                # subcommand added later can't silently fall through here.
+                parser.error(f"Unknown command: {args.command!r}")
 
     asyncio.run(run())
 

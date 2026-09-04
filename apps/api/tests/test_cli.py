@@ -17,6 +17,7 @@ from relaydesk.models import (
     Conversation,
     Label,
     Membership,
+    Message,
     RawMessage,
     SavedView,
     User,
@@ -42,6 +43,19 @@ async def test_seed_creates_a_demo_workspace(db_session: AsyncSession) -> None:
     assert len(labels) == 4
     assert len(views) == 3
     assert workspace.conversation_seq == 11
+
+
+async def test_seed_messages_carry_the_address_they_were_sent_to(
+    db_session: AsyncSession,
+) -> None:
+    """append_message takes an explicit `to_address`; the refactor onto it
+    must not silently drop the recipient the old inline construction set."""
+    await seed(db_session)
+
+    messages = (await db_session.scalars(sa.select(Message))).all()
+
+    assert len(messages) == 11
+    assert all(message.to_address == "support@chronon.co" for message in messages)
 
 
 async def test_seed_is_idempotent(db_session: AsyncSession) -> None:

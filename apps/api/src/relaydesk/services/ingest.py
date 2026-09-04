@@ -97,6 +97,11 @@ async def resolve_thread(
 
     # 2. In-Reply-To, then References right to left (nearest ancestor first).
     #    Always scoped to the workspace: these headers are attacker-supplied.
+    #    Unlike the +c tag above, this branch has no sender check -- accepted
+    #    as a residual, not an oversight. The +c tag is a small guessable
+    #    integer; a Message-ID is not, so forging one requires already
+    #    knowing a specific message's id rather than just this workspace's
+    #    ingest address.
     candidates = [message.in_reply_to, *reversed(message.references)]
     for external_id in [c for c in candidates if c]:
         conversation = await session.scalar(
@@ -112,8 +117,12 @@ async def resolve_thread(
         if conversation is not None:
             return conversation
 
-    # 3. Same contact, same subject, recently.
-    subject = normalize_subject(message.subject)
+    # 3. Same contact, same subject, recently. Both the contact and the
+    #    subject are filtered in SQL before the LIMIT: a workspace with more
+    #    than 50 conversations touched in the window must not push the
+    #    sender's own thread out of the window, which would otherwise open a
+    #    duplicate ticket for every reply in a busy workspace.
+    subject = normalize_subject(message.subject[:400])
     if not subject:
         return None
     since = datetime.now(UTC) - SUBJECT_WINDOW
@@ -123,16 +132,13 @@ async def resolve_thread(
         .where(
             Conversation.workspace_id == workspace_id,
             Conversation.last_message_at >= since,
+            Contact.email == message.from_email,
         )
         .order_by(Conversation.last_message_at.desc())
         .limit(50)
     )
     for conversation in result:
-        if (
-            conversation.contact is not None
-            and conversation.contact.email.lower() == message.from_email
-            and normalize_subject(conversation.subject) == subject
-        ):
+        if normalize_subject(conversation.subject) == subject:
             return conversation
     return None
 
@@ -169,10 +175,16 @@ async def _over_cap(session: AsyncSession, workspace_id: uuid.UUID, email: str) 
 
 
 async def _handle_bounce(
-    session: AsyncSession, workspace_id: uuid.UUID, message: InboundMessage
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    message: InboundMessage,
+    to_address: str,
 ) -> RawMessageState:
     conversation = await resolve_thread(session, workspace_id, message, None)
     if conversation is None:
+        # Routed to a workspace, but couldn't be threaded to a conversation
+        # -- reuses `unrouted` rather than a new state (see cli.unrouted's
+        # docstring, which now says what the listing actually contains).
         return RawMessageState.unrouted
 
     if conversation.contact is not None:
@@ -184,6 +196,7 @@ async def _handle_bounce(
         role=MessageRole.system,
         direction=MessageDirection.inbound,
         author_name="Mail delivery",
+        to_address=to_address,
         body=f"Delivery failed: {message.subject}",
         sent_at=message.sent_at,
     )
@@ -229,7 +242,9 @@ async def ingest_raw(
 
     disposition = classify(message)
     if disposition is Disposition.bounce:
-        row.state = await _handle_bounce(session, workspace_id, message)
+        row.state = await _handle_bounce(
+            session, workspace_id, message, matched.address
+        )
         await session.commit()
         return row.state
     if disposition in (Disposition.bulk, Disposition.auto_reply):
@@ -281,6 +296,7 @@ async def ingest_raw(
         role=MessageRole.customer,
         direction=MessageDirection.inbound,
         author_name=contact.name,
+        to_address=matched.address,
         body=message.text_body,
         body_html=message.html_body,
         sent_at=message.sent_at,
