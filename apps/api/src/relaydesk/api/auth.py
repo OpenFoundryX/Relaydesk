@@ -8,6 +8,7 @@ from relaydesk.schemas.auth import (
     GoogleUrlResponse,
     LoginRequest,
     MembershipOut,
+    MePatch,
     MeResponse,
     TokenResponse,
     UserOut,
@@ -76,6 +77,7 @@ async def me(scope: Scope, session: DbSession) -> MeResponse:
             email=scope.user.email,
             monogram=scope.user.monogram,
             time_zone=scope.user.timezone,
+            notify_on_assignment=scope.user.notify_on_assignment,
         ),
         workspace=WorkspaceOut(
             id=str(scope.workspace.id),
@@ -89,3 +91,13 @@ async def me(scope: Scope, session: DbSession) -> MeResponse:
         ),
         membership=MembershipOut(role=scope.membership.role.value),
     )
+
+
+@router.patch("/me", response_model=MeResponse)
+async def update_me(payload: MePatch, scope: Scope, session: DbSession) -> MeResponse:
+    if payload.name is not None:
+        scope.user.name = payload.name.strip()
+    if payload.notify_on_assignment is not None:
+        scope.user.notify_on_assignment = payload.notify_on_assignment
+    await session.commit()
+    return await me(scope, session)

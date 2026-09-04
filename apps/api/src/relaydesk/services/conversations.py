@@ -22,6 +22,7 @@ from relaydesk.models import (
     SavedView,
     User,
 )
+from relaydesk.services import notifications
 
 DEFAULT_LIMIT = 50
 
@@ -360,6 +361,8 @@ async def set_assignee(
     record(session, conversation, actor, ActivityKind.assignee, verb, value)
     await session.commit()
     await session.refresh(conversation, ["draft", "labels", "assignee"])
+    if conversation.assignee is not None:
+        notifications.notify_assignment(conversation, conversation.assignee, actor)
     return conversation
 
 

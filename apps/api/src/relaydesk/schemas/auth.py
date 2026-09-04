@@ -31,6 +31,7 @@ class UserOut(CamelModel):
     email: str
     monogram: str
     time_zone: str
+    notify_on_assignment: bool
 
 
 class WorkspaceOut(CamelModel):
@@ -52,3 +53,8 @@ class MeResponse(CamelModel):
     user: UserOut
     workspace: WorkspaceOut
     membership: MembershipOut
+
+
+class MePatch(CamelModel):
+    name: str | None = None
+    notify_on_assignment: bool | None = None

@@ -6,4 +6,7 @@ imported here for its ``@app.task`` definitions to register. Later tasks add
 their own import to this list.
 """
 
-from relaydesk.worker.tasks import health  # noqa: F401
+from relaydesk.worker.tasks import (  # noqa: F401
+    health,
+    mail,
+)

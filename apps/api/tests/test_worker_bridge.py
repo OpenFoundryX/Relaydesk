@@ -41,3 +41,24 @@ def test_run_before_init_is_a_clear_error() -> None:
         assert "init_worker_process" in str(raised)
     finally:
         bridge.init_worker_process()
+
+
+def test_every_task_module_is_registered() -> None:
+    """A module under worker/tasks/ that nobody imports in __init__.py
+    registers no tasks, and fails silently — no error, no log, Beat just
+    never finds the task. This is the guard for that."""
+    import pkgutil
+
+    from relaydesk.worker import tasks
+    from relaydesk.worker.app import app
+
+    on_disk = {name for _finder, name, _pkg in pkgutil.iter_modules(tasks.__path__)}
+    imported = {
+        module.__name__.rsplit(".", 1)[-1]
+        for module in vars(tasks).values()
+        if getattr(module, "__name__", "").startswith("relaydesk.worker.tasks.")
+    }
+
+    missing = on_disk - imported
+    assert on_disk == imported, f"not imported in tasks/__init__.py: {missing}"
+    assert "relaydesk.send_system_email" in app.tasks
