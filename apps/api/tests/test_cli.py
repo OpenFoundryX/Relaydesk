@@ -1,18 +1,30 @@
+from datetime import UTC, datetime
+from email.message import EmailMessage
+
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from relaydesk.cli import ADMIN_PASSWORD_ENV, bootstrap, resolve_admin_password, seed
+from relaydesk.cli import (
+    ADMIN_PASSWORD_ENV,
+    bootstrap,
+    resolve_admin_password,
+    seed,
+    unrouted,
+)
 from relaydesk.models import (
     ActivityEvent,
     ActivityKind,
     Conversation,
     Label,
     Membership,
+    RawMessage,
     SavedView,
     User,
     Workspace,
 )
 from relaydesk.models.channel_account import ChannelAccount
+from relaydesk.services import channel_accounts, ingest
+from tests.factories import make_workspace
 
 
 async def test_seed_creates_a_demo_workspace(db_session: AsyncSession) -> None:
@@ -160,3 +172,51 @@ def test_the_admin_password_falls_back_to_the_flag(monkeypatch) -> None:
 
     assert resolve_admin_password("from-argv") == "from-argv"
     assert resolve_admin_password(None) is None
+
+
+def _raw(to: str, subject: str = "Hello") -> bytes:
+    message = EmailMessage()
+    message["From"] = "ada@example.com"
+    message["To"] = to
+    message["Subject"] = subject
+    message["Date"] = "Tue, 2 Sep 2026 10:00:00 +0000"
+    message["Message-ID"] = "<a1@example.com>"
+    message.set_content("Hi there.")
+    return message.as_bytes()
+
+
+async def test_unrouted_lists_mail_that_failed_to_route_and_omits_the_rest(
+    db_session: AsyncSession,
+) -> None:
+    """The bytes for undeliverable mail must stay visible to an operator --
+    ``state = 'unrouted'`` is a value nothing else ever reads."""
+    workspace = await make_workspace(db_session, slug="acme")
+    account = await channel_accounts.create(db_session, workspace.id, "Support")
+    await db_session.flush()
+    address = channel_accounts.address_for(account, "acme")
+
+    routed = RawMessage(
+        mailbox="INBOX",
+        uidvalidity=1,
+        uid=1,
+        raw=_raw(address, subject="Routed ok"),
+        received_at=datetime.now(UTC),
+    )
+    unroutable = RawMessage(
+        mailbox="INBOX",
+        uidvalidity=1,
+        uid=2,
+        raw=_raw("someone-else@elsewhere.com", subject="Nowhere to go"),
+        received_at=datetime.now(UTC),
+    )
+    db_session.add_all([routed, unroutable])
+    await db_session.flush()
+
+    await ingest.ingest_raw(db_session, routed.id)
+    await ingest.ingest_raw(db_session, unroutable.id)
+
+    rows = await unrouted(db_session)
+
+    ids = {row.id for row in rows}
+    assert unroutable.id in ids
+    assert routed.id not in ids

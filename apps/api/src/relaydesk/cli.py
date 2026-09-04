@@ -8,19 +8,20 @@ create their real workspace and first admin.
 import argparse
 import asyncio
 import os
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relaydesk.db.session import async_session_factory
-from relaydesk.errors import Conflict
+from relaydesk.email_parse import normalize
+from relaydesk.errors import Conflict, NotFound
 from relaydesk.models import (
     ActivityEvent,
     ActivityKind,
     Channel,
     Contact,
-    Conversation,
     ConversationLabel,
     ConversationStatus,
     Draft,
@@ -28,16 +29,18 @@ from relaydesk.models import (
     LabelColor,
     Membership,
     MembershipStatus,
-    Message,
+    MessageDirection,
     MessageRole,
     Priority,
+    RawMessage,
+    RawMessageState,
     Role,
     SavedView,
     User,
     Workspace,
 )
 from relaydesk.security.passwords import hash_password
-from relaydesk.services import workspaces
+from relaydesk.services import conversations, workspaces
 
 # Read in preference to --password so the admin's password never lands in
 # `ps` output or the shell history file.
@@ -311,35 +314,26 @@ async def seed(session: AsyncSession) -> None:
         session.add(contact)
         await session.flush()
 
-        workspace.conversation_seq += 1
         sent_at = now - timedelta(minutes=minutes_ago)
         assignee = people[assignee_key]
-        conversation = Conversation(
-            workspace_id=workspace.id,
-            number=workspace.conversation_seq,
-            subject=subject,
-            contact_id=contact.id,
-            channel=channel,
-            status=status,
-            priority=priority,
-            assignee_id=assignee.id if assignee else None,
-            preview=preview,
-            last_message_at=sent_at,
-            unread=status is ConversationStatus.open,
+        conversation = await conversations.create_conversation(
+            session, workspace.id, contact, subject, channel, sent_at
         )
-        session.add(conversation)
-        await session.flush()
+        # create_conversation always opens unread; the demo data wants a mix
+        # so the console shows what a read, resolved ticket looks like too.
+        conversation.status = status
+        conversation.priority = priority
+        conversation.assignee_id = assignee.id if assignee else None
+        conversation.unread = status is ConversationStatus.open
 
-        session.add(
-            Message(
-                workspace_id=workspace.id,
-                conversation_id=conversation.id,
-                role=MessageRole.customer,
-                author_name=contact_name,
-                to_address="support@chronon.co",
-                body=preview,
-                sent_at=sent_at,
-            )
+        await conversations.append_message(
+            session,
+            conversation,
+            role=MessageRole.customer,
+            direction=MessageDirection.inbound,
+            author_name=contact_name,
+            body=preview,
+            sent_at=sent_at,
         )
         # One opening entry per thread, so the detail panel's History tab
         # has something in it on a fresh seed rather than reading empty.
@@ -375,6 +369,10 @@ async def seed(session: AsyncSession) -> None:
                 )
             )
 
+    # create_conversation allocates the sequence with a raw UPDATE, which
+    # bypasses the ORM's in-memory attribute on ``workspace`` -- refresh it
+    # so the object this function was handed reflects the final count.
+    await session.refresh(workspace, ["conversation_seq"])
     await session.commit()
 
 
@@ -417,6 +415,52 @@ async def bootstrap(
     await session.commit()
 
 
+async def unrouted(session: AsyncSession, limit: int = 20) -> list[RawMessage]:
+    """List mail that reached the mailbox but matched no workspace.
+
+    Usually a forwarding rule pointing at the wrong address. The bytes are
+    kept, so fixing the rule and re-running ``relaydesk reingest <id>`` turns
+    these into tickets rather than losing them.
+    """
+    return list(
+        await session.scalars(
+            sa.select(RawMessage)
+            .where(RawMessage.state == RawMessageState.unrouted)
+            .order_by(RawMessage.received_at.desc())
+            .limit(limit)
+        )
+    )
+
+
+def _print_unrouted(rows: list[RawMessage]) -> None:
+    if not rows:
+        print("No unrouted mail.")
+        return
+    for row in rows:
+        message = normalize.parse(row.raw)
+        print(
+            f"{row.id}  {row.received_at.isoformat()}  "
+            f"from={message.from_email!r}  subject={message.subject!r}"
+        )
+
+
+async def reingest(session: AsyncSession, raw_message_id: uuid.UUID) -> None:
+    """Reset a stuck (usually unrouted) message and re-enqueue it.
+
+    Imported lazily: importing the Celery task at module scope would pull
+    the worker app into every ``relaydesk`` CLI invocation, including ones
+    that never touch it.
+    """
+    from relaydesk.worker.tasks.inbound import ingest_message
+
+    row = await session.get(RawMessage, raw_message_id)
+    if row is None:
+        raise NotFound("That raw message does not exist.")
+    row.state = RawMessageState.fetched
+    await session.commit()
+    ingest_message.delay(str(row.id))
+
+
 def resolve_admin_password(cli_password: str | None) -> str | None:
     """Environment first, ``--password`` only as a fallback.
 
@@ -441,6 +485,14 @@ def main() -> None:
             "variable: a password in argv is visible in `ps` and shell history."
         ),
     )
+    unrouted_parser = commands.add_parser(
+        "unrouted", help="List mail that matched no workspace"
+    )
+    unrouted_parser.add_argument("--limit", type=int, default=20)
+    reingest_parser = commands.add_parser(
+        "reingest", help="Reset a raw message to fetched and re-enqueue it"
+    )
+    reingest_parser.add_argument("raw_message_id", type=uuid.UUID)
     args = parser.parse_args()
 
     password = resolve_admin_password(getattr(args, "password", None))
@@ -453,7 +505,7 @@ def main() -> None:
         async with async_session_factory() as session:
             if args.command == "seed":
                 await seed(session)
-            else:
+            elif args.command == "bootstrap":
                 await bootstrap(
                     session,
                     workspace_name=args.workspace,
@@ -461,6 +513,10 @@ def main() -> None:
                     admin_name=args.name,
                     admin_password=password,
                 )
+            elif args.command == "unrouted":
+                _print_unrouted(await unrouted(session, args.limit))
+            else:
+                await reingest(session, args.raw_message_id)
 
     asyncio.run(run())
 

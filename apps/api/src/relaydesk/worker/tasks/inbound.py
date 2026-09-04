@@ -1,7 +1,7 @@
-import logging
+import uuid
 
 from relaydesk.config import get_settings
-from relaydesk.services import imap
+from relaydesk.services import imap, ingest
 from relaydesk.worker import bridge
 from relaydesk.worker.app import app
 
@@ -23,8 +23,17 @@ def imap_poll() -> int:
     return bridge.run(_poll())
 
 
-@app.task(name="relaydesk.ingest_message")
-def ingest_message(raw_message_id: str) -> None:
-    """Replaced in Task 11. Until then the poller can be exercised on its
-    own without messages disappearing into an unregistered task name."""
-    logging.getLogger(__name__).info("ingest pending for %s", raw_message_id)
+@app.task(
+    name="relaydesk.ingest_message",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    max_retries=5,
+)
+def ingest_message(raw_message_id: str) -> str:
+    return bridge.run(_ingest(uuid.UUID(raw_message_id)))
+
+
+async def _ingest(raw_message_id: uuid.UUID) -> str:
+    async with bridge.session_scope() as session:
+        return str(await ingest.ingest_raw(session, raw_message_id))
