@@ -74,6 +74,35 @@ async def test_listing_by_view_applies_its_filters(
     assert body["items"][0]["priority"] == "urgent"
 
 
+async def test_a_views_reported_count_matches_its_list_length(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    workspace = await make_workspace(db_session)
+    user = await make_member(db_session, workspace)
+    await make_conversation(db_session, workspace, priority=Priority.urgent)
+    await make_conversation(db_session, workspace, priority=Priority.urgent)
+    await make_conversation(db_session, workspace, priority=Priority.low)
+    view = SavedView(
+        workspace_id=workspace.id,
+        name="Urgent tickets",
+        filters={"priority": "urgent"},
+    )
+    db_session.add(view)
+    await db_session.commit()
+    headers = await sign_in(client, db_session, user.email)
+
+    views_body = (await client.get("/api/views", headers=headers)).json()
+    reported_count = next(
+        entry["count"] for entry in views_body if entry["id"] == str(view.id)
+    )
+    conversations_body = (
+        await client.get(f"/api/conversations?viewId={view.id}", headers=headers)
+    ).json()
+
+    assert reported_count == 2
+    assert len(conversations_body["items"]) == reported_count
+
+
 async def test_a_foreign_view_is_a_404(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:

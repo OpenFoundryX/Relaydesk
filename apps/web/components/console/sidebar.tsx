@@ -22,7 +22,8 @@ import {
 import type { LucideIcon } from "lucide-react";
 
 import { CreateLabelButton } from "@/components/inbox/create-label-button";
-import type { Label, SavedView, SetupTask, StatusCount } from "@/lib/mock/types";
+import type { Label, SetupTask, StatusCount } from "@/lib/mock/types";
+import type { SavedView } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 import { SetupProgress } from "./setup-progress";
