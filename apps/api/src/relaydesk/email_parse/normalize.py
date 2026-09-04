@@ -9,6 +9,7 @@ malformed message into a task that retries forever.
 """
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email import policy
@@ -16,6 +17,7 @@ from email.header import decode_header, make_header
 from email.message import EmailMessage, Message
 from email.parser import BytesParser
 from email.utils import getaddresses, parsedate_to_datetime
+from typing import Any
 
 NO_SUBJECT = "(no subject)"
 
@@ -165,6 +167,61 @@ def _safe_headers(message: Message) -> dict[str, str]:
         return {}
 
 
+def _guarded(build: Callable[[], Any], default: Any) -> Any:
+    """Run one field extraction in isolation. One failing header (a
+    malformed address list, a garbled Message-ID) must not cost the others
+    — each caller gets its own try/except via this."""
+    try:
+        return build()
+    except Exception:
+        return default
+
+
+def _header_fields(message: Message) -> dict[str, Any]:
+    """Every InboundMessage field derivable from headers alone, each
+    independently guarded.
+
+    Shared by the normal path and the headers-only last resort below,
+    because ``delivered_to`` and ``message_id`` are exactly what Task 11
+    routes and threads on — a degraded message is only a usable ticket if
+    these still come through.
+    """
+
+    def _from() -> tuple[str, str]:
+        from_pairs = getaddresses(message.get_all("From", []))
+        return from_pairs[0] if from_pairs else ("", "")
+
+    from_name, from_email = _guarded(_from, ("", ""))
+
+    return {
+        "message_id": _guarded(
+            lambda: (_message_ids(str(message.get("Message-ID", ""))) or (None,))[0],
+            None,
+        ),
+        "in_reply_to": _guarded(
+            lambda: (_message_ids(str(message.get("In-Reply-To", ""))) or (None,))[0],
+            None,
+        ),
+        "references": _guarded(
+            lambda: _message_ids(str(message.get("References", ""))), ()
+        ),
+        "from_email": from_email.lower(),
+        "from_name": _decode(from_name) or from_email,
+        "to": _guarded(lambda: _addresses(message, "To"), ()),
+        "cc": _guarded(lambda: _addresses(message, "Cc"), ()),
+        "delivered_to": _guarded(
+            lambda: (
+                _addresses(message, "Delivered-To")
+                + _addresses(message, "X-Original-To")
+            ),
+            (),
+        ),
+        "subject": _guarded(
+            lambda: _decode(message.get("Subject")) or NO_SUBJECT, NO_SUBJECT
+        ),
+    }
+
+
 def _minimal_message(message: Message) -> InboundMessage:
     """Last-resort construction, used when something inside ``_assemble``
     blows up in a way the per-part guard in ``_walk`` didn't catch.
@@ -173,32 +230,8 @@ def _minimal_message(message: Message) -> InboundMessage:
     threads on ``message_id`` and routes on ``delivered_to``, so a message
     that keeps its headers is still a usable ticket even with no body.
     """
-    try:
-        from_pairs = getaddresses(message.get_all("From", []))
-        from_name, from_email = from_pairs[0] if from_pairs else ("", "")
-    except Exception:
-        from_name, from_email = "", ""
-
-    try:
-        subject = _decode(message.get("Subject")) or NO_SUBJECT
-    except Exception:
-        subject = NO_SUBJECT
-
-    try:
-        message_id = (_message_ids(str(message.get("Message-ID", ""))) or (None,))[0]
-    except Exception:
-        message_id = None
-
     return InboundMessage(
-        message_id=message_id,
-        in_reply_to=None,
-        references=(),
-        from_email=from_email.lower(),
-        from_name=_decode(from_name) or from_email,
-        to=(),
-        cc=(),
-        delivered_to=(),
-        subject=subject,
+        **_header_fields(message),
         text_body="",
         html_body=None,
         sent_at=datetime.now(UTC),
@@ -210,9 +243,6 @@ def _minimal_message(message: Message) -> InboundMessage:
 def _assemble(message: Message) -> InboundMessage:
     text, html, attachments = _walk(message)
 
-    from_pairs = getaddresses(message.get_all("From", []))
-    from_name, from_email = (from_pairs[0] if from_pairs else ("", ""))
-
     try:
         sent_at = parsedate_to_datetime(message.get("Date", ""))
     except Exception:
@@ -222,21 +252,8 @@ def _assemble(message: Message) -> InboundMessage:
     if sent_at.tzinfo is None:
         sent_at = sent_at.replace(tzinfo=UTC)
 
-    references = _message_ids(str(message.get("References", "")))
-    in_reply_to_ids = _message_ids(str(message.get("In-Reply-To", "")))
-
     return InboundMessage(
-        message_id=(_message_ids(str(message.get("Message-ID", ""))) or (None,))[0],
-        in_reply_to=(in_reply_to_ids[0] if in_reply_to_ids else None),
-        references=references,
-        from_email=from_email.lower(),
-        from_name=_decode(from_name) or from_email,
-        to=_addresses(message, "To"),
-        cc=_addresses(message, "Cc"),
-        delivered_to=(
-            _addresses(message, "Delivered-To") + _addresses(message, "X-Original-To")
-        ),
-        subject=_decode(message.get("Subject")) or NO_SUBJECT,
+        **_header_fields(message),
         text_body=text,
         html_body=html,
         sent_at=sent_at,

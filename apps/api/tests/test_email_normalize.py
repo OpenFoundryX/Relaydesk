@@ -244,14 +244,16 @@ def test_a_wholly_hostile_message_still_yields_a_valid_inbound_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Even if something outside _walk's per-part guard blows up, parse()
-    must degrade to a headers-only InboundMessage rather than propagate."""
+    must degrade to a headers-only InboundMessage rather than propagate —
+    and that degraded message must still carry delivered_to, since that is
+    the field Task 11 routes on."""
 
     def _explode(_message: Message) -> tuple[str, str | None, list]:
         raise RuntimeError("the whole tree is hostile")
 
     monkeypatch.setattr(normalize, "_walk", _explode)
 
-    message = _build()
+    message = _build(Delivered_To="acme-a3f9c2@inbound.localhost")
     message.set_content("irrelevant")
 
     parsed = normalize.parse(message.as_bytes())
@@ -259,6 +261,29 @@ def test_a_wholly_hostile_message_still_yields_a_valid_inbound_message(
     assert parsed.from_email == "ada@example.com"
     assert parsed.subject == "Refund please"
     assert parsed.message_id == "<a1@example.com>"
+    assert parsed.delivered_to == ("acme-a3f9c2@inbound.localhost",)
     assert parsed.text_body == ""
     assert parsed.html_body is None
+    assert parsed.attachments == ()
+
+
+def test_minimal_message_preserves_delivered_to_and_message_id() -> None:
+    """The routing contract for the headers-only last resort: Task 11
+    routes on delivered_to and threads on message_id, so a message that
+    falls into _minimal_message must still carry both rather than stranding
+    the mail as surely as the original exception would have."""
+    message = _build(
+        To="support@acme.com",
+        Cc="cc@acme.com",
+        Delivered_To="acme-a3f9c2@inbound.localhost",
+    )
+    message.set_content("hi")
+
+    parsed = normalize._minimal_message(message)
+
+    assert parsed.delivered_to == ("acme-a3f9c2@inbound.localhost",)
+    assert parsed.message_id == "<a1@example.com>"
+    assert parsed.to == ("support@acme.com",)
+    assert parsed.cc == ("cc@acme.com",)
+    assert parsed.text_body == ""
     assert parsed.attachments == ()
