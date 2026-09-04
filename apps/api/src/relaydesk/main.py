@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +11,7 @@ from relaydesk.api.router import api_router
 from relaydesk.config import get_settings
 from relaydesk.errors import AppError
 
+logger = logging.getLogger("relaydesk")
 settings = get_settings()
 
 app = FastAPI(title="Relaydesk API", version=__version__)
@@ -65,6 +68,27 @@ async def handle_http_exception(
     return JSONResponse(
         status_code=error.status_code,
         content={"error": {"code": code, "message": message}},
+    )
+
+
+# Anything that isn't an AppError, a validation error, or an HTTPException
+# would otherwise escape as Starlette's plain-text "Internal Server Error",
+# which the web client's `body.error.code` parsing cannot read. The envelope
+# is deliberately generic — exception text and tracebacks go to the log, not
+# to the response.
+@app.exception_handler(Exception)
+async def handle_unexpected_error(request: Request, error: Exception) -> JSONResponse:
+    logger.error(
+        "Unhandled error serving %s %s",
+        request.method,
+        request.url.path,
+        exc_info=error,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": {"code": "error", "message": "Something went wrong on our end."}
+        },
     )
 
 
