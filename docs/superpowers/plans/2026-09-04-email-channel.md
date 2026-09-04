@@ -650,16 +650,16 @@ async def test_existing_users_default_to_wanting_assignment_email(
     workspace = await make_workspace(db_session)
     from tests.factories import make_member
 
-    member = await make_member(db_session, workspace, email="ada@example.com")
+    user = await make_member(db_session, workspace, email="ada@example.com")
     value = await db_session.scalar(
         sa.text("SELECT notify_on_assignment FROM users WHERE id = :id").bindparams(
-            id=member.user_id if hasattr(member, "user_id") else member.id
+            id=user.id
         )
     )
     assert value is True
 ```
 
-If `make_member`'s return type does not expose `user_id`, read its signature in `tests/factories.py:32` and use whatever it returns to reach the user id — the assertion is what matters, not the accessor.
+`make_member` (`tests/factories.py:32`) returns the **`User`** it created, not the membership — the whole test suite uses it that way (`tests/test_conversation_mutations.py:15`).
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1059,7 +1059,7 @@ The only module that speaks SMTP, plus its first real consumer. This task is ear
   - `services.mailer.system_headers() -> dict[str, str]`
   - `services.queue.enqueue_system_email(to: str, subject: str, text_body: str, html_body: str | None) -> None` — the seam tests monkeypatch
   - `worker.tasks.mail.send_system_email` — Celery task, `name="relaydesk.send_system_email"`
-  - `services.notifications.notify_assignment(session, conversation, assignee, actor) -> None`
+  - `services.notifications.notify_assignment(conversation, assignee, actor) -> None` — no session: it reads only loaded attributes and enqueues
 
 - [ ] **Step 1: Write the failing mailer test**
 
@@ -1270,7 +1270,7 @@ async def test_assigning_to_someone_else_emails_them(
     conversation = await make_conversation(db_session, workspace, subject="Refund")
 
     await conversations.set_assignee(
-        db_session, workspace.id, conversation.id, other.user.id, actor.user
+        db_session, workspace.id, conversation.id, other.id, actor
     )
 
     assert len(outbox) == 1
@@ -1288,7 +1288,7 @@ async def test_assigning_to_yourself_emails_nobody(
     conversation = await make_conversation(db_session, workspace)
 
     await conversations.set_assignee(
-        db_session, workspace.id, conversation.id, actor.user.id, actor.user
+        db_session, workspace.id, conversation.id, actor.id, actor
     )
 
     assert outbox == []
@@ -1300,12 +1300,12 @@ async def test_the_preference_is_honoured(
     workspace = await make_workspace(db_session)
     actor = await make_member(db_session, workspace, email="nilesh@example.com")
     other = await make_member(db_session, workspace, email="sara@example.com")
-    other.user.notify_on_assignment = False
+    other.notify_on_assignment = False
     await db_session.flush()
     conversation = await make_conversation(db_session, workspace)
 
     await conversations.set_assignee(
-        db_session, workspace.id, conversation.id, other.user.id, actor.user
+        db_session, workspace.id, conversation.id, other.id, actor
     )
 
     assert outbox == []
@@ -1319,18 +1319,18 @@ async def test_unassigning_emails_nobody(
     other = await make_member(db_session, workspace, email="sara@example.com")
     conversation = await make_conversation(db_session, workspace)
     await conversations.set_assignee(
-        db_session, workspace.id, conversation.id, other.user.id, actor.user
+        db_session, workspace.id, conversation.id, other.id, actor
     )
     outbox.clear()
 
     await conversations.set_assignee(
-        db_session, workspace.id, conversation.id, None, actor.user
+        db_session, workspace.id, conversation.id, None, actor
     )
 
     assert outbox == []
 ```
 
-`make_member` in `tests/factories.py:32` returns a membership; read it and use whatever attribute reaches the `User` row. If it does not expose one, extend the factory to return the user alongside the membership rather than reaching into the session.
+`make_member` (`tests/factories.py:32`) returns the created **`User`** directly — there is no `.user` attribute to go through.
 
 - [ ] **Step 6: Run it to verify it fails**
 
@@ -1471,13 +1471,12 @@ async def test_patch_me_toggles_the_preference(db_session, client) -> None:
     from tests.factories import sign_in
 
     workspace = await make_workspace(db_session)
-    member = await make_member(db_session, workspace, email="nilesh@example.com")
-    token = await sign_in(db_session, member)
+    user = await make_member(db_session, workspace, email="nilesh@example.com")
+    await db_session.commit()
+    headers = await sign_in(client, db_session, user.email)
 
     response = await client.patch(
-        "/api/auth/me",
-        json={"notifyOnAssignment": False},
-        headers={"Authorization": f"Bearer {token}"},
+        "/api/auth/me", json={"notifyOnAssignment": False}, headers=headers
     )
 
     assert response.status_code == 200
@@ -1486,7 +1485,7 @@ async def test_patch_me_toggles_the_preference(db_session, client) -> None:
 
 `MeResponse` must expose `notify_on_assignment` on its user block for this to pass — add it to the response model beside `time_zone` at `api/auth.py:78`.
 
-Read `sign_in` at `tests/factories.py:136` for its exact signature before using it.
+`sign_in` (`tests/factories.py:136`) is `sign_in(client, session, user_email, password="relaydesk")` and returns a **ready-made headers dict** — pass it straight to `headers=`, do not rebuild an Authorization string from it.
 
 - [ ] **Step 11: Verify end to end against GreenMail**
 
@@ -1559,21 +1558,34 @@ Create `apps/api/tests/test_session_scoping.py`:
 
 ```python
 import pytest
+import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relaydesk.errors import Unauthorized
-from relaydesk.models.membership import MembershipStatus
+from relaydesk.models.membership import Membership, MembershipStatus
+from relaydesk.models.user import User
 from relaydesk.services import auth
 from tests.factories import make_member, make_workspace
+
+
+async def _membership(session: AsyncSession, workspace, user: User) -> Membership:
+    """make_member returns the User; these tests also need the Membership row."""
+    return await session.scalar(
+        sa.select(Membership).where(
+            Membership.user_id == user.id,
+            Membership.workspace_id == workspace.id,
+        )
+    )
 
 
 async def test_a_session_names_the_workspace_it_was_minted_for(
     db_session: AsyncSession,
 ) -> None:
     workspace = await make_workspace(db_session)
-    member = await make_member(db_session, workspace, email="ada@example.com")
+    user = await make_member(db_session, workspace, email="ada@example.com")
+    membership = await _membership(db_session, workspace, user)
 
-    _token, row = await auth.create_session(db_session, member.user, member)
+    _token, row = await auth.create_session(db_session, user, membership)
 
     assert row.workspace_id == workspace.id
 
@@ -1583,15 +1595,16 @@ async def test_a_session_dies_with_its_membership(db_session: AsyncSession) -> N
     workspace the user joined next — a removed agent's old token becoming a
     live token in someone else's workspace."""
     workspace = await make_workspace(db_session)
-    member = await make_member(db_session, workspace, email="ada@example.com")
-    token, _row = await auth.create_session(db_session, member.user, member)
+    user = await make_member(db_session, workspace, email="ada@example.com")
+    membership = await _membership(db_session, workspace, user)
+    token, _row = await auth.create_session(db_session, user, membership)
 
-    member.status = MembershipStatus.removed
+    membership.status = MembershipStatus.removed
     await db_session.commit()
 
-    user, row = await auth.resolve_session(db_session, token)
+    resolved, row = await auth.resolve_session(db_session, token)
     with pytest.raises(Unauthorized):
-        await auth.active_membership(db_session, user, row.workspace_id)
+        await auth.active_membership(db_session, resolved, row.workspace_id)
 
 
 async def test_a_second_membership_does_not_move_an_existing_session(
@@ -1601,15 +1614,16 @@ async def test_a_second_membership_does_not_move_an_existing_session(
     Invites are what put that within reach of an ordinary user."""
     first = await make_workspace(db_session, slug="first")
     second = await make_workspace(db_session, slug="second")
-    member = await make_member(db_session, first, email="ada@example.com")
-    token, _row = await auth.create_session(db_session, member.user, member)
+    user = await make_member(db_session, first, email="ada@example.com")
+    membership = await _membership(db_session, first, user)
+    token, _row = await auth.create_session(db_session, user, membership)
 
-    await make_member(db_session, second, email="ada@example.com", user=member.user)
+    await make_member(db_session, second, email="ada@example.com", user=user)
 
-    user, row = await auth.resolve_session(db_session, token)
-    membership = await auth.active_membership(db_session, user, row.workspace_id)
+    resolved, row = await auth.resolve_session(db_session, token)
+    found = await auth.active_membership(db_session, resolved, row.workspace_id)
 
-    assert membership.workspace_id == first.id
+    assert found.workspace_id == first.id
 
 
 async def test_login_picks_the_oldest_membership_deterministically(
@@ -1617,15 +1631,15 @@ async def test_login_picks_the_oldest_membership_deterministically(
 ) -> None:
     first = await make_workspace(db_session, slug="first")
     second = await make_workspace(db_session, slug="second")
-    member = await make_member(db_session, first, email="ada@example.com")
-    await make_member(db_session, second, email="ada@example.com", user=member.user)
+    user = await make_member(db_session, first, email="ada@example.com")
+    await make_member(db_session, second, email="ada@example.com", user=user)
 
-    chosen = await auth.default_membership(db_session, member.user)
+    chosen = await auth.default_membership(db_session, user)
 
     assert chosen.workspace_id == first.id
 ```
 
-`make_member` currently creates its own user. Extend it in `tests/factories.py` to accept an optional `user: User | None = None` and reuse it when given, rather than creating a second user for the same address — the two tests above need one user in two workspaces.
+`make_member` (`tests/factories.py:32`) returns the `User` it creates and always creates a new one. Extend it with an optional `user: User | None = None` that, when given, skips user creation and only adds the membership — the two tests above need one user in two workspaces, and creating a second `User` row for the same address would violate the unique index on `users.email` rather than exercising the case.
 
 - [ ] **Step 2: Run it to verify it fails**
 
@@ -1815,12 +1829,13 @@ async def test_creating_an_invite_returns_no_token(
     it straight back to whoever made the request."""
     workspace = await make_workspace(db_session)
     admin = await make_member(db_session, workspace, email="nilesh@example.com", role=Role.admin)
-    token = await sign_in(db_session, admin)
+    await db_session.commit()
+    headers = await sign_in(client, db_session, admin.email)
 
     response = await client.post(
         "/api/team/invites",
         json={"email": "sara@example.com", "role": "Agent"},
-        headers={"Authorization": f"Bearer {token}"},
+        headers=headers,
     )
 
     assert response.status_code == 202
@@ -1835,12 +1850,13 @@ async def test_creating_an_invite_returns_no_token(
 async def test_an_agent_cannot_invite(db_session, client, outbox) -> None:
     workspace = await make_workspace(db_session)
     agent = await make_member(db_session, workspace, email="sara@example.com", role=Role.agent)
-    token = await sign_in(db_session, agent)
+    await db_session.commit()
+    headers = await sign_in(client, db_session, agent.email)
 
     response = await client.post(
         "/api/team/invites",
         json={"email": "new@example.com", "role": "Agent"},
-        headers={"Authorization": f"Bearer {token}"},
+        headers=headers,
     )
 
     assert response.status_code == 403
@@ -1851,7 +1867,7 @@ async def test_an_invite_can_only_be_accepted_once(db_session, client, outbox) -
     workspace = await make_workspace(db_session)
     admin = await make_member(db_session, workspace, email="nilesh@example.com", role=Role.admin)
     _invite, raw_token = await team.create_invite(
-        db_session, workspace.id, "sara@example.com", Role.agent, admin.user.id
+        db_session, workspace.id, "sara@example.com", Role.agent, admin.id
     )
     await db_session.commit()
 
@@ -1874,7 +1890,7 @@ async def test_an_expired_invite_cannot_be_accepted(db_session, client) -> None:
     workspace = await make_workspace(db_session)
     admin = await make_member(db_session, workspace, email="nilesh@example.com", role=Role.admin)
     invite, raw_token = await team.create_invite(
-        db_session, workspace.id, "sara@example.com", Role.agent, admin.user.id
+        db_session, workspace.id, "sara@example.com", Role.agent, admin.id
     )
     invite.expires_at = datetime.now(UTC) - timedelta(minutes=1)
     await db_session.commit()
@@ -1895,7 +1911,7 @@ async def test_accepting_lands_in_the_inviting_workspace(
     workspace = await make_workspace(db_session, slug="acme")
     admin = await make_member(db_session, workspace, email="nilesh@example.com", role=Role.admin)
     _invite, raw_token = await team.create_invite(
-        db_session, workspace.id, "sara@example.com", Role.agent, admin.user.id
+        db_session, workspace.id, "sara@example.com", Role.agent, admin.id
     )
     await db_session.commit()
 
@@ -2767,11 +2783,9 @@ async def test_the_channels_route_lists_addresses(db_session, client) -> None:
     member = await make_member(db_session, workspace, email="nilesh@example.com")
     await channel_accounts.create(db_session, workspace.id, "Support")
     await db_session.commit()
-    token = await sign_in(db_session, member)
+    headers = await sign_in(client, db_session, member.email)
 
-    response = await client.get(
-        "/api/channels/email", headers={"Authorization": f"Bearer {token}"}
-    )
+    response = await client.get("/api/channels/email", headers=headers)
 
     assert response.status_code == 200
     body = response.json()
@@ -2786,12 +2800,10 @@ async def test_creating_a_channel_requires_admin(db_session, client) -> None:
     workspace = await make_workspace(db_session, slug="acme")
     agent = await make_member(db_session, workspace, email="sara@example.com", role=Role.agent)
     await db_session.commit()
-    token = await sign_in(db_session, agent)
+    headers = await sign_in(client, db_session, agent.email)
 
     response = await client.post(
-        "/api/channels/email",
-        json={"displayName": "Billing"},
-        headers={"Authorization": f"Bearer {token}"},
+        "/api/channels/email", json={"displayName": "Billing"}, headers=headers
     )
 
     assert response.status_code == 403
@@ -3701,6 +3713,27 @@ async def test_a_flood_from_one_contact_is_throttled(
         state = await ingest.ingest_raw(db_session, row.id)
 
     assert state is RawMessageState.throttled
+
+
+async def test_one_noisy_sender_does_not_silence_everyone_else(
+    db_session: AsyncSession,
+) -> None:
+    """The cap is per contact. A workspace-wide cap would let one flood mute
+    every other customer — and the test above passes either way, so this is
+    the one that actually pins the behaviour."""
+    _workspace, account = await _account(db_session)
+    address = channel_accounts.address_for(account, "acme")
+    for uid in range(1, ingest.CONTACT_HOURLY_CAP + 2):
+        row = await _store(db_session, _raw(address, message_id=f"<m{uid}@x>"), uid=uid)
+        await ingest.ingest_raw(db_session, row.id)
+
+    other = await _store(
+        db_session,
+        _raw(address, sender="rita@example.com", message_id="<other@x>"),
+        uid=999,
+    )
+
+    assert await ingest.ingest_raw(db_session, other.id) is RawMessageState.ingested
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
@@ -4367,12 +4400,9 @@ async def test_the_download_route_forces_a_download(db_session, client) -> None:
     message = await _message(db_session, workspace)
     stored = await attachments.store(db_session, message, [_parsed()])
     await db_session.commit()
-    token = await sign_in(db_session, member)
+    headers = await sign_in(client, db_session, member.email)
 
-    response = await client.get(
-        f"/api/attachments/{stored[0].id}",
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    response = await client.get(f"/api/attachments/{stored[0].id}", headers=headers)
 
     assert response.status_code == 200
     assert response.content == b"%PDF fake"
@@ -4619,7 +4649,7 @@ async def _reply(session, subject="Refund please"):
     # router applies that separately — and returns the Conversation, so the
     # message is read back here.
     await conversations.add_reply(
-        session, workspace.id, conversation.id, "On its way.", member.user
+        session, workspace.id, conversation.id, "On its way.", member
     )
     message = await session.scalar(
         sa.select(Message)
