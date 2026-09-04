@@ -120,14 +120,15 @@ async def test_another_workspace_gets_a_404(db_session: AsyncSession) -> None:
 async def test_a_malformed_storage_key_cannot_escape_the_workspace_directory(
     db_session: AsyncSession,
 ) -> None:
-    """The read path is rebuilt from workspace_id and sha256, never from
-    storage_key, so a corrupted or hostile storage_key -- a bad migration, a
-    manual edit, a second writer -- cannot walk a read outside the
-    workspace's directory just because the row still matches on
-    workspace_id. Under the old code (path = _root() / row.storage_key)
-    this would resolve to the real /etc/passwd and return its contents --
-    the workspace directory must already exist for that traversal to
-    resolve at all, which is why a legitimate attachment is stored first."""
+    """storage_key is no longer read at all: the path is rebuilt from
+    workspace_id and sha256 (see attachments.read). This pins that a
+    hostile storage_key -- a bad migration, a manual edit, a second writer
+    -- has no effect, because the column is simply never consulted, not
+    because anything validates it. It does NOT exercise the containment
+    check itself; see
+    test_a_hostile_sha256_cannot_escape_the_workspace_directory for that,
+    which drives a hostile value through sha256, the field the path is
+    actually built from."""
     workspace = await make_workspace(db_session)
     message = await _message(db_session, workspace)
     await attachments.store(db_session, message, [_parsed()])
@@ -139,6 +140,37 @@ async def test_a_malformed_storage_key_cannot_escape_the_workspace_directory(
         size_bytes=0,
         sha256="deadbeef",
         storage_key="../../../../../../../../etc/passwd",
+        inline=False,
+        content_id=None,
+    )
+    db_session.add(row)
+    await db_session.flush()
+
+    with pytest.raises(NotFound):
+        await attachments.read(db_session, workspace.id, row.id)
+
+
+async def test_a_hostile_sha256_cannot_escape_the_workspace_directory(
+    db_session: AsyncSession,
+) -> None:
+    """sha256 -- not storage_key -- is what the read path is actually built
+    from (`_root() / str(workspace_id) / row.sha256`), so it is the real
+    attack surface. A row whose sha256 is a traversal sequence must still
+    404 rather than resolve outside the workspace's directory. The
+    workspace directory must already exist for the traversal to resolve at
+    all against a real file, which is why a legitimate attachment is
+    stored first."""
+    workspace = await make_workspace(db_session)
+    message = await _message(db_session, workspace)
+    await attachments.store(db_session, message, [_parsed()])
+    row = Attachment(
+        workspace_id=workspace.id,
+        message_id=message.id,
+        filename="passwd",
+        content_type="text/plain",
+        size_bytes=0,
+        sha256="../../../../../../../../etc/passwd",
+        storage_key="irrelevant",
         inline=False,
         content_id=None,
     )
