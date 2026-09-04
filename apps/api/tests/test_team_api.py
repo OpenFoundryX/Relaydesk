@@ -1,3 +1,4 @@
+import sqlalchemy as sa
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -113,6 +114,9 @@ async def test_accepting_an_invite_creates_a_working_login(
         json={"name": "Sara Duval", "password": "another-horse"},
     )
     assert accepted.status_code == 200
+    # Acceptance issues a session, matching POST /auth/login's shape.
+    assert accepted.json()["token"]
+    assert accepted.json()["expiresAt"]
 
     login = await client.post(
         "/api/auth/login",
@@ -205,7 +209,12 @@ async def test_accepting_an_invite_for_an_existing_user_links_it(
     )
 
     assert accepted.status_code == 200
-    assert accepted.json()["id"] == str(existing.id)
+    # Acceptance now signs you in, so the response is a session token rather
+    # than the user. Resolve it to check it belongs to the existing account.
+    session_headers = {"Authorization": f"Bearer {accepted.json()['token']}"}
+    me = await client.get("/api/auth/me", headers=session_headers)
+    assert me.status_code == 200
+    assert me.json()["user"]["id"] == str(existing.id)
 
     # The existing password still works: accept must not have overwritten it.
     login = await client.post(
@@ -395,3 +404,144 @@ async def test_demoting_one_of_several_admins_succeeds(
     )
 
     assert response.status_code == 204
+
+
+async def test_accepting_does_not_set_a_password_on_a_passwordless_user(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The account-takeover chain, closed at its first link.
+
+    A Google-only user has ``password_hash IS NULL``. Whoever holds the
+    invite token picks the password in the accept payload, and with no
+    mailer that is the admin who minted it — so writing that password onto
+    a pre-existing account would hand them a working login as somebody
+    else.
+    """
+    headers = await sign_in(client, db_session)
+    google_only = User(
+        email="sara@relaydesk.dev",
+        name="Sara Duval",
+        monogram="SD",
+        password_hash=None,
+    )
+    db_session.add(google_only)
+    await db_session.commit()
+
+    invite_url = (
+        await client.post(
+            "/api/team/invites",
+            headers=headers,
+            json={"email": "sara@relaydesk.dev", "role": "Agent"},
+        )
+    ).json()["inviteUrl"]
+    token = invite_url.rsplit("/", 1)[-1]
+
+    accepted = await client.post(
+        f"/api/invites/{token}/accept",
+        json={"name": "Sara Duval", "password": "attacker-chosen"},
+    )
+    assert accepted.status_code == 200
+
+    await db_session.refresh(google_only)
+    assert google_only.password_hash is None
+
+    login = await client.post(
+        "/api/auth/login",
+        json={"email": "sara@relaydesk.dev", "password": "attacker-chosen"},
+    )
+    assert login.status_code == 401
+
+
+async def test_accepting_is_refused_when_the_user_already_has_a_membership(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The second link: a member of another workspace cannot be pulled in.
+
+    ``services.auth.active_membership`` has no tiebreak, so a second active
+    membership would make which workspace a login resolves to arbitrary.
+    """
+    headers = await sign_in(client, db_session)
+
+    other_workspace = Workspace(name="Other Co", slug="other-co", monogram="OC")
+    victim = User(
+        email="victim@elsewhere.dev",
+        name="Vic Tim",
+        monogram="VT",
+        password_hash=None,
+    )
+    db_session.add_all([other_workspace, victim])
+    await db_session.flush()
+    db_session.add(
+        Membership(
+            workspace_id=other_workspace.id,
+            user_id=victim.id,
+            role=Role.admin,
+            status=MembershipStatus.active,
+        )
+    )
+    await db_session.commit()
+
+    invite_url = (
+        await client.post(
+            "/api/team/invites",
+            headers=headers,
+            json={"email": "victim@elsewhere.dev", "role": "Agent"},
+        )
+    ).json()["inviteUrl"]
+    token = invite_url.rsplit("/", 1)[-1]
+
+    accepted = await client.post(
+        f"/api/invites/{token}/accept",
+        json={"name": "Vic Tim", "password": "attacker-chosen"},
+    )
+
+    assert accepted.status_code == 409
+    assert accepted.json()["error"]["code"] == "conflict"
+
+    memberships = (
+        await db_session.scalars(
+            sa.select(Membership).where(Membership.user_id == victim.id)
+        )
+    ).all()
+    assert len(memberships) == 1
+    await db_session.refresh(victim)
+    assert victim.password_hash is None
+
+
+async def test_a_lowercase_role_is_rejected_rather_than_demoting(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """"admin" is the casing /auth/me returns, so it must not silently
+    fall through to Agent."""
+    headers = await sign_in(client, db_session)
+    membership_id = await invite_and_accept(client, headers)
+    await client.patch(
+        f"/api/team/members/{membership_id}",
+        headers=headers,
+        json={"role": "Admin"},
+    )
+
+    response = await client.patch(
+        f"/api/team/members/{membership_id}",
+        headers=headers,
+        json={"role": "admin"},
+    )
+
+    assert response.status_code == 422
+    team = (await client.get("/api/team", headers=headers)).json()
+    sara = next(entry for entry in team if entry["email"] == "sara@relaydesk.dev")
+    assert sara["role"] == "Admin"
+
+
+async def test_a_lowercase_invite_role_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    headers = await sign_in(client, db_session)
+
+    response = await client.post(
+        "/api/team/invites",
+        headers=headers,
+        json={"email": "sara@relaydesk.dev", "role": "agent"},
+    )
+
+    assert response.status_code == 422

@@ -2,6 +2,9 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { SESSION_COOKIE } from "@/lib/session-cookie";
 
+// `/invite/<token>` is deliberately absent from both this list and the
+// matcher below: the person following an invite link has no session yet,
+// and gating it would bounce them to /login with nowhere to go.
 const PROTECTED = [
   "/conversations",
   "/analytics",

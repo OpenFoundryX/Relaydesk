@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relaydesk.errors import Conflict, NotFound
@@ -194,32 +195,72 @@ async def read_invite(session: AsyncSession, token: str) -> Invite:
     return invite
 
 
+ALREADY_A_MEMBER = (
+    "This address already belongs to a Relaydesk workspace. "
+    "Sign in with that account instead."
+)
+
+
 async def accept_invite(
     session: AsyncSession, token: str, name: str, password: str
 ) -> User:
+    """Turn an invite into an active membership.
+
+    Two rules make this safe to expose unauthenticated, since whoever holds
+    the token chooses the ``password`` in the payload:
+
+    * An account that already exists keeps its credentials. Writing the
+      submitted password onto a pre-existing user would let the admin who
+      minted the invite (and therefore holds the token) set a password on
+      somebody else's account — including a Google-only account in a
+      *different* workspace — and then sign in as them.
+    * A user who already holds an active membership cannot accept at all.
+      ``services.auth.active_membership`` resolves a user's workspace with
+      no tiebreak, so a second active membership makes login pick a
+      workspace arbitrarily. Refusing here is what actually enforces the
+      one-active-membership-per-user assumption the rest of the system is
+      written against.
+    """
     invite = await read_invite(session, token)
 
-    user = await session.scalar(sa.select(User).where(User.email == invite.email))
-    if user is None:
-        user = User(
-            email=invite.email,
-            name=name,
-            monogram=monogram_for(name),
-            password_hash=hash_password(password),
-        )
-        session.add(user)
-        await session.flush()
-    elif user.password_hash is None:
-        user.password_hash = hash_password(password)
+    # Two concurrent accepts of one token both clear the guards below — they
+    # read the invite as unaccepted before either commits — and then collide
+    # on users.email (new account) or on memberships' (workspace_id,
+    # user_id). Either way the loser gets a conflict rather than an
+    # unhandled IntegrityError surfacing as a bare 500. The collision can be
+    # raised by the flush as well as the commit, so both sit inside the try.
+    try:
+        user = await session.scalar(sa.select(User).where(User.email == invite.email))
+        if user is None:
+            user = User(
+                email=invite.email,
+                name=name,
+                monogram=monogram_for(name),
+                password_hash=hash_password(password),
+            )
+            session.add(user)
+            await session.flush()
+        else:
+            existing = await session.scalar(
+                sa.select(Membership).where(
+                    Membership.user_id == user.id,
+                    Membership.status == MembershipStatus.active,
+                )
+            )
+            if existing is not None:
+                raise Conflict(ALREADY_A_MEMBER)
 
-    session.add(
-        Membership(
-            workspace_id=invite.workspace_id,
-            user_id=user.id,
-            role=invite.role,
-            status=MembershipStatus.active,
+        session.add(
+            Membership(
+                workspace_id=invite.workspace_id,
+                user_id=user.id,
+                role=invite.role,
+                status=MembershipStatus.active,
+            )
         )
-    )
-    invite.accepted_at = datetime.now(UTC)
-    await session.commit()
+        invite.accepted_at = datetime.now(UTC)
+        await session.commit()
+    except IntegrityError as error:
+        await session.rollback()
+        raise Conflict("This invite has already been accepted.") from error
     return user

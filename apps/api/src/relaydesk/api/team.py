@@ -1,27 +1,29 @@
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Depends, Header, Response, status
 
-from relaydesk.api.deps import DbSession, Scope
+from relaydesk.api.deps import DbSession, Scope, client_ip
 from relaydesk.config import get_settings
 from relaydesk.errors import NotFound
 from relaydesk.models import Role, Workspace
-from relaydesk.schemas.auth import UserOut
+from relaydesk.schemas.auth import TokenResponse
 from relaydesk.schemas.team import (
     AcceptInviteRequest,
     InviteCreated,
     InvitePreview,
     InviteRequest,
     MemberPatch,
+    RoleLabel,
     TeamMemberOut,
 )
-from relaydesk.services import team
+from relaydesk.services import auth, team
 
 router = APIRouter()
 invite_router = APIRouter()
 
 
-def _role_from_label(label: str) -> Role:
+def _role_from_label(label: RoleLabel) -> Role:
     return Role.admin if label == "Admin" else Role.agent
 
 
@@ -96,15 +98,18 @@ async def preview_invite(token: str, session: DbSession) -> InvitePreview:
     )
 
 
-@invite_router.post("/{token}/accept", response_model=UserOut)
+@invite_router.post("/{token}/accept", response_model=TokenResponse)
 async def accept_invite(
-    token: str, payload: AcceptInviteRequest, session: DbSession
-) -> UserOut:
+    token: str,
+    payload: AcceptInviteRequest,
+    session: DbSession,
+    ip: Annotated[str | None, Depends(client_ip)],
+    user_agent: Annotated[str | None, Header()] = None,
+) -> TokenResponse:
+    """Accepting an invite signs you in, so the console can go straight to
+    the inbox. Same response shape as POST /auth/login."""
     user = await team.accept_invite(session, token, payload.name, payload.password)
-    return UserOut(
-        id=str(user.id),
-        name=user.name,
-        email=user.email,
-        monogram=user.monogram,
-        time_zone=user.timezone,
+    token_value, row = await auth.create_session(
+        session, user, user_agent=user_agent, ip=ip
     )
+    return TokenResponse(token=token_value, expires_at=row.expires_at)
