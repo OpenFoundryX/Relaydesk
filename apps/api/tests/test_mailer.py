@@ -81,3 +81,24 @@ async def test_a_text_only_message_is_not_multipart(smtp_server) -> None:
 
     sent = message_from_bytes(smtp_server.messages[0], policy=default_policy)
     assert sent.get_content_type() == "text/plain"
+
+
+async def test_send_message_delivers_an_already_built_message(smtp_server) -> None:
+    """Task 13's outbound reply path builds its own MIME message (threading
+    headers, a specific From/Reply-To) and hands it to send_message()
+    directly, bypassing build(). It needs to actually reach the wire."""
+    message = mailer.build(
+        to="ada@example.com",
+        subject="Re: Refund",
+        text_body="On it.",
+        headers={"In-Reply-To": "<abc123@relaydesk>"},
+        sender="Support <support@inbound.localhost>",
+    )
+
+    await mailer.send_message(message)
+
+    assert len(smtp_server.messages) == 1
+    sent = message_from_bytes(smtp_server.messages[0], policy=default_policy)
+    assert sent["To"] == "ada@example.com"
+    assert sent["From"] == "Support <support@inbound.localhost>"
+    assert sent["In-Reply-To"] == "<abc123@relaydesk>"
