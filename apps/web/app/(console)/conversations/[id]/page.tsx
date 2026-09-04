@@ -4,16 +4,16 @@ import { ConversationHeader } from "@/components/inbox/conversation-header";
 import { DetailsSidebar } from "@/components/inbox/details-sidebar";
 import { ReplyComposer } from "@/components/inbox/reply-composer";
 import { Thread } from "@/components/inbox/thread";
-import { getTeam } from "@/lib/api/team";
-import { getWorkspace } from "@/lib/api/workspace";
 import {
   getActivity,
   getConversation,
   getConversations,
   getDraft,
-  getLabels,
   getMessages,
-} from "@/lib/mock/conversations";
+} from "@/lib/api/conversations";
+import { getLabels } from "@/lib/api/labels";
+import { getTeam } from "@/lib/api/team";
+import { getWorkspace } from "@/lib/api/workspace";
 
 export default async function ConversationPage({
   params,
@@ -30,7 +30,7 @@ export default async function ConversationPage({
     getActivity(id),
     getLabels(),
     getTeam(),
-    getConversations(conversation.status),
+    getConversations({ status: conversation.status }),
     getWorkspace(),
   ]);
 

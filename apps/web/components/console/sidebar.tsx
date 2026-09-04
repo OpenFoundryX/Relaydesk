@@ -22,11 +22,13 @@ import {
 import type { LucideIcon } from "lucide-react";
 
 import { CreateLabelButton } from "@/components/inbox/create-label-button";
-import { savedViews } from "@/lib/mock/conversations";
-import type { Label, SetupTask, StatusCount } from "@/lib/mock/types";
+import type { Label, SavedView, SetupTask, StatusCount } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
 
 import { SetupProgress } from "./setup-progress";
+
+/** Task 10 turns this into a prop fed by the real saved-views endpoint. */
+const savedViews: SavedView[] = [];
 
 interface NavItem {
   label: string;

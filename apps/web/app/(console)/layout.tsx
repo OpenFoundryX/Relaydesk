@@ -5,9 +5,10 @@ import { TopBar } from "@/components/console/top-bar";
 import { OnboardingProvider } from "@/components/onboarding/onboarding-provider";
 import { TrialBanner } from "@/components/console/trial-banner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { getDraftCount, getStatusCounts } from "@/lib/api/conversations";
+import { getLabels } from "@/lib/api/labels";
 import { getSetupTasks } from "@/lib/api/team";
 import { getCurrentUser, getWorkspace } from "@/lib/api/workspace";
-import { getDraftCount, getLabels, getStatusCounts } from "@/lib/mock/conversations";
 
 export default async function ConsoleLayout({
   children,

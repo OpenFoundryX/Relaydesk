@@ -34,6 +34,8 @@ export interface Conversation {
   /** Human-readable age, e.g. "12m", "3h", "2d". */
   age: string;
   assignee: string | null;
+  /** Stable id for mutations; `assignee` stays the display name. */
+  assigneeId: string | null;
   labelIds: string[];
   hasDraft: boolean;
   unread: boolean;

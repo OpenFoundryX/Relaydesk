@@ -1,60 +1,66 @@
 "use server";
 
+/* eslint-disable @typescript-eslint/no-unused-vars -- params kept for call-site
+   compatibility on these temporary no-op stubs; Task 9 wires each to a real
+   mutation endpoint and will use them. */
+
 import { revalidatePath } from "next/cache";
 
-import * as store from "@/lib/mock/conversations";
-import type { ConversationStatus, Priority } from "@/lib/mock/types";
+import { createLabel as createLabelApi } from "@/lib/api/labels";
+import type { ConversationStatus, Label, Priority } from "@/lib/types";
 
 /** Every mutation touches sidebar counts too, so the whole console refreshes. */
 function refresh() {
   revalidatePath("/", "layout");
 }
 
-export async function setStatusAction(id: string, status: ConversationStatus) {
-  await store.setStatus(id, status);
+/**
+ * Task 7 shipped only the read half of the conversations API, and Task 8
+ * deleted the mock store these actions used to call. Task 9 wires each of
+ * these to a real PATCH/POST endpoint; until then they are no-ops so the
+ * console keeps compiling and the UI's mutating controls fail silently
+ * instead of throwing on a deleted import.
+ */
+
+export async function setStatusAction(_id: string, _status: ConversationStatus) {
   refresh();
 }
 
-export async function setStatusBulkAction(ids: string[], status: ConversationStatus) {
-  for (const id of ids) await store.setStatus(id, status);
+export async function setStatusBulkAction(_ids: string[], _status: ConversationStatus) {
   refresh();
 }
 
-export async function setPriorityAction(id: string, priority: Priority) {
-  await store.setPriority(id, priority);
+export async function setPriorityAction(_id: string, _priority: Priority) {
   refresh();
 }
 
-export async function setAssigneeAction(id: string, assignee: string | null) {
-  await store.setAssignee(id, assignee);
+export async function setAssigneeAction(_id: string, _assignee: string | null) {
   refresh();
 }
 
-export async function toggleLabelAction(id: string, labelId: string) {
-  await store.toggleLabel(id, labelId);
+export async function toggleLabelAction(_id: string, _labelId: string) {
   refresh();
 }
 
-export async function createLabelAction(name: string, conversationId?: string) {
-  const label = await store.createLabel(name);
-  if (conversationId) await store.toggleLabel(conversationId, label.id);
+/**
+ * Labels themselves DO have a real endpoint already (Task 7/8), so creation
+ * is wired for real. Attaching the new label to `conversationId` is not —
+ * that half waits on Task 9's conversation-label mutation route.
+ */
+export async function createLabelAction(name: string, _conversationId?: string): Promise<Label> {
+  const label = await createLabelApi(name);
   refresh();
   return label;
 }
 
-export async function sendReplyAction(id: string, body: string, resolve: boolean) {
-  const trimmed = body.trim();
-  if (trimmed) await store.addReply(id, trimmed);
-  if (resolve) await store.setStatus(id, "resolved");
+export async function sendReplyAction(_id: string, _body: string, _resolve: boolean) {
   refresh();
 }
 
-export async function discardDraftAction(id: string) {
-  await store.discardDraft(id);
+export async function discardDraftAction(_id: string) {
   refresh();
 }
 
-export async function generateSummaryAction(id: string) {
-  await store.generateSummary(id);
+export async function generateSummaryAction(_id: string) {
   refresh();
 }
