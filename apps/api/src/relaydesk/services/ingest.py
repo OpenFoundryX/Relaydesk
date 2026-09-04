@@ -21,7 +21,7 @@ from relaydesk.models.contact import Contact
 from relaydesk.models.conversation import Channel, Conversation, ConversationStatus
 from relaydesk.models.message import Message, MessageDirection, MessageRole
 from relaydesk.models.raw_message import RawMessage, RawMessageState
-from relaydesk.services import channel_accounts, contacts, conversations
+from relaydesk.services import attachments, channel_accounts, contacts, conversations
 
 CONTACT_HOURLY_CAP = 20
 SUBJECT_WINDOW = timedelta(days=7)
@@ -290,7 +290,7 @@ async def ingest_raw(
         conversation.status = ConversationStatus.open
 
     conversation.unread = True
-    await conversations.append_message(
+    appended = await conversations.append_message(
         session,
         conversation,
         role=MessageRole.customer,
@@ -305,6 +305,8 @@ async def ingest_raw(
         channel_account_id=matched.account.id,
         raw_message_id=row.id,
     )
+    if message.attachments:
+        await attachments.store(session, appended, message.attachments)
 
     row.state = RawMessageState.ingested
     await session.commit()

@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from relaydesk.api.attachments import router as attachments_router
 from relaydesk.api.auth import router as auth_router
 from relaydesk.api.channels import router as channels_router
 from relaydesk.api.conversations import router as conversations_router
@@ -22,3 +23,6 @@ api_router.include_router(conversations_router, prefix="/conversations", tags=["
 api_router.include_router(labels_router, prefix="/labels", tags=["inbox"])
 api_router.include_router(views_router, prefix="/views", tags=["inbox"])
 api_router.include_router(channels_router, prefix="/channels", tags=["channels"])
+api_router.include_router(
+    attachments_router, prefix="/attachments", tags=["attachments"]
+)

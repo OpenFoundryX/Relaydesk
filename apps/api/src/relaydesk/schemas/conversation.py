@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import Field
 
-from relaydesk.models import ActivityEvent, Conversation, Message
+from relaydesk.models import ActivityEvent, Attachment, Conversation, Message
 from relaydesk.schemas.base import CamelModel
 
 
@@ -66,6 +66,13 @@ class CountsResponse(CamelModel):
     drafts: int
 
 
+class AttachmentOut(CamelModel):
+    id: str
+    filename: str
+    content_type: str
+    size_bytes: int
+
+
 class MessageOut(CamelModel):
     id: str
     author: str
@@ -73,6 +80,7 @@ class MessageOut(CamelModel):
     role: str
     body: str
     sent_at: str
+    attachments: list[AttachmentOut] = []
 
 
 class DraftOut(CamelModel):
@@ -151,6 +159,15 @@ def conversation_out(conversation: Conversation, timezone: str) -> ConversationO
     )
 
 
+def attachment_out(attachment: Attachment) -> AttachmentOut:
+    return AttachmentOut(
+        id=str(attachment.id),
+        filename=attachment.filename,
+        content_type=attachment.content_type,
+        size_bytes=attachment.size_bytes,
+    )
+
+
 def message_out(message: Message, timezone: str) -> MessageOut:
     local = message.sent_at.astimezone(ZoneInfo(timezone))
     return MessageOut(
@@ -160,6 +177,7 @@ def message_out(message: Message, timezone: str) -> MessageOut:
         role=message.role.value,
         body=message.body,
         sent_at=f"{local:%b} {local.day}, {local:%-I:%M %p}",
+        attachments=[attachment_out(item) for item in message.attachments],
     )
 
 
