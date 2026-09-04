@@ -75,8 +75,9 @@ rather than relitigating them.
 
 **D2 — Transport: SMTP send and IMAP poll.** No provider account, no DNS
 setup, and it works from behind NAT, which a webhook cannot. `docker compose
-up` must produce a working mail path with no external service, so Mailpit
-ships in the development stack as both the SMTP sink and the IMAP source.
+up` must produce a working mail path with no external service, so GreenMail
+ships in the development stack as both the SMTP sink and the IMAP source
+(section 5).
 Provider webhooks can be added later as another adapter behind the same
 `InboundMessage` normalization without redesign.
 
@@ -120,29 +121,34 @@ S3 is a later backend behind the same interface.
 - `rabbitmq` (`rabbitmq:3-management`), with a named volume.
 - `worker` — `celery -A relaydesk.worker.app worker --loglevel=info`.
 - `beat` — `celery -A relaydesk.worker.app beat --loglevel=info`.
-- `mailpit` (`axllent/mailpit`) — development only. SMTP on 1025, IMAP on
-  1143, web UI on 8025. It is the default SMTP and IMAP target in
-  `.env.example`, so a fresh clone can send and receive mail with no
-  external account.
+- `greenmail` (`greenmail/standalone`) — development only. SMTP on 3025 and
+  IMAP on 3143, backed by one store, so a real round trip is testable
+  locally: an outbound reply we send lands in the same mailbox the poller
+  reads. It is the default SMTP and IMAP target in `.env.example`, so a
+  fresh clone can send and receive mail with no external account.
+
+  Mailpit is the more familiar choice here and is deliberately not used: it
+  serves SMTP, a web UI, and POP3, but no IMAP, so it cannot exercise the
+  ingestion path at all.
 
 `worker` and `beat` mount the same source bind mount as `api` and share its
 image, so a code change is picked up without a rebuild.
 
 **New environment variables** (added to `.env.example` with working
-development defaults pointing at Mailpit):
+development defaults pointing at GreenMail):
 
 ```
 CELERY_BROKER_URL=amqp://guest:guest@rabbitmq:5672//
 INBOUND_DOMAIN=inbound.localhost
-IMAP_HOST=mailpit
-IMAP_PORT=1143
+IMAP_HOST=greenmail
+IMAP_PORT=3143
 IMAP_USERNAME=relaydesk
 IMAP_PASSWORD=relaydesk
 IMAP_USE_SSL=false
 IMAP_MAILBOX=INBOX
 IMAP_POLL_SECONDS=60
-SMTP_HOST=mailpit
-SMTP_PORT=1025
+SMTP_HOST=greenmail
+SMTP_PORT=3025
 SMTP_USERNAME=
 SMTP_PASSWORD=
 SMTP_USE_TLS=false
@@ -500,7 +506,7 @@ fixtures per workspace.
 
 ## 17. Build order
 
-1. Config, compose services, dependencies, Mailpit.
+1. Config, compose services, dependencies, GreenMail.
 2. Celery app, the `asyncio.run()` bridge, Beat schedule, a trivial task
    proving the worker reaches the database.
 3. Migration: new tables and the `messages` columns.
