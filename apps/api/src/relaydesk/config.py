@@ -17,6 +17,28 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     web_url: str = "http://localhost:3000"
 
+    celery_broker_url: str = "amqp://guest:guest@rabbitmq:5672//"
+
+    inbound_domain: str = "inbound.localhost"
+
+    imap_host: str = "greenmail"
+    imap_port: int = 3143
+    imap_username: str = "relaydesk"
+    imap_password: str = "relaydesk"
+    imap_use_ssl: bool = False
+    imap_mailbox: str = "INBOX"
+    imap_poll_seconds: int = 60
+
+    smtp_host: str = "greenmail"
+    smtp_port: int = 3025
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_use_tls: bool = False
+    smtp_from_name: str = "Relaydesk"
+
+    attachment_dir: str = "/var/lib/relaydesk/attachments"
+    attachment_max_bytes: int = 26214400
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

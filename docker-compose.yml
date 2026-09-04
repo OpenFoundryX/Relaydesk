@@ -26,10 +26,28 @@ services:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       WEB_URL: ${WEB_URL:-http://localhost:3000}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-amqp://guest:guest@rabbitmq:5672//}
+      INBOUND_DOMAIN: ${INBOUND_DOMAIN:-inbound.localhost}
+      IMAP_HOST: ${IMAP_HOST:-greenmail}
+      IMAP_PORT: ${IMAP_PORT:-3143}
+      IMAP_USERNAME: ${IMAP_USERNAME:-relaydesk}
+      IMAP_PASSWORD: ${IMAP_PASSWORD:-relaydesk}
+      IMAP_USE_SSL: ${IMAP_USE_SSL:-false}
+      IMAP_MAILBOX: ${IMAP_MAILBOX:-INBOX}
+      IMAP_POLL_SECONDS: ${IMAP_POLL_SECONDS:-60}
+      SMTP_HOST: ${SMTP_HOST:-greenmail}
+      SMTP_PORT: ${SMTP_PORT:-3025}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-false}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Relaydesk}
+      ATTACHMENT_DIR: ${ATTACHMENT_DIR:-/var/lib/relaydesk/attachments}
+      ATTACHMENT_MAX_BYTES: ${ATTACHMENT_MAX_BYTES:-26214400}
     ports:
       - "8000:8000"
     volumes:
       - ./apps/api:/app
+      - attachments:/var/lib/relaydesk/attachments
     healthcheck:
       test:
         [
@@ -44,6 +62,97 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  greenmail:
+    image: greenmail/standalone:2.1.0
+    environment:
+      # `setup.test.all` opens SMTP 3025, POP3 3110, IMAP 3143 (plus TLS
+      # variants) against a single store, so mail we send is mail we can then
+      # poll. `auth.disabled` auto-creates any mailbox on first use, which is
+      # what lets a fresh clone work with no account setup.
+      GREENMAIL_OPTS: >-
+        -Dgreenmail.setup.test.all
+        -Dgreenmail.hostname=0.0.0.0
+        -Dgreenmail.auth.disabled
+        -Dgreenmail.verbose
+    ports:
+      - "3025:3025"
+      - "3143:3143"
+
+  worker:
+    build: ./apps/api
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://relaydesk:relaydesk@postgres:5432/relaydesk}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-amqp://guest:guest@rabbitmq:5672//}
+      INBOUND_DOMAIN: ${INBOUND_DOMAIN:-inbound.localhost}
+      IMAP_HOST: ${IMAP_HOST:-greenmail}
+      IMAP_PORT: ${IMAP_PORT:-3143}
+      IMAP_USERNAME: ${IMAP_USERNAME:-relaydesk}
+      IMAP_PASSWORD: ${IMAP_PASSWORD:-relaydesk}
+      IMAP_USE_SSL: ${IMAP_USE_SSL:-false}
+      IMAP_MAILBOX: ${IMAP_MAILBOX:-INBOX}
+      IMAP_POLL_SECONDS: ${IMAP_POLL_SECONDS:-60}
+      SMTP_HOST: ${SMTP_HOST:-greenmail}
+      SMTP_PORT: ${SMTP_PORT:-3025}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-false}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Relaydesk}
+      ATTACHMENT_DIR: ${ATTACHMENT_DIR:-/var/lib/relaydesk/attachments}
+      ATTACHMENT_MAX_BYTES: ${ATTACHMENT_MAX_BYTES:-26214400}
+    depends_on:
+      postgres:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ./apps/api:/app
+      - attachments:/var/lib/relaydesk/attachments
+    command: celery -A relaydesk.worker.app worker --loglevel=info --concurrency=2
+
+  beat:
+    build: ./apps/api
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://relaydesk:relaydesk@postgres:5432/relaydesk}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-amqp://guest:guest@rabbitmq:5672//}
+      INBOUND_DOMAIN: ${INBOUND_DOMAIN:-inbound.localhost}
+      IMAP_HOST: ${IMAP_HOST:-greenmail}
+      IMAP_PORT: ${IMAP_PORT:-3143}
+      IMAP_USERNAME: ${IMAP_USERNAME:-relaydesk}
+      IMAP_PASSWORD: ${IMAP_PASSWORD:-relaydesk}
+      IMAP_USE_SSL: ${IMAP_USE_SSL:-false}
+      IMAP_MAILBOX: ${IMAP_MAILBOX:-INBOX}
+      IMAP_POLL_SECONDS: ${IMAP_POLL_SECONDS:-60}
+      SMTP_HOST: ${SMTP_HOST:-greenmail}
+      SMTP_PORT: ${SMTP_PORT:-3025}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-false}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Relaydesk}
+      ATTACHMENT_DIR: ${ATTACHMENT_DIR:-/var/lib/relaydesk/attachments}
+      ATTACHMENT_MAX_BYTES: ${ATTACHMENT_MAX_BYTES:-26214400}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ./apps/api:/app
+    command: celery -A relaydesk.worker.app beat --loglevel=info
 
   web:
     build: ./apps/web
@@ -67,3 +176,5 @@ volumes:
   postgres_data:
   web_node_modules:
   web_next:
+  rabbitmq-data:
+  attachments:
