@@ -9,6 +9,7 @@ class TeamMemberOut(CamelModel):
     email: str
     role: str
     status: str
+    user_id: str | None
 
 
 class InviteRequest(CamelModel):

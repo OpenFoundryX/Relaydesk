@@ -175,6 +175,8 @@ export interface TeamMember {
   email: string;
   role: "Admin" | "Agent";
   status: "active" | "invited";
+  /** The underlying user id, for assignment. Null for a pending invite — you cannot assign a ticket to someone who has not accepted yet. */
+  userId: string | null;
 }
 
 export interface Plan {

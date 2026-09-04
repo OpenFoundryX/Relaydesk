@@ -22,6 +22,7 @@ class TeamMember:
     email: str
     role: str
     status: str
+    user_id: str | None
 
 
 def monogram_for(name: str) -> str:
@@ -53,6 +54,7 @@ async def list_members(
             email=user.email,
             role=ROLE_LABEL[membership.role],
             status=membership.status.value,
+            user_id=str(user.id),
         )
         for membership, user in rows
     ]
@@ -69,6 +71,7 @@ async def list_members(
             email=invite.email,
             role=ROLE_LABEL[invite.role],
             status="invited",
+            user_id=None,
         )
         for invite in pending
     )

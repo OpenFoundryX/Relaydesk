@@ -1,5 +1,9 @@
+import uuid
 from datetime import UTC, datetime
+from typing import Annotated
 from zoneinfo import ZoneInfo
+
+from pydantic import Field
 
 from relaydesk.models import ActivityEvent, Conversation, Message
 from relaydesk.schemas.base import CamelModel
@@ -99,11 +103,12 @@ class LabelCreateRequest(CamelModel):
 class ConversationPatch(CamelModel):
     status: str | None = None
     priority: str | None = None
-    assignee_id: str | None = None
+    assignee_id: uuid.UUID | None = None
 
 
 class BulkStatusRequest(CamelModel):
-    ids: list[str]
+    # Capped to match the list route's `limit` bound (Query(ge=1, le=200)).
+    ids: Annotated[list[uuid.UUID], Field(max_length=200)]
     status: str
 
 

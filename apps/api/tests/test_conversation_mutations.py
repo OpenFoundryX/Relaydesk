@@ -130,11 +130,33 @@ async def test_labels_attach_and_detach_idempotently(
     ).json()
     assert detail["labelIds"] == [str(label.id)]
 
+    activity = (
+        await client.get(
+            f"/api/conversations/{conversation.id}/activity", headers=headers
+        )
+    ).json()
+    assert [event["kind"] for event in activity].count("label") == 1
+
     assert (await client.delete(path, headers=headers)).status_code == 200
     detail = (
         await client.get(f"/api/conversations/{conversation.id}", headers=headers)
     ).json()
     assert detail["labelIds"] == []
+
+
+async def test_attaching_a_foreign_label_is_a_404(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    _, _, conversation, headers = await setup(client, db_session)
+    other = await make_workspace(db_session, slug="northwind")
+    foreign_label = await make_label(db_session, other)
+
+    response = await client.put(
+        f"/api/conversations/{conversation.id}/labels/{foreign_label.id}",
+        headers=headers,
+    )
+
+    assert response.status_code == 404
 
 
 async def test_reply_appends_a_message_and_clears_the_draft(
@@ -201,6 +223,28 @@ async def test_bulk_status_change(
     assert by_status["trash"] == 2
 
 
+async def test_bulk_status_with_a_foreign_id_touches_nothing(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A bad id anywhere in the list 404s, and nothing already committed."""
+    _, _, first, headers = await setup(client, db_session)
+    other = await make_workspace(db_session, slug="northwind")
+    await make_member(db_session, other, email="them@northwind.io", name="Them Other")
+    foreign = await make_conversation(db_session, other)
+
+    response = await client.post(
+        "/api/conversations/bulk-status",
+        headers=headers,
+        json={"ids": [str(first.id), str(foreign.id)], "status": "trash"},
+    )
+
+    assert response.status_code == 404
+    detail = (
+        await client.get(f"/api/conversations/{first.id}", headers=headers)
+    ).json()
+    assert detail["status"] == "open"
+
+
 async def test_mutating_a_foreign_conversation_is_a_404(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -214,3 +258,86 @@ async def test_mutating_a_foreign_conversation_is_a_404(
     )
 
     assert response.status_code == 404
+
+
+async def test_assigning_a_user_from_another_workspace_is_a_404(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    _, _, conversation, headers = await setup(client, db_session)
+    other = await make_workspace(db_session, slug="northwind")
+    foreign_user = await make_member(
+        db_session, other, email="them@northwind.io", name="Them Other"
+    )
+
+    response = await client.patch(
+        f"/api/conversations/{conversation.id}",
+        headers=headers,
+        json={"assigneeId": str(foreign_user.id)},
+    )
+
+    assert response.status_code == 404
+
+
+async def test_unknown_status_and_priority_are_422(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    _, _, conversation, headers = await setup(client, db_session)
+
+    bad_status = await client.patch(
+        f"/api/conversations/{conversation.id}",
+        headers=headers,
+        json={"status": "urgent-ish"},
+    )
+    assert bad_status.status_code == 422
+
+    bad_priority = await client.patch(
+        f"/api/conversations/{conversation.id}",
+        headers=headers,
+        json={"priority": "critical"},
+    )
+    assert bad_priority.status_code == 422
+
+
+async def test_no_op_priority_and_assignee_changes_record_nothing(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    _, _, conversation, headers = await setup(client, db_session)
+
+    # The factory already creates the conversation at urgent priority and
+    # unassigned, so re-applying both is a genuine no-op.
+    await client.patch(
+        f"/api/conversations/{conversation.id}",
+        headers=headers,
+        json={"priority": "urgent"},
+    )
+    await client.patch(
+        f"/api/conversations/{conversation.id}",
+        headers=headers,
+        json={"assigneeId": None},
+    )
+
+    activity = (
+        await client.get(
+            f"/api/conversations/{conversation.id}/activity", headers=headers
+        )
+    ).json()
+    assert activity == []
+
+
+async def test_omitting_assignee_id_leaves_it_untouched(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    _, user, conversation, headers = await setup(client, db_session)
+    await client.patch(
+        f"/api/conversations/{conversation.id}",
+        headers=headers,
+        json={"assigneeId": str(user.id)},
+    )
+
+    response = await client.patch(
+        f"/api/conversations/{conversation.id}",
+        headers=headers,
+        json={"status": "resolved"},
+    )
+
+    assert response.json()["assigneeId"] == str(user.id)

@@ -99,10 +99,9 @@ async def bulk_status_route(
     payload: BulkStatusRequest, scope: Scope, session: DbSession
 ) -> None:
     new_status = _parsed_status(payload.status)
-    for raw_id in payload.ids:
-        await conversations.set_status(
-            session, scope.workspace_id, uuid.UUID(raw_id), new_status, scope.user
-        )
+    await conversations.bulk_set_status(
+        session, scope.workspace_id, payload.ids, new_status, scope.user
+    )
 
 
 @router.get("/{conversation_id}", response_model=ConversationOut)
@@ -122,27 +121,30 @@ async def patch_conversation(
     scope: Scope,
     session: DbSession,
 ) -> ConversationOut:
+    # Parse every field up front so a bad value in one (e.g. an unknown
+    # priority) 422s before an earlier field (e.g. status) has been
+    # committed.
+    new_status = _parsed_status(payload.status) if payload.status is not None else None
+    new_priority = (
+        _parsed_priority(payload.priority) if payload.priority is not None else None
+    )
+
     conversation = None
-    if payload.status is not None:
+    if new_status is not None:
         conversation = await conversations.set_status(
-            session,
-            scope.workspace_id,
-            conversation_id,
-            _parsed_status(payload.status),
-            scope.user,
+            session, scope.workspace_id, conversation_id, new_status, scope.user
         )
-    if payload.priority is not None:
+    if new_priority is not None:
         conversation = await conversations.set_priority(
-            session,
-            scope.workspace_id,
-            conversation_id,
-            _parsed_priority(payload.priority),
-            scope.user,
+            session, scope.workspace_id, conversation_id, new_priority, scope.user
         )
     if "assignee_id" in payload.model_fields_set:
-        assignee_id = uuid.UUID(payload.assignee_id) if payload.assignee_id else None
         conversation = await conversations.set_assignee(
-            session, scope.workspace_id, conversation_id, assignee_id, scope.user
+            session,
+            scope.workspace_id,
+            conversation_id,
+            payload.assignee_id,
+            scope.user,
         )
     if conversation is None:
         conversation = await conversations.get_conversation(

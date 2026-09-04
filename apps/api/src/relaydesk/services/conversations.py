@@ -14,6 +14,8 @@ from relaydesk.models import (
     ConversationStatus,
     Draft,
     Label,
+    Membership,
+    MembershipStatus,
     Message,
     MessageRole,
     Priority,
@@ -225,16 +227,21 @@ def record(
     )
 
 
-async def set_status(
+def _apply_status(
     session: AsyncSession,
-    workspace_id: uuid.UUID,
-    conversation_id: uuid.UUID,
+    conversation: Conversation,
     status: ConversationStatus,
     actor: User,
-) -> Conversation:
-    conversation = await get_conversation(session, workspace_id, conversation_id)
+) -> None:
+    """Mutate and record a status change without committing.
+
+    Shared by ``set_status`` (one conversation, one commit) and
+    ``bulk_set_status`` (many conversations, one commit) so a bulk update is
+    all-or-nothing instead of leaving earlier ids committed when a later one
+    fails.
+    """
     if conversation.status is status:
-        return conversation
+        return
     conversation.status = status
     conversation.unread = False
     record(
@@ -246,8 +253,42 @@ async def set_status(
         STATUS_LABEL[status],
         status.value,
     )
+
+
+async def set_status(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    status: ConversationStatus,
+    actor: User,
+) -> Conversation:
+    conversation = await get_conversation(session, workspace_id, conversation_id)
+    _apply_status(session, conversation, status, actor)
     await session.commit()
     return conversation
+
+
+async def bulk_set_status(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    conversation_ids: list[uuid.UUID],
+    status: ConversationStatus,
+    actor: User,
+) -> None:
+    """Update every id in one transaction.
+
+    Every id is resolved (404 on the first missing/foreign one) before any
+    row is touched, and everything commits together: a bad id at position
+    *n* must not leave ``0..n-1`` already committed while the caller sees a
+    404.
+    """
+    target_conversations = [
+        await get_conversation(session, workspace_id, conversation_id)
+        for conversation_id in conversation_ids
+    ]
+    for conversation in target_conversations:
+        _apply_status(session, conversation, status, actor)
+    await session.commit()
 
 
 async def set_priority(
@@ -288,7 +329,15 @@ async def set_assignee(
     if assignee_id is None:
         verb, value = "unassigned this from", previous or "everyone"
     else:
-        assignee = await session.get(User, assignee_id)
+        assignee = await session.scalar(
+            sa.select(User)
+            .join(Membership, Membership.user_id == User.id)
+            .where(
+                User.id == assignee_id,
+                Membership.workspace_id == workspace_id,
+                Membership.status == MembershipStatus.active,
+            )
+        )
         if assignee is None:
             raise NotFound("That team member does not exist.")
         verb, value = "assigned this to", assignee.name

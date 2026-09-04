@@ -164,6 +164,10 @@ export function AssigneePicker({
   className?: string;
 }) {
   const [, start] = useTransition();
+  // A pending invite has no user id yet, so it cannot be assigned to.
+  const assignable = team.filter(
+    (member): member is TeamMember & { userId: string } => member.userId !== null,
+  );
   return (
     <CommandPopover
       placeholder="Search team members..."
@@ -176,13 +180,13 @@ export function AssigneePicker({
           shortcut: "1",
           selected: assigneeId === null,
         },
-        ...team.map((member, index) => ({
-          id: member.id,
+        ...assignable.map((member, index) => ({
+          id: member.userId,
           label: member.name,
           hint: member.email,
           icon: <Monogram name={member.name} className="size-4 text-[8px]" />,
           shortcut: String(index + 2),
-          selected: member.id === assigneeId,
+          selected: member.userId === assigneeId,
         })),
       ]}
       onSelect={(id) =>
