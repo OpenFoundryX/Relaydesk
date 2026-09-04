@@ -268,6 +268,21 @@ matched against `channel_accounts.ingest_token`. Replies are unaffected by
 this fragility: a customer replies directly to the tokenized address, so the
 `To:` header is correct on every message after the first.
 
+**The deployment mailbox must be a catch-all for `INBOUND_DOMAIN`.** This is
+a deployment requirement, not an implementation detail, and it is what makes
+the whole model work: every workspace's ingest address is a distinct local
+part on one domain, and all of them must be delivered into the single mailbox
+the poller reads. A mail server that files each literal recipient into its own
+mailbox — which is what GreenMail does by default — silently drops every
+ticket, because the poller only ever logs into one of them. There is no error;
+mail simply never becomes a ticket.
+
+For local development this is simulated rather than configured: mail is
+delivered to the polled mailbox directly and carries a `Delivered-To` header
+naming the workspace's real ingest address, which is exactly the shape a
+forwarder produces. Routing reads that header first (section 7.2), so the dev
+path exercises the same code as production.
+
 If no rule resolves, the raw message is marked `state = 'unrouted'` and
 kept. It is never dropped and never guessed at. Unrouted messages are
 visible to a deployment administrator through the CLI
