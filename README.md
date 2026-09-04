@@ -8,9 +8,12 @@ in its initial development stage.
 
 ## Project status
 
-Relaydesk is under active early development. The current repository provides a
-minimal Next.js, FastAPI, and PostgreSQL foundation; product functionality has
-not been implemented yet.
+Relaydesk is under active early development. Workspaces, sign-in (including
+Google), team management with invites, and the ticket inbox — conversations,
+replies, labels, saved views, and activity history — are implemented on a
+multi-tenant Next.js, FastAPI, and PostgreSQL foundation. Channels beyond the
+seeded demo data, AI features, the knowledge base, analytics, and billing are
+not yet implemented.
 
 ## Requirements
 
@@ -43,13 +46,35 @@ an authorized redirect URI in the Google Cloud console. There is no
 self-serve signup through Google — an email must already have an active
 membership to sign in.
 
+## Demo data
+
+```sh
+make seed
+```
+
+Seeds a demo workspace with two users, four labels, and eleven tickets across
+every status. Sign in as `nilesh@relaydesk.dev` with the password `relaydesk`.
+
+## Self-hosting your own workspace
+
+```sh
+docker compose exec api relaydesk bootstrap \
+  --workspace "Acme Support" \
+  --email you@acme.com \
+  --name "Your Name" \
+  --password "a-strong-password"
+```
+
 ## Development commands
 
 ```sh
-make dev   # Build and start the development stack
-make down  # Stop the stack
-make logs  # Follow service logs
-make clean # Stop the stack and remove its development volumes
+make dev               # Build and start the development stack
+make down              # Stop the stack
+make logs              # Follow service logs
+make clean             # Stop the stack and remove its development volumes
+make seed              # Fill the database with demo data
+make migrate           # Run pending Alembic migrations
+make revision m="..."  # Autogenerate a new Alembic migration
 ```
 
 API source and web source are bind-mounted into their development containers, so

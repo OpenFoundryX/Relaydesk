@@ -1,4 +1,4 @@
-.PHONY: dev down logs clean
+.PHONY: dev down logs clean seed migrate revision
 
 dev:
 	docker compose up --build
@@ -11,3 +11,12 @@ logs:
 
 clean:
 	docker compose down --volumes --remove-orphans
+
+seed:
+	docker compose exec api relaydesk seed
+
+migrate:
+	docker compose exec api alembic upgrade head
+
+revision:
+	docker compose exec api alembic revision --autogenerate -m "$(m)"
