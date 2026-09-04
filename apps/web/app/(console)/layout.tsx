@@ -8,6 +8,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { getDraftCount, getStatusCounts } from "@/lib/api/conversations";
 import { getLabels } from "@/lib/api/labels";
 import { getSetupTasks } from "@/lib/api/team";
+import { getViews } from "@/lib/api/views";
 import { getCurrentUser, getWorkspace } from "@/lib/api/workspace";
 
 export default async function ConsoleLayout({
@@ -15,15 +16,23 @@ export default async function ConsoleLayout({
 }: {
   children: ReactNode;
 }) {
-  const [statusCounts, draftCount, labels, workspace, currentUser, setupTasks] =
-    await Promise.all([
-      getStatusCounts(),
-      getDraftCount(),
-      getLabels(),
-      getWorkspace(),
-      getCurrentUser(),
-      getSetupTasks(),
-    ]);
+  const [
+    statusCounts,
+    draftCount,
+    labels,
+    workspace,
+    currentUser,
+    setupTasks,
+    savedViews,
+  ] = await Promise.all([
+    getStatusCounts(),
+    getDraftCount(),
+    getLabels(),
+    getWorkspace(),
+    getCurrentUser(),
+    getSetupTasks(),
+    getViews(),
+  ]);
 
   return (
     <TooltipProvider delayDuration={250}>
@@ -46,6 +55,7 @@ export default async function ConsoleLayout({
                 draftCount={draftCount}
                 setupTasks={setupTasks}
                 labels={labels}
+                savedViews={savedViews}
               />
             </Suspense>
             <main className="min-w-0 flex-1 overflow-y-auto">{children}</main>

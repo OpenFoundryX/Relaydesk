@@ -19,6 +19,7 @@ from relaydesk.models import (
     Message,
     MessageRole,
     Priority,
+    SavedView,
     User,
 )
 
@@ -45,6 +46,8 @@ async def list_conversations(
     assignee_id: uuid.UUID | None = None,
     has_draft: bool | None = None,
     include_trash: bool = False,
+    view: SavedView | None = None,
+    viewer: User | None = None,
     limit: int = DEFAULT_LIMIT,
     cursor: str | None = None,
 ) -> tuple[list[Conversation], str | None]:
@@ -56,13 +59,24 @@ async def list_conversations(
     ``include_trash`` has no caller yet: every route today either passes an
     explicit ``status`` or relies on the default (trash excluded). It is
     plumbed through for a future "trash" view, not evidence one exists.
+
+    ``view``/``viewer`` apply a stored saved-view filter on top of the
+    explicit parameters above. The trash exclusion below is skipped when a
+    view is present so ``apply_view`` is the sole place that decides it
+    (its own else-branch excludes trash when the view has no status
+    filter) — otherwise both would add the same predicate.
     """
     query = sa.select(Conversation).where(Conversation.workspace_id == workspace_id)
 
     if status is not None:
         query = query.where(Conversation.status == status)
-    elif not include_trash:
+    elif not include_trash and view is None:
         query = query.where(Conversation.status != ConversationStatus.trash)
+
+    if view is not None and viewer is not None:
+        from relaydesk.services.views import apply_view
+
+        query = apply_view(query, view, viewer)
 
     if label_id is not None:
         query = query.join(

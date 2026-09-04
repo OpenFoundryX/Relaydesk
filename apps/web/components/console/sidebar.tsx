@@ -27,9 +27,6 @@ import { cn } from "@/lib/utils";
 
 import { SetupProgress } from "./setup-progress";
 
-/** Task 10 turns this into a prop fed by the real saved-views endpoint. */
-const savedViews: SavedView[] = [];
-
 interface NavItem {
   label: string;
   href: string;
@@ -49,6 +46,7 @@ interface SidebarProps {
   draftCount: number;
   setupTasks: SetupTask[];
   labels: Label[];
+  savedViews: SavedView[];
 }
 
 const settingsItems: NavItem[] = [
@@ -72,7 +70,13 @@ const portalItems: NavItem[] = [
   { label: "Knowledge base", href: "/user-portal/knowledge-base", icon: CircleDot },
 ];
 
-export function Sidebar({ statusCounts, draftCount, setupTasks, labels }: SidebarProps) {
+export function Sidebar({
+  statusCounts,
+  draftCount,
+  setupTasks,
+  labels,
+  savedViews,
+}: SidebarProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const activeStatus = searchParams.get("status") ?? "open";
