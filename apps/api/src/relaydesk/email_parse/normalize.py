@@ -26,6 +26,11 @@ _BREAK = re.compile(r"(?i)<br\s*/?>|</p>|</div>|</tr>")
 _WHITESPACE = re.compile(r"[ \t]+")
 _BLANK_LINES = re.compile(r"\n{3,}")
 _MESSAGE_ID = re.compile(r"<[^<>@\s]+@[^<>@\s]+>")
+# CR/LF (and other C0/DEL control characters) can reach a decoded filename
+# through an RFC 2047 encoded-word. Every consumer of Attachment.filename --
+# today just a Content-Disposition header -- inherits this once here rather
+# than each one growing its own ad hoc sanitizer.
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
 
 @dataclass(frozen=True)
@@ -73,8 +78,11 @@ def _addresses(message: Message, name: str) -> tuple[str, ...]:
 
 def _safe_filename(raw: str | None) -> str:
     """The sender chose this. Storage is content-addressed, so this string is
-    for display only — but it must not carry a path either way."""
+    for display only — but it must not carry a path, or a control character
+    that could smuggle a header injection into wherever it is later
+    rendered, either way."""
     name = _decode(raw) or "attachment"
+    name = _CONTROL_CHARS.sub("", name)
     name = name.replace("\\", "/").split("/")[-1]
     name = name.replace("..", "").strip() or "attachment"
     return name[:255]

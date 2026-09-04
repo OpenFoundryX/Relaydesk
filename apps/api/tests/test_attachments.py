@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from relaydesk.config import get_settings
 from relaydesk.email_parse.normalize import ParsedAttachment
 from relaydesk.errors import NotFound
+from relaydesk.models.attachment import Attachment
 from relaydesk.models.message import MessageDirection, MessageRole
 from relaydesk.services import attachments, conversations
 from tests.factories import make_conversation, make_member, make_workspace, sign_in
@@ -114,6 +115,64 @@ async def test_another_workspace_gets_a_404(db_session: AsyncSession) -> None:
 
     with pytest.raises(NotFound):
         await attachments.read(db_session, theirs.id, stored[0].id)
+
+
+async def test_a_malformed_storage_key_cannot_escape_the_workspace_directory(
+    db_session: AsyncSession,
+) -> None:
+    """The read path is rebuilt from workspace_id and sha256, never from
+    storage_key, so a corrupted or hostile storage_key -- a bad migration, a
+    manual edit, a second writer -- cannot walk a read outside the
+    workspace's directory just because the row still matches on
+    workspace_id. Under the old code (path = _root() / row.storage_key)
+    this would resolve to the real /etc/passwd and return its contents --
+    the workspace directory must already exist for that traversal to
+    resolve at all, which is why a legitimate attachment is stored first."""
+    workspace = await make_workspace(db_session)
+    message = await _message(db_session, workspace)
+    await attachments.store(db_session, message, [_parsed()])
+    row = Attachment(
+        workspace_id=workspace.id,
+        message_id=message.id,
+        filename="passwd",
+        content_type="text/plain",
+        size_bytes=0,
+        sha256="deadbeef",
+        storage_key="../../../../../../../../etc/passwd",
+        inline=False,
+        content_id=None,
+    )
+    db_session.add(row)
+    await db_session.flush()
+
+    with pytest.raises(NotFound):
+        await attachments.read(db_session, workspace.id, row.id)
+
+
+async def test_identical_bytes_in_different_workspaces_stay_separate(
+    db_session: AsyncSession, attachment_dir: Path
+) -> None:
+    workspace_a = await make_workspace(db_session, slug="acme")
+    workspace_b = await make_workspace(db_session, slug="other")
+    message_a = await _message(db_session, workspace_a)
+    message_b = await _message(db_session, workspace_b)
+
+    stored_a = await attachments.store(db_session, message_a, [_parsed()])
+    stored_b = await attachments.store(db_session, message_b, [_parsed()])
+
+    digest = hashlib.sha256(b"%PDF fake").hexdigest()
+    assert (attachment_dir / str(workspace_a.id) / digest).is_file()
+    assert (attachment_dir / str(workspace_b.id) / digest).is_file()
+
+    _, content_a = await attachments.read(db_session, workspace_a.id, stored_a[0].id)
+    _, content_b = await attachments.read(db_session, workspace_b.id, stored_b[0].id)
+    assert content_a == b"%PDF fake"
+    assert content_b == b"%PDF fake"
+
+    # Each workspace can only read its own row -- not the other's, even
+    # though the bytes are identical.
+    with pytest.raises(NotFound):
+        await attachments.read(db_session, workspace_a.id, stored_b[0].id)
 
 
 async def test_the_download_route_forces_a_download(db_session, client) -> None:

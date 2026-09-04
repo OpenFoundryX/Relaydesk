@@ -207,6 +207,45 @@ def test_attachment_filenames_never_carry_a_path(
     assert filename == expected
 
 
+def test_an_encoded_word_filename_cannot_smuggle_a_control_character() -> None:
+    """An RFC 2047 encoded-word decodes in memory, so a filename parameter
+    that is on-the-wire harmless (no raw header can carry a literal CR/LF)
+    can still decode to a string containing one. `policy.default` decodes
+    it during parsing (`get_filename()` already returns the raw CR/LF here,
+    confirmed against Python's own email package), so `_safe_filename` must
+    strip it -- otherwise it survives into a Content-Disposition response
+    header. This is why the raw bytes are hand-built rather than produced
+    via `EmailMessage.add_attachment`: constructing the message through the
+    normal API triggers Python's own header-injection guard at
+    serialization time, which is reassuring for outbound mail but means it
+    cannot be used to build this *inbound*, already-on-the-wire case."""
+    raw = (
+        b"From: ada@example.com\r\n"
+        b"To: support@acme.com\r\n"
+        b"Subject: hi\r\n"
+        b'Content-Type: multipart/mixed; boundary="BOUNDARY"\r\n'
+        b"\r\n"
+        b"--BOUNDARY\r\n"
+        b"Content-Type: text/plain\r\n"
+        b"\r\n"
+        b"hi\r\n"
+        b"--BOUNDARY\r\n"
+        b"Content-Type: text/plain\r\n"
+        # =?utf-8?B?...?= of "a\r\nX-Injected: 1"
+        b"Content-Disposition: attachment; "
+        b'filename="=?utf-8?B?YQ0KWC1JbmplY3RlZDogMQ==?="\r\n'
+        b"\r\n"
+        b"x\r\n"
+        b"--BOUNDARY--\r\n"
+    )
+
+    filename = normalize.parse(raw).attachments[0].filename
+
+    assert "\r" not in filename
+    assert "\n" not in filename
+    assert filename == "aX-Injected: 1"
+
+
 class _ExplodingPart(EmailMessage):
     """A MIME part that raises the moment it is inspected. Simulates a
     hostile or corrupted part that survives message.walk() but blows up on

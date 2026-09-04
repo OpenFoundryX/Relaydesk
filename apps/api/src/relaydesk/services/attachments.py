@@ -92,7 +92,15 @@ async def read(
     if row is None:
         raise NotFound("That attachment does not exist.")
 
-    path = _root() / row.storage_key
-    if not path.is_file():
+    # Rebuilt from the validated workspace_id argument and the row's own
+    # hash -- never from storage_key -- so a malformed storage_key (a bad
+    # migration, a manual edit, a second writer) can't be trusted to stay
+    # inside the workspace's directory just because it matched on the
+    # workspace_id column. The descendant check is the same
+    # structurally-impossible standard the write side already gets, carried
+    # through to reads.
+    base = (_root() / str(workspace_id)).resolve()
+    path = (base / row.sha256).resolve()
+    if not path.is_relative_to(base) or not path.is_file():
         raise NotFound("That attachment does not exist.")
     return row, path.read_bytes()
