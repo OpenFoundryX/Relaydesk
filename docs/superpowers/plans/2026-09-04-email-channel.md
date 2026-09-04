@@ -1476,7 +1476,7 @@ def test_every_task_module_is_registered() -> None:
 
     assert on_disk == imported, f"not imported in tasks/__init__.py: {on_disk - imported}"
     assert "relaydesk.send_system_email" in app.tasks
-
+```
 
 - [ ] **Step 9: Run the notification tests**
 
