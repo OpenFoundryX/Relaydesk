@@ -27,15 +27,51 @@ export type DocRendererProps = {
 // member could paste anything. Only http, https, and mailto survive.
 const SAFE_PROTOCOLS = ["http:", "https:", "mailto:"];
 
+// A neutral base to resolve every href against, purely so relative hrefs
+// parse instead of throwing. The host is never meant to be reachable and
+// its origin string is compared against below to tell "this href specified
+// its own host" apart from "this href is same-page relative."
+const DUMMY_ORIGIN = "https://x.invalid";
+
+// Validating a href and rendering it must use the same value, or the
+// renderer's safety depends on two URL parsers (this one, and whatever
+// resolves the anchor at click time) agreeing on every edge case -- NUL
+// bytes, backslash-as-slash, protocol-relative "//host" links, unicode
+// confusables. So every return here is built only from fields the WHATWG
+// `URL` parser itself produced, never from the original input string.
 function safeHref(href: unknown): string | undefined {
   if (typeof href !== "string") return undefined;
+
+  let url: URL;
   try {
-    return SAFE_PROTOCOLS.includes(new URL(href, "https://x.invalid").protocol)
-      ? href
-      : undefined;
+    url = new URL(href, DUMMY_ORIGIN);
   } catch {
     return undefined;
   }
+
+  if (!SAFE_PROTOCOLS.includes(url.protocol)) return undefined;
+
+  if (url.origin !== DUMMY_ORIGIN) {
+    // The href resolved to a different host than our dummy base -- it
+    // specified its own, whether as an ordinary absolute link
+    // ("https://example.com/x"), a protocol-relative one ("//example.com"),
+    // or a backslash-disguised one -- the parser resolves all three the
+    // same way. Render exactly what was validated: the fully resolved URL.
+    return url.href;
+  }
+
+  // Same origin as the dummy base means the href never specified a host of
+  // its own: a same-page path, query, and/or fragment, which is common and
+  // legitimate for in-hub links ("/category/article", "#section"). Render
+  // only as much as the href actually asked for, built from the parsed
+  // pieces -- a fragment-only href must stay a fragment rather than
+  // becoming "/#section", and a bare path-relative href (no leading
+  // "/", "?", or "#") is dropped rather than guessed at, because this
+  // renderer has no page of its own to resolve it against.
+  if (href.startsWith("/")) return url.pathname + url.search + url.hash;
+  if (href.startsWith("?")) return url.search + url.hash;
+  if (href.startsWith("#")) return url.hash;
+  return undefined;
 }
 
 function asAttrs(attrs: unknown): Record<string, unknown> {
@@ -139,6 +175,13 @@ const NODE_TABLE: Record<
     // this component is reused by the console preview and the public help
     // site, each resolving image ids through a different `imageSrc`, so the
     // source is never known until render.
+    //
+    // Trust boundary: `imageSrc` is caller-supplied and its return value
+    // goes straight into `src`, unvalidated by this file. That's deliberate
+    // -- an `img src` cannot execute script in a modern browser the way an
+    // `href` or injected markup can -- so each `imageSrc` implementation
+    // (console preview, public help site) owns its own image-id resolution
+    // rather than this renderer second-guessing it.
     // eslint-disable-next-line @next/next/no-img-element
     return <img src={imageSrc(id)} alt={asString(attrs.alt) ?? ""} />;
   },

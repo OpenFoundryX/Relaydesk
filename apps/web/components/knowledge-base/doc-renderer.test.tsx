@@ -33,6 +33,37 @@ describe("DocRenderer", () => {
     expect(screen.getByRole("listitem").textContent).toBe("Alpha");
   });
 
+  it("renders a list nested inside another list's item", () => {
+    render(
+      <DocRenderer
+        doc={doc({
+          type: "bulletList",
+          content: [
+            {
+              type: "listItem",
+              content: [
+                para("Parent"),
+                {
+                  type: "bulletList",
+                  content: [{ type: "listItem", content: [para("Child")] }],
+                },
+              ],
+            },
+          ],
+        })}
+        imageSrc={src}
+      />,
+    );
+
+    const items = screen.getAllByRole("listitem");
+    expect(items).toHaveLength(2);
+
+    const child = screen.getByText("Child");
+    // The nested <ul><li> must actually be inside the parent <li>, not a
+    // sibling produced by a flattened render.
+    expect(items[0].contains(child)).toBe(true);
+  });
+
   it("renders an unknown node as nothing, without dropping its siblings", () => {
     render(
       <DocRenderer
@@ -140,6 +171,44 @@ describe("DocRenderer", () => {
     const link = screen.getByRole("link");
     expect(link.getAttribute("href")).toBe("https://example.com/docs");
     expect(link.getAttribute("rel")).toBe("noopener noreferrer");
+  });
+
+  it.each([
+    ["a same-hub path", "/docs/refunds", "/docs/refunds"],
+    ["an in-page fragment", "#section", "#section"],
+  ])("keeps a relative %s link working rather than absolutizing it", (_label, href, expected) => {
+    render(
+      <DocRenderer
+        doc={doc({
+          type: "paragraph",
+          content: [{ type: "text", text: "click me", marks: [{ type: "link", attrs: { href } }] }],
+        })}
+        imageSrc={src}
+      />,
+    );
+
+    expect(screen.getByRole("link").getAttribute("href")).toBe(expected);
+  });
+
+  it.each([
+    ["protocol-relative to another host", "//evil.example/x"],
+    ["backslash-disguised host", "/\\evil.example/x"],
+  ])("resolves a %s href fully rather than rendering it as same-hub", (_label, href) => {
+    render(
+      <DocRenderer
+        doc={doc({
+          type: "paragraph",
+          content: [{ type: "text", text: "click me", marks: [{ type: "link", attrs: { href } }] }],
+        })}
+        imageSrc={src}
+      />,
+    );
+
+    const rendered = screen.getByRole("link").getAttribute("href") ?? "";
+    // Whatever comes out must be the fully resolved external URL (still
+    // http/https, still validated), never the raw "//" or "\" input treated
+    // as if it were a same-hub path.
+    expect(rendered).toMatch(/^https:\/\/evil\.example\//);
   });
 
   it.each([
