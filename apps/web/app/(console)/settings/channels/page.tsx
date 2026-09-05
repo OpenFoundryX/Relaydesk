@@ -9,16 +9,19 @@ import { EmailChannelActions } from "@/components/settings/email-channel-actions
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getEmailChannels } from "@/lib/api/channels";
+import { getMe } from "@/lib/api/workspace";
 import { getDiscordAccounts, getImportSources } from "@/lib/mock/settings";
 
 export const metadata = { title: "Channels" };
 
 export default async function ChannelsPage() {
-  const [emailChannels, discordAccounts, importSources] = await Promise.all([
+  const [emailChannels, discordAccounts, importSources, me] = await Promise.all([
     getEmailChannels(),
     getDiscordAccounts(),
     getImportSources(),
+    getMe(),
   ]);
+  const isAdmin = me.membership.role === "admin";
 
   return (
     <>
@@ -31,7 +34,7 @@ export default async function ChannelsPage() {
         <SettingSection
           title="Email"
           description="Mail sent to a connected address turns into a ticket automatically."
-          action={<AddChannelDialog />}
+          action={isAdmin ? <AddChannelDialog /> : undefined}
         >
           {emailChannels.length > 0 ? (
             <div className="space-y-3">
@@ -50,7 +53,7 @@ export default async function ChannelsPage() {
                         {channel.displayName}
                       </p>
                     </div>
-                    <EmailChannelActions channel={channel} />
+                    <EmailChannelActions channel={channel} canRemove={isAdmin} />
                   </li>
                 ))}
               </ul>
