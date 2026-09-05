@@ -14,6 +14,8 @@ SLUG_MAX_LENGTH = 200
 SLUG_FALLBACK = "untitled"
 
 _WHITESPACE = re.compile(r"\s+")
+_JOIN_CHARS = re.compile(r"['\"‘’“”]")
+_NON_SLUG = re.compile(r"[^a-z0-9-]+")
 
 
 def extract_text(doc: object) -> str:
@@ -42,10 +44,10 @@ def slugify(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value)
     ascii_only = normalized.encode("ascii", "ignore").decode("ascii")
     lowercase = ascii_only.lower()
-    # Remove all non-alphanumeric except spaces
-    no_punct = re.sub(r"[^a-z0-9\s]", "", lowercase)
-    # Replace spaces with hyphens and collapse multiple hyphens
-    slug = re.sub(r"\s+", "-", no_punct).strip("-")
+    # Remove characters that should join adjacent letters
+    no_join = _JOIN_CHARS.sub("", lowercase)
+    # Replace runs of non-alphanumeric characters (except hyphens) with single hyphen
+    slug = _NON_SLUG.sub("-", no_join).strip("-")
     return (slug or SLUG_FALLBACK)[:SLUG_MAX_LENGTH].strip("-") or SLUG_FALLBACK
 
 

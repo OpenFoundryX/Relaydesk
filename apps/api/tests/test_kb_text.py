@@ -74,6 +74,16 @@ def test_slugify_bounds_its_output() -> None:
     assert len(slugify("word " * 100)) <= 200
 
 
+def test_slugify_preserves_literal_hyphens() -> None:
+    """Literal hyphens in titles are preserved as word separators."""
+    assert slugify("Step-by-step guide") == "step-by-step-guide"
+
+
+def test_slugify_handles_accented_characters() -> None:
+    """Accented characters are normalized to ASCII equivalents via NFKD."""
+    assert slugify("Café basics") == "cafe-basics"
+
+
 def test_derive_excerpt_truncates_on_a_word_boundary() -> None:
     text = "Refunds are issued within thirty days of the original charge date."
 
