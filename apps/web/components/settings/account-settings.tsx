@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { LogOut } from "lucide-react";
 
+import { setNotifyOnAssignmentAction } from "@/app/(console)/settings/account/actions";
 import { SettingSection } from "@/components/console/setting-section";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,9 +23,7 @@ interface AccountSettingsProps {
     email: string;
     monogram: string;
     timeZone: string;
-    /** Not yet returned by the API; defaults to off until notifications ship. */
-    emailNotifications?: boolean;
-    slackNotifications?: boolean;
+    notifyOnAssignment: boolean;
   };
   timeZones: string[];
 }
@@ -32,12 +31,17 @@ interface AccountSettingsProps {
 export function AccountSettings({ user, timeZones }: AccountSettingsProps) {
   const [name, setName] = useState(user.name);
   const [timeZone, setTimeZone] = useState(user.timeZone);
-  const [emailNotifications, setEmailNotifications] = useState(
-    user.emailNotifications ?? false,
-  );
-  const [slackNotifications, setSlackNotifications] = useState(
-    user.slackNotifications ?? false,
-  );
+  const [notifyOnAssignment, setNotifyOnAssignment] = useState(user.notifyOnAssignment);
+  // Not yet returned by the API; defaults to off until Slack ships.
+  const [slackNotifications, setSlackNotifications] = useState(false);
+  const [, startTransition] = useTransition();
+
+  function handleNotifyChange(next: boolean) {
+    setNotifyOnAssignment(next);
+    startTransition(async () => {
+      await setNotifyOnAssignmentAction(next);
+    });
+  }
 
   const nameChanged = name !== user.name;
 
@@ -96,17 +100,17 @@ export function AccountSettings({ user, timeZones }: AccountSettingsProps) {
       </SettingSection>
 
       <SettingSection
-        title="Email notifications"
-        description="Get an email when you are @-mentioned, assigned a ticket, or a reply lands on one of yours."
+        title="Assignment email"
+        description="Get an email when a ticket is assigned to you."
         action={
           <div className="flex items-center gap-2">
             <span className="text-[12px] text-ink-500">
-              {emailNotifications ? "On" : "Off"}
+              {notifyOnAssignment ? "On" : "Off"}
             </span>
             <Switch
-              checked={emailNotifications}
-              onCheckedChange={setEmailNotifications}
-              aria-label="Email notifications"
+              checked={notifyOnAssignment}
+              onCheckedChange={handleNotifyChange}
+              aria-label="Assignment email"
             />
           </div>
         }
@@ -114,7 +118,7 @@ export function AccountSettings({ user, timeZones }: AccountSettingsProps) {
 
       <SettingSection
         title="Slack notifications"
-        description="Get @-mentioned in your team's Slack channel for the same events. Requires an admin to connect Slack first."
+        description="Get notified in your team's Slack channel when a ticket is assigned to you. Requires an admin to connect Slack first."
         action={
           <div className="flex items-center gap-2">
             <span className="text-[12px] text-ink-500">

@@ -50,14 +50,23 @@ export interface Conversation {
   summaryState: "none" | "ready" | "failed";
 }
 
+export interface Attachment {
+  id: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+}
+
 export interface Message {
   id: string;
   author: string;
   /** Address the message was sent to, shown in the bubble header. */
   to: string;
-  role: "customer" | "agent" | "ai";
+  role: "customer" | "agent" | "ai" | "system";
   body: string;
   sentAt: string;
+  attachments: Attachment[];
+  deliveryState: "none" | "queued" | "sent" | "failed";
 }
 
 export type ActivityKind = "created" | "status" | "priority" | "assignee" | "label" | "reply";
@@ -214,9 +223,15 @@ export interface PortalSettings {
 
 export interface ChannelAccount {
   id: string;
-  kind: "email" | "discord";
+  address: string;
+  displayName: string;
+  active: boolean;
+}
+
+/** Mock-only until Discord ships in a later slice. */
+export interface DiscordAccount {
+  id: string;
   label: string;
-  detail: string;
 }
 
 export interface ImportSource {
@@ -253,6 +268,7 @@ export interface CurrentUser {
   email: string;
   monogram: string;
   timeZone: string;
+  notifyOnAssignment: boolean;
 }
 
 /** Display order for statuses. A fixed enumeration, not data. */

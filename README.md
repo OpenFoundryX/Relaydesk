@@ -11,18 +11,18 @@ in its initial development stage.
 Relaydesk is under active early development. Workspaces, sign-in (including
 Google), team management, and the ticket inbox — conversations, replies,
 labels, saved views, and activity history — are implemented on a
-multi-tenant Next.js, FastAPI, and PostgreSQL foundation. Channels beyond the
-seeded demo data, AI features, the knowledge base, analytics, and billing are
-not yet implemented.
+multi-tenant Next.js, FastAPI, and PostgreSQL foundation. Email is a fully
+working channel: mail forwarded to a workspace's ingest address becomes a
+ticket, replies are delivered over SMTP with retry and bounce handling, and
+attachments are stored and served back safely. Discord, one-click import
+from another help desk, AI features, the knowledge base, analytics, and
+billing are not yet implemented.
 
 Team invites are sent by email: accepting one lets you choose an account's
 password and sign in as it, so the invite link is only ever mailed to the
 invited address, never returned to whoever created the invite. This means
 invites require SMTP to be configured — the development stack provides
-this out of the box via GreenMail. The API for creating, previewing, and
-accepting invites is complete and tested at this commit; the web
-invite-acceptance page the emailed link opens is not built yet, landing
-alongside the rest of the web work.
+this out of the box via GreenMail.
 
 ## Requirements
 
@@ -88,6 +88,9 @@ but all of them must land in the single mailbox the IMAP poller reads — so
 provider that files each address into its own mailbox will silently drop
 every ticket, with no error.
 
+Find a workspace's address under **Settings → Channels**, then forward your
+own support address to it. Anything that arrives there becomes a ticket.
+
 ## Development commands
 
 ```sh
@@ -102,6 +105,13 @@ make revision m="..."  # Autogenerate a new Alembic migration
 
 API source and web source are bind-mounted into their development containers, so
 changes are picked up without rebuilding the images.
+
+Besides `postgres`, `api`, and `web`, the stack runs four more services for
+the email channel: `rabbitmq` (the Celery broker), `worker` (a Celery worker
+that polls IMAP and delivers replies over SMTP), `beat` (schedules the
+recurring IMAP poll and the retry/reconciliation jobs), and `greenmail` (a
+local SMTP/IMAP server standing in for a real mail provider). `docker
+compose logs -f worker beat` follows the mail pipeline specifically.
 
 ## Testing and linting
 

@@ -2,10 +2,10 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { SESSION_COOKIE } from "@/lib/session-cookie";
 
-// `/invite/<token>` is absent from both this list and the matcher below
-// because the route no longer exists: invites are disabled pending an
-// email-verified acceptance flow (see components/settings/invite-dialog.tsx
-// and the API's relaydesk.api.team). There is nothing left to gate.
+// `/invites` is absent from both this list and the matcher below on
+// purpose: whoever follows an emailed invite link has no session yet, so
+// the route has to stay reachable unauthenticated. See
+// components/settings/invite-dialog.tsx and app/invites/page.tsx.
 const PROTECTED = [
   "/conversations",
   "/analytics",

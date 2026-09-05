@@ -1,5 +1,7 @@
-import type { Conversation, Message } from "@/lib/mock/types";
-import { cn } from "@/lib/utils";
+import { Paperclip, TriangleAlert } from "lucide-react";
+
+import type { Conversation, Message } from "@/lib/types";
+import { cn, formatFileSize } from "@/lib/utils";
 
 function Monogram({ name, className }: { name: string; className?: string }) {
   return (
@@ -35,6 +37,14 @@ export function Thread({
       <p className="text-center text-[12px] text-ink-500">{conversation.date} at 9:14 AM</p>
 
       {messages.map((message) => {
+        if (message.role === "system") {
+          return (
+            <p key={message.id} className="text-center text-[12px] text-ink-500">
+              {message.body}
+            </p>
+          );
+        }
+
         const mine = message.role !== "customer";
         return (
           <div key={message.id} className={cn("flex items-end gap-3", mine && "flex-row-reverse")}>
@@ -53,6 +63,32 @@ export function Thread({
                   <span className="font-medium text-ink-700">To</span> {message.to}
                 </p>
                 <p className="whitespace-pre-wrap">{message.body}</p>
+
+                {message.attachments.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {message.attachments.map((attachment) => (
+                      <a
+                        key={attachment.id}
+                        href={`/api/attachments/${attachment.id}`}
+                        className="flex items-center gap-1.5 rounded-md border border-ink-200 bg-white px-2 py-1 text-[12px] text-ink-700 transition-colors hover:border-ink-300 hover:text-ink-900"
+                      >
+                        <Paperclip className="size-3.5 shrink-0 text-ink-400" />
+                        <span className="truncate">{attachment.filename}</span>
+                        <span className="shrink-0 text-ink-400">
+                          {formatFileSize(attachment.sizeBytes)}
+                        </span>
+                      </a>
+                    ))}
+                  </div>
+                )}
+
+                {message.deliveryState === "failed" && (
+                  <p className="mt-2 flex items-center gap-1 text-[11px] font-medium text-danger-600">
+                    <TriangleAlert className="size-3.5" />
+                    Not delivered
+                  </p>
+                )}
+
                 <p className="mt-2 text-[11px] text-ink-400">{message.sentAt}</p>
               </div>
             </div>

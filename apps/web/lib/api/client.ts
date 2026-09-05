@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 
 import { getSessionToken } from "@/lib/session";
 
-const apiUrl = process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+export const apiUrl =
+  process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export class ApiError extends Error {
   constructor(
@@ -81,5 +82,10 @@ export async function apiFetch<T>(path: string, options: Options = {}): Promise<
     throw new ApiError(response.status, code, message);
   }
 
-  return (await response.json()) as T;
+  // A 202 (e.g. `POST /team/invites`, which sends the invite by email rather
+  // than handing anything back) has no body either, but no distinct status
+  // code to special-case on the way in -- so parse only when there is
+  // something to parse.
+  const text = await response.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }

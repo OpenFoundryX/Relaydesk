@@ -4,19 +4,18 @@ import Link from "next/link";
 import { PageHeader } from "@/components/console/page-header";
 import { SectionEmpty, SettingSection } from "@/components/console/setting-section";
 import { BrandIcon } from "@/components/brand-icons";
+import { AddChannelDialog } from "@/components/settings/add-channel-dialog";
+import { EmailChannelActions } from "@/components/settings/email-channel-actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  getDiscordAccounts,
-  getEmailAccounts,
-  getImportSources,
-} from "@/lib/mock/settings";
+import { getEmailChannels } from "@/lib/api/channels";
+import { getDiscordAccounts, getImportSources } from "@/lib/mock/settings";
 
 export const metadata = { title: "Channels" };
 
 export default async function ChannelsPage() {
-  const [emailAccounts, discordAccounts, importSources] = await Promise.all([
-    getEmailAccounts(),
+  const [emailChannels, discordAccounts, importSources] = await Promise.all([
+    getEmailChannels(),
     getDiscordAccounts(),
     getImportSources(),
   ]);
@@ -32,38 +31,36 @@ export default async function ChannelsPage() {
         <SettingSection
           title="Email"
           description="Mail sent to a connected address turns into a ticket automatically."
-          action={
-            <>
-              <Button variant="secondary" size="sm">
-                Set up forwarding
-              </Button>
-              <Button variant="primary" size="sm">
-                <Mail />
-                Connect Gmail
-              </Button>
-            </>
-          }
+          action={<AddChannelDialog />}
         >
-          {emailAccounts.length > 0 ? (
-            <ul className="divide-y divide-ink-200 rounded-md border border-ink-200">
-              {emailAccounts.map((account) => (
-                <li
-                  key={account.id}
-                  className="flex items-center gap-3 px-3 py-2.5"
-                >
-                  <Mail className="size-4 text-ink-400" />
-                  <span className="text-[13px] font-medium text-ink-900">
-                    {account.label}
-                  </span>
-                  <span className="text-[12px] text-ink-500">{account.detail}</span>
-                  <Badge variant="positive" className="ml-auto">
-                    Connected
-                  </Badge>
-                </li>
-              ))}
-            </ul>
+          {emailChannels.length > 0 ? (
+            <div className="space-y-3">
+              <ul className="divide-y divide-ink-200 rounded-md border border-ink-200">
+                {emailChannels.map((channel) => (
+                  <li
+                    key={channel.id}
+                    className="flex items-center gap-3 px-3 py-2.5"
+                  >
+                    <Mail className="size-4 shrink-0 text-ink-400" />
+                    <div className="min-w-0">
+                      <p className="truncate font-mono text-[13px] font-medium text-ink-900">
+                        {channel.address}
+                      </p>
+                      <p className="truncate text-[12px] text-ink-500">
+                        {channel.displayName}
+                      </p>
+                    </div>
+                    <EmailChannelActions channel={channel} />
+                  </li>
+                ))}
+              </ul>
+              <p className="text-[12px] leading-relaxed text-ink-500">
+                Forward mail from your own support address to this one. Anything that
+                arrives becomes a ticket.
+              </p>
+            </div>
           ) : (
-            <SectionEmpty>No connected accounts</SectionEmpty>
+            <SectionEmpty>No connected addresses</SectionEmpty>
           )}
         </SettingSection>
 

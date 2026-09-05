@@ -1,6 +1,6 @@
 import type {
   ApiKey,
-  ChannelAccount,
+  DiscordAccount,
   ImportSource,
   Integration,
   McpServer,
@@ -173,16 +173,7 @@ const plans: Plan[] = [
   },
 ];
 
-const emailAccounts: ChannelAccount[] = [
-  {
-    id: "ch_support",
-    kind: "email",
-    label: "support@relaydesk.dev",
-    detail: "Gmail · syncing",
-  },
-];
-
-const discordAccounts: ChannelAccount[] = [];
+const discordAccounts: DiscordAccount[] = [];
 
 const importSources: ImportSource[] = [
   { id: "freshdesk", name: "Freshdesk", host: "*.freshdesk.com", monogram: "FD", comingSoon: false },
@@ -231,10 +222,7 @@ export async function getIntegrations(): Promise<Integration[]> {
 export async function getPlans(): Promise<Plan[]> {
   return plans;
 }
-export async function getEmailAccounts(): Promise<ChannelAccount[]> {
-  return emailAccounts;
-}
-export async function getDiscordAccounts(): Promise<ChannelAccount[]> {
+export async function getDiscordAccounts(): Promise<DiscordAccount[]> {
   return discordAccounts;
 }
 export async function getImportSources(): Promise<ImportSource[]> {
