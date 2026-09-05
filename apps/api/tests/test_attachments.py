@@ -224,6 +224,32 @@ async def test_the_download_route_forces_a_download(db_session, client) -> None:
     assert response.headers["x-content-type-options"] == "nosniff"
 
 
+async def test_the_download_route_serves_a_non_latin1_filename(
+    db_session, client
+) -> None:
+    """Starlette encodes response headers as latin-1, so a plain
+    ``filename="..."`` carrying a CJK, Cyrillic, or Greek character (or an
+    emoji) would 500 the whole download -- ordinary international support
+    mail, not an edge case. RFC 5987's ``filename*`` form must carry the
+    real UTF-8 name, with an ASCII-safe ``filename=`` alongside it for a
+    client that only understands that form."""
+    workspace = await make_workspace(db_session, slug="acme")
+    member = await make_member(db_session, workspace, email="nilesh@example.com")
+    message = await _message(db_session, workspace)
+    stored = await attachments.store(
+        db_session, message, [_parsed(name="请款单.pdf")]
+    )
+    await db_session.commit()
+    headers = await sign_in(client, db_session, member.email)
+
+    response = await client.get(f"/api/attachments/{stored[0].id}", headers=headers)
+
+    assert response.status_code == 200
+    disposition = response.headers["content-disposition"]
+    assert "filename*=UTF-8''%E8%AF%B7%E6%AC%BE%E5%8D%95.pdf" in disposition
+    assert 'filename="' in disposition
+
+
 async def test_the_download_route_needs_a_session(db_session, client) -> None:
     workspace = await make_workspace(db_session, slug="acme")
     message = await _message(db_session, workspace)
