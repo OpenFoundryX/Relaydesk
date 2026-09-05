@@ -5,6 +5,7 @@ from relaydesk.api.auth import router as auth_router
 from relaydesk.api.channels import router as channels_router
 from relaydesk.api.conversations import router as conversations_router
 from relaydesk.api.health import router as health_router
+from relaydesk.api.kb import router as kb_router
 from relaydesk.api.labels import router as labels_router
 from relaydesk.api.team import invites_router
 from relaydesk.api.team import router as team_router
@@ -26,3 +27,4 @@ api_router.include_router(channels_router, prefix="/channels", tags=["channels"]
 api_router.include_router(
     attachments_router, prefix="/attachments", tags=["attachments"]
 )
+api_router.include_router(kb_router, prefix="/kb", tags=["knowledge-base"])
