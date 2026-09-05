@@ -1,6 +1,6 @@
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import EmailStr
+from pydantic import EmailStr, Field
 
 from relaydesk.schemas.base import CamelModel
 
@@ -43,9 +43,14 @@ class TokenRequest(CamelModel):
 
 
 class AcceptRequest(CamelModel):
+    # This is the product's only unauthenticated account-creation endpoint.
+    # Without a bound, a name over User.name's 120 characters produces a
+    # 500 from the database (StringDataRightTruncation) instead of a 422 --
+    # and an empty or trivially short password is otherwise accepted
+    # outright, since accept_invite hashes whatever it is handed.
     token: str
-    name: str
-    password: str
+    name: Annotated[str, Field(min_length=1, max_length=120)]
+    password: Annotated[str, Field(min_length=8)]
 
 
 class MemberPatch(CamelModel):

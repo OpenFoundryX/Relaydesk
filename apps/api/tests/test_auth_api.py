@@ -109,6 +109,51 @@ async def test_me_returns_user_workspace_and_membership(
     assert body["membership"]["role"] == "admin"
 
 
+async def test_renaming_yourself_recomputes_the_monogram(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Without this, a rename left the monogram showing the old initials --
+    team.monogram_for is what every other name-setting path (accept_invite,
+    seeding) already derives it from."""
+    await seed_member(db_session)
+    login = await client.post(
+        "/api/auth/login",
+        json={"email": "nilesh@relaydesk.dev", "password": "correct-horse"},
+    )
+    token = login.json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = await client.patch(
+        "/api/auth/me", json={"name": "Grace Whitfield"}, headers=headers
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["user"]["name"] == "Grace Whitfield"
+    assert body["user"]["monogram"] == "GW"
+
+
+async def test_renaming_yourself_past_the_column_width_is_a_422_not_a_500(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """User.name is String(120); without a bound on MePatch.name this
+    reached the database and raised StringDataRightTruncation instead of a
+    validation error."""
+    await seed_member(db_session)
+    login = await client.post(
+        "/api/auth/login",
+        json={"email": "nilesh@relaydesk.dev", "password": "correct-horse"},
+    )
+    token = login.json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = await client.patch(
+        "/api/auth/me", json={"name": "A" * 121}, headers=headers
+    )
+
+    assert response.status_code == 422
+
+
 async def test_me_without_a_token_is_unauthorized(client: AsyncClient) -> None:
     response = await client.get("/api/auth/me")
 

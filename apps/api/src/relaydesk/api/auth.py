@@ -17,6 +17,7 @@ from relaydesk.schemas.auth import (
 from relaydesk.security.oauth_google import authorization_url, exchange_code
 from relaydesk.security.tokens import generate_token
 from relaydesk.services import auth, workspaces
+from relaydesk.services.team import monogram_for
 
 router = APIRouter()
 
@@ -101,6 +102,10 @@ async def me(scope: Scope, session: DbSession) -> MeResponse:
 async def update_me(payload: MePatch, scope: Scope, session: DbSession) -> MeResponse:
     if payload.name is not None:
         scope.user.name = payload.name.strip()
+        # Otherwise a rename leaves the monogram showing the old initials --
+        # team.accept_invite and team.py's other name-setting paths already
+        # derive it the same way.
+        scope.user.monogram = monogram_for(scope.user.name)
     if payload.notify_on_assignment is not None:
         scope.user.notify_on_assignment = payload.notify_on_assignment
     await session.commit()

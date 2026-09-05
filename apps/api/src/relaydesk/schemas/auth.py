@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import EmailStr
+from pydantic import EmailStr, Field
 
 from relaydesk.schemas.base import CamelModel
 
@@ -56,5 +57,8 @@ class MeResponse(CamelModel):
 
 
 class MePatch(CamelModel):
-    name: str | None = None
+    # User.name is String(120); without this bound an over-length rename
+    # reached the database and raised StringDataRightTruncation (a 500)
+    # instead of a 422.
+    name: Annotated[str, Field(min_length=1, max_length=120)] | None = None
     notify_on_assignment: bool | None = None

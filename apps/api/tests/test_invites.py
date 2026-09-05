@@ -272,3 +272,51 @@ async def test_revoking_another_workspaces_invite_404s(db_session, client) -> No
     )
 
     assert response.status_code == 404
+
+
+async def test_accepting_with_a_name_over_the_column_width_is_a_422_not_a_500(
+    db_session, client
+) -> None:
+    """This is the product's only unauthenticated account-creation
+    endpoint. Without a bound on AcceptRequest.name, a name over
+    User.name's 120 characters reached the database and raised
+    StringDataRightTruncation -- a 500 -- instead of a validation error."""
+    workspace = await make_workspace(db_session)
+    admin = await make_member(
+        db_session, workspace, email="nilesh@example.com", role=Role.admin
+    )
+    _invite, raw_token = await team.create_invite(
+        db_session, workspace.id, "sara@example.com", Role.agent, admin.id
+    )
+    await db_session.commit()
+
+    response = await client.post(
+        "/api/invites/accept",
+        json={
+            "token": raw_token,
+            "name": "A" * 121,
+            "password": "correct horse battery staple",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+async def test_accepting_with_a_too_short_password_is_rejected(
+    db_session, client
+) -> None:
+    workspace = await make_workspace(db_session)
+    admin = await make_member(
+        db_session, workspace, email="nilesh@example.com", role=Role.admin
+    )
+    _invite, raw_token = await team.create_invite(
+        db_session, workspace.id, "sara@example.com", Role.agent, admin.id
+    )
+    await db_session.commit()
+
+    response = await client.post(
+        "/api/invites/accept",
+        json={"token": raw_token, "name": "Sara", "password": "short"},
+    )
+
+    assert response.status_code == 422
