@@ -6,6 +6,7 @@ stalling every other workspace's mail behind it — and so the bytes survive
 for replay once the parser is fixed.
 """
 
+import logging
 import re
 import uuid
 from dataclasses import dataclass
@@ -21,14 +22,19 @@ from relaydesk.config import get_settings
 from relaydesk.models.poll_state import PollState
 from relaydesk.models.raw_message import RawMessage
 
+logger = logging.getLogger(__name__)
+
 FETCH_LIMIT = 200
 
 # A FETCH response header line declares the literal that follows it as
 # "... RFC822 {n}" — n is the exact byte length of the octets on the next
 # line. Trusting that declared length, rather than guessing which line is
 # the body by its length, is what stays correct for a message shorter than
-# its own wrapper line.
-_FETCH_LITERAL = re.compile(rb"\{(\d+)\}\s*$")
+# its own wrapper line. The digit count is bounded (comfortably past any
+# real message size) so a malformed or hostile server response cannot hand
+# `int()` an unbounded digit run -- the same reasoning channel_accounts.py's
+# `_TAG` applies to a +c tag's conversation number.
+_FETCH_LITERAL = re.compile(rb"\{(\d{1,15})\}\s*$")
 
 
 @dataclass(frozen=True)
@@ -144,8 +150,23 @@ class AioImapReader:
         for uid in sorted(u for u in uids if u > last_uid)[:FETCH_LIMIT]:
             fetched = await self._client.uid("fetch", str(uid), "(RFC822)")
             body = _literal_body(fetched.lines)
-            if body is not None:
-                results.append(Fetched(uid=uid, raw=body))
+            if body is None:
+                # Unlike every other failure path in this module, the bytes
+                # do not survive: there is nothing to store. Silently
+                # continuing to later UIDs would let store_new's
+                # `max(state.last_uid, fetched.uid)` advance past this one,
+                # and the next poll's `UID last_uid+1:*` search would never
+                # offer it again. Stopping here instead keeps `last_uid`
+                # from advancing past it, so the next poll retries it.
+                logger.warning(
+                    "IMAP FETCH for UID %d in %r returned a short literal;"
+                    " stopping this poll here so it is retried rather than"
+                    " silently dropped",
+                    uid,
+                    self._mailbox,
+                )
+                break
+            results.append(Fetched(uid=uid, raw=body))
         return results
 
 

@@ -1,4 +1,6 @@
+import logging
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 import sqlalchemy as sa
@@ -157,6 +159,83 @@ def test_literal_body_uses_the_declared_length_not_line_length() -> None:
 
 def test_literal_body_returns_none_when_the_literal_is_missing() -> None:
     assert imap._literal_body([b"FETCH completed."]) is None
+
+
+def test_literal_body_bounds_an_absurd_declared_length() -> None:
+    """The declared length feeds straight into int(); an unbounded digit
+    run in a malformed or hostile FETCH response must not reach it."""
+    lines = [
+        f"1 FETCH (FLAGS (\\Seen) UID 1 RFC822 {{{'9' * 5000}}}".encode(),
+        bytearray(b"hi"),
+        b")",
+    ]
+
+    assert imap._literal_body(lines) is None
+
+
+class _StubImapClient:
+    """Just enough of aioimaplib's client for AioImapReader.fetch_since:
+    a UID search followed by one FETCH per uid."""
+
+    def __init__(self, uids: list[int], fetch_lines: dict[int, list[object]]) -> None:
+        self._uids = uids
+        self._fetch_lines = fetch_lines
+        self.fetched_uids: list[int] = []
+
+    async def uid_search(self, _query: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            lines=[
+                b" ".join(str(uid).encode() for uid in self._uids),
+                b"SEARCH completed.",
+            ]
+        )
+
+    async def uid(self, _command: str, uid: str, _spec: str) -> SimpleNamespace:
+        self.fetched_uids.append(int(uid))
+        return SimpleNamespace(lines=self._fetch_lines[int(uid)])
+
+
+async def test_a_short_literal_is_logged_and_does_not_advance_past_its_uid(
+    monkeypatch, caplog
+) -> None:
+    """_literal_body returns None when a FETCH response's declared literal
+    length doesn't match what's actually on the wire. Before this, that UID
+    was silently skipped and the poll moved on: store_new's
+    `max(state.last_uid, fetched.uid)` would then advance last_uid past the
+    dropped UID using a *later* one's success, and the next poll's
+    `UID last_uid+1:*` search would never offer it again -- permanent,
+    silent loss with nothing logged. This pins that the poll stops at the
+    short literal instead (so a later UID cannot advance past it) and that
+    the drop is logged with the UID."""
+    # See test_outbound.py's identical comment: migrations disable every
+    # logger created before they run, including this module's.
+    monkeypatch.setattr(imap.logger, "disabled", False)
+    reader = imap.AioImapReader.__new__(imap.AioImapReader)
+    reader._mailbox = "INBOX"
+    reader._client = _StubImapClient(
+        uids=[5, 6],
+        fetch_lines={
+            5: [
+                b"1 FETCH (FLAGS (\\Seen) UID 5 RFC822 {10}",
+                bytearray(b"hi"),
+                b")",
+            ],
+            6: [
+                b"2 FETCH (FLAGS (\\Seen) UID 6 RFC822 {5}",
+                bytearray(b"hello"),
+                b")",
+            ],
+        },
+    )
+
+    with caplog.at_level(logging.WARNING):
+        results = await reader.fetch_since(0)
+
+    assert results == []
+    # UID 6 (which would have succeeded) is never even fetched: continuing
+    # past the short literal would let its success advance last_uid past 5.
+    assert reader._client.fetched_uids == [5]
+    assert "5" in caplog.text
 
 
 @pytest.mark.integration
