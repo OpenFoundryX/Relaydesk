@@ -7,6 +7,7 @@ from relaydesk.api.conversations import router as conversations_router
 from relaydesk.api.health import router as health_router
 from relaydesk.api.kb import router as kb_router
 from relaydesk.api.labels import router as labels_router
+from relaydesk.api.public import router as public_router
 from relaydesk.api.team import invites_router
 from relaydesk.api.team import router as team_router
 from relaydesk.api.views import router as views_router
@@ -28,3 +29,6 @@ api_router.include_router(
     attachments_router, prefix="/attachments", tags=["attachments"]
 )
 api_router.include_router(kb_router, prefix="/kb", tags=["knowledge-base"])
+# Anonymous: reachable at <slug>.<portal domain> with no session at all. See
+# relaydesk.api.public's module docstring for what "public" means here.
+api_router.include_router(public_router, prefix="/public", tags=["public"])

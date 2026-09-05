@@ -9,6 +9,10 @@ from relaydesk.errors import Invalid, NotFound
 from relaydesk.models import Label, Membership, MembershipStatus, Workspace
 from relaydesk.services import channel_accounts
 
+# A workspace is reachable at <slug>.<portal domain>, so a slug that collides
+# with a hostname the deployment needs would take it over.
+RESERVED_SLUGS = frozenset({"www", "app", "api", "admin", "mail", "inbound"})
+
 
 async def create_workspace(
     session: AsyncSession,
@@ -29,6 +33,8 @@ async def create_workspace(
     demo seed data, ...) without this helper needing to know about all of
     them.
     """
+    if slug.lower() in RESERVED_SLUGS:
+        raise Invalid("That workspace address is reserved.")
     workspace = Workspace(name=name, slug=slug, monogram=monogram, **extra)
     session.add(workspace)
     await session.flush()

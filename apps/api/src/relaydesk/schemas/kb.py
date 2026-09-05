@@ -59,3 +59,15 @@ class StatusRequest(CamelModel):
 class ImageOut(CamelModel):
     id: str
     url: str
+
+
+class PublicWorkspaceOut(CamelModel):
+    """The anonymous, subdomain-resolved view of a workspace.
+
+    Deliberately minimal: name and monogram are all the portal chrome
+    needs, and nothing else here is safe to hand to an unauthenticated
+    caller (plan, seat counts, ticket volume, ...).
+    """
+
+    name: str
+    monogram: str

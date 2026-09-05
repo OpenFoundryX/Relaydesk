@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
     web_url: str = "http://localhost:3000"
+    # The root a workspace subdomain is resolved against: a workspace with
+    # slug "acme" is reachable at "acme.<portal_domain>". See
+    # relaydesk.api.public and apps/web/middleware.ts, which mirrors this
+    # value client-side as NEXT_PUBLIC_PORTAL_DOMAIN.
+    portal_domain: str = "localhost:3000"
 
     celery_broker_url: str = "amqp://guest:guest@rabbitmq:5672//"
 
