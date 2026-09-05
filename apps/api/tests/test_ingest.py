@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
+from email.utils import format_datetime
 
 import pytest
 import sqlalchemy as sa
@@ -22,18 +23,28 @@ async def _account(session, slug="acme"):
     return workspace, account
 
 
+# The ingest clamp (see services/ingest.py's _MAX_FUTURE_SKEW/_MAX_PAST_SKEW)
+# floors/ceils a Date: header against received_at, which _store sets to
+# datetime.now(UTC). A hardcoded wall-clock date eventually falls more than
+# _MAX_PAST_SKEW behind "now" and gets clamped -- computing this relative to
+# now instead keeps it inside the unclamped window forever. Fixed once at
+# import (not called fresh per test) so _raw's default and the assertion
+# that checks it agree on the exact same instant.
+_DEFAULT_SENT_AT = datetime.now(UTC).replace(microsecond=0) - timedelta(hours=1)
+
+
 def _raw(
     to: str,
     subject="Refund please",
     sender="ada@example.com",
-    date="Tue, 2 Sep 2026 10:00:00 +0000",
+    date: str | None = None,
     **headers,
 ) -> bytes:
     message = EmailMessage()
     message["From"] = sender
     message["To"] = to
     message["Subject"] = subject
-    message["Date"] = date
+    message["Date"] = date if date is not None else format_datetime(_DEFAULT_SENT_AT)
     message["Message-ID"] = headers.pop("message_id", "<a1@example.com>")
     for name, value in headers.items():
         message[name.replace("_", "-")] = value
@@ -365,9 +376,17 @@ async def test_strategy_three_finds_the_contacts_own_thread_past_fifty_others(
     # "first" gets the earliest timestamp; each of the 60 others is strictly
     # more recent, so under ORDER BY last_message_at DESC LIMIT 50 applied
     # before the contact filter, "first" falls outside the window entirely.
+    # Relative to now (not a wall-clock date) so the clamp never engages and
+    # the ordering these dates encode stays intact regardless of what day
+    # this test runs.
+    now = datetime.now(UTC).replace(microsecond=0)
     first = await _store(
         db_session,
-        _raw(address, message_id="<one@x>", date="Tue, 2 Sep 2026 00:00:00 +0000"),
+        _raw(
+            address,
+            message_id="<one@x>",
+            date=format_datetime(now - timedelta(hours=2)),
+        ),
         uid=1,
     )
     await ingest.ingest_raw(db_session, first.id)
@@ -380,7 +399,7 @@ async def test_strategy_three_finds_the_contacts_own_thread_past_fifty_others(
                 sender=f"other{i}@example.com",
                 subject=f"Something else {i}",
                 message_id=f"<other{i}@x>",
-                date="Tue, 2 Sep 2026 12:00:00 +0000",
+                date=format_datetime(now - timedelta(hours=1)),
             ),
             uid=100 + i,
         )
@@ -392,7 +411,7 @@ async def test_strategy_three_finds_the_contacts_own_thread_past_fifty_others(
             address,
             subject="RE: Refund please",
             message_id="<two@x>",
-            date="Wed, 3 Sep 2026 00:00:00 +0000",
+            date=format_datetime(now),
         ),
         uid=999,
     )
@@ -491,7 +510,7 @@ async def test_a_long_display_name_is_truncated_not_fatal(
         f'From: "{long_name}" <ada@example.com>\r\n'
         f"To: {address}\r\n"
         f"Subject: Refund please\r\n"
-        f"Date: Tue, 2 Sep 2026 10:00:00 +0000\r\n"
+        f"Date: {format_datetime(_DEFAULT_SENT_AT)}\r\n"
         f"Message-ID: <long-name@example.com>\r\n"
         f"\r\n"
         f"Please refund my order.\r\n"
@@ -701,7 +720,7 @@ async def test_an_ordinary_date_header_passes_through_unclamped(
     await ingest.ingest_raw(db_session, row.id)
 
     message = await db_session.scalar(sa.select(Message))
-    assert message.sent_at == datetime(2026, 9, 2, 10, 0, tzinfo=UTC)
+    assert message.sent_at == _DEFAULT_SENT_AT
 
 
 async def test_requeue_unprocessed_finds_a_stalled_raw_message(

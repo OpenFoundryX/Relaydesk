@@ -1,5 +1,6 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
+from email.utils import format_datetime
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -194,7 +195,10 @@ def _raw(to: str, subject: str = "Hello") -> bytes:
     message["From"] = "ada@example.com"
     message["To"] = to
     message["Subject"] = subject
-    message["Date"] = "Tue, 2 Sep 2026 10:00:00 +0000"
+    # These rows flow through ingest.ingest_raw, whose clamp floors a Date:
+    # header more than 3 days behind received_at (see services/ingest.py) --
+    # relative to now so this never falls behind that floor.
+    message["Date"] = format_datetime(datetime.now(UTC) - timedelta(hours=1))
     message["Message-ID"] = "<a1@example.com>"
     message.set_content("Hi there.")
     return message.as_bytes()
