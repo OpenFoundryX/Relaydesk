@@ -48,15 +48,45 @@ async def _context(
 ) -> tuple[Conversation, Workspace, ChannelAccount | None]:
     conversation = await session.get(Conversation, message.conversation_id)
     workspace = await session.get(Workspace, message.workspace_id)
-    account = await session.scalar(
-        sa.select(ChannelAccount)
+
+    # Reply from the same address the customer actually wrote to, not just
+    # "the workspace's oldest active address". ingest.py already records
+    # which ChannelAccount routed each inbound message; a workspace with two
+    # connected addresses must not answer mail sent to one from the other --
+    # the customer would see a different correspondent than they wrote to.
+    account = None
+    last_inbound_account_id = await session.scalar(
+        sa.select(Message.channel_account_id)
         .where(
-            ChannelAccount.workspace_id == message.workspace_id,
-            ChannelAccount.active.is_(True),
+            Message.conversation_id == message.conversation_id,
+            Message.direction == MessageDirection.inbound,
+            Message.channel_account_id.is_not(None),
         )
-        .order_by(ChannelAccount.created_at)
+        .order_by(Message.sent_at.desc())
         .limit(1)
     )
+    if last_inbound_account_id is not None:
+        account = await session.scalar(
+            sa.select(ChannelAccount).where(
+                ChannelAccount.id == last_inbound_account_id,
+                ChannelAccount.workspace_id == message.workspace_id,
+                ChannelAccount.active.is_(True),
+            )
+        )
+
+    if account is None:
+        # No inbound message to key off (an agent-initiated thread), or the
+        # account that received it was since deactivated: fall back to the
+        # workspace's oldest active address, same as before.
+        account = await session.scalar(
+            sa.select(ChannelAccount)
+            .where(
+                ChannelAccount.workspace_id == message.workspace_id,
+                ChannelAccount.active.is_(True),
+            )
+            .order_by(ChannelAccount.created_at)
+            .limit(1)
+        )
     return conversation, workspace, account
 
 

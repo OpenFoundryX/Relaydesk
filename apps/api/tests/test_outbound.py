@@ -224,6 +224,85 @@ async def test_a_reply_without_a_channel_account_omits_the_c_tag_and_logs(
     assert "no active channel account" in caplog.text
 
 
+async def test_a_reply_uses_the_address_the_customer_actually_wrote_to(
+    db_session: AsyncSession,
+) -> None:
+    """_context used to always pick the workspace's oldest active
+    ChannelAccount, ignoring Message.channel_account_id -- which ingest.py
+    already records per inbound message. A workspace with two connected
+    addresses would answer mail sent to one from the other, so the customer
+    sees a different correspondent than the one they wrote to."""
+    workspace = await make_workspace(db_session, slug="acme-two-addresses")
+    older_account = await channel_accounts.create(db_session, workspace.id, "Sales")
+    newer_account = await channel_accounts.create(db_session, workspace.id, "Support")
+    member = await make_member(db_session, workspace, email="nilesh@example.com")
+    conversation = await make_conversation(
+        db_session, workspace, subject="Refund please"
+    )
+    await conversations.append_message(
+        db_session,
+        conversation,
+        role=MessageRole.customer,
+        direction=MessageDirection.inbound,
+        author_name="Ada",
+        body="Where is my refund?",
+        sent_at=datetime.now(UTC),
+        external_id="<customer@example.com>",
+        channel_account_id=newer_account.id,
+    )
+
+    await conversations.add_reply(
+        db_session, workspace.id, conversation.id, "On its way.", member
+    )
+    message = await db_session.scalar(
+        sa.select(Message).where(
+            Message.conversation_id == conversation.id,
+            Message.direction == MessageDirection.outbound,
+        )
+    )
+
+    built = await outbound.build_reply(db_session, message)
+
+    expected = channel_accounts.address_for(
+        newer_account, workspace.slug, conversation.number
+    )
+    wrong = channel_accounts.address_for(
+        older_account, workspace.slug, conversation.number
+    )
+    assert expected in built["Reply-To"]
+    assert wrong not in built["Reply-To"]
+
+
+async def test_a_reply_falls_back_to_the_oldest_active_account_with_no_inbound(
+    db_session: AsyncSession,
+) -> None:
+    """An agent-initiated thread has no inbound message to key off of, so
+    the fallback to the workspace's oldest active account must still work."""
+    workspace = await make_workspace(db_session, slug="acme-agent-initiated")
+    account = await channel_accounts.create(db_session, workspace.id, "Support")
+    member = await make_member(db_session, workspace, email="nilesh@example.com")
+    conversation = await make_conversation(
+        db_session, workspace, subject="Following up"
+    )
+
+    await conversations.add_reply(
+        db_session, workspace.id, conversation.id, "Just checking in.", member
+    )
+    message = await db_session.scalar(
+        sa.select(Message).where(
+            Message.conversation_id == conversation.id,
+            Message.direction == MessageDirection.outbound,
+        )
+    )
+
+    built = await outbound.build_reply(db_session, message)
+
+    expected = channel_accounts.address_for(
+        account, workspace.slug, conversation.number
+    )
+    assert expected in built["Reply-To"]
+
+
 async def test_a_transient_commit_failure_retries_in_place(
     db_session: AsyncSession, smtp_server
 ) -> None:
