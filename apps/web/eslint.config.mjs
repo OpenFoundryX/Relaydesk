@@ -15,6 +15,11 @@ const eslintConfig = [
           caughtErrorsIgnorePattern: "^_",
         },
       ],
+      // The knowledge base renders documents written by workspace members and
+      // read by anonymous visitors. Rendering from a node table into React
+      // elements is what makes that safe; one dangerouslySetInnerHTML would
+      // undo it, so the rule is absolute rather than per-file.
+      "react/no-danger": "error",
     },
   },
 ];
