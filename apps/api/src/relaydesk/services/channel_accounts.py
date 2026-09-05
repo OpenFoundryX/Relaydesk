@@ -15,8 +15,10 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relaydesk.config import get_settings
-from relaydesk.errors import NotFound
+from relaydesk.errors import Conflict, NotFound
 from relaydesk.models.channel_account import ChannelAccount, ChannelAccountKind
+
+LAST_ACCOUNT_MESSAGE = "A workspace must keep at least one connected address."
 
 TOKEN_BYTES = 6
 TOKEN_PATTERN = re.compile(r"^[0-9a-f]{12}$")
@@ -99,6 +101,22 @@ async def deactivate(
     )
     if account is None:
         raise NotFound("That channel does not exist.")
+    if account.active:
+        # Deactivating the last active account leaves the workspace with no
+        # ingest address at all: find_by_token then matches nothing, so
+        # every forwarded mail becomes `unrouted`, list_for shows an empty
+        # list with no explanation, and build_reply sends without a +c tag
+        # that lets a reply route back onto its conversation.
+        active_count = await session.scalar(
+            sa.select(sa.func.count())
+            .select_from(ChannelAccount)
+            .where(
+                ChannelAccount.workspace_id == workspace_id,
+                ChannelAccount.active.is_(True),
+            )
+        )
+        if (active_count or 0) <= 1:
+            raise Conflict(LAST_ACCOUNT_MESSAGE)
     account.active = False
     await session.flush()
 

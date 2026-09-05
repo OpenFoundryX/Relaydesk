@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from relaydesk.errors import NotFound
+from relaydesk.errors import Conflict, NotFound
 from relaydesk.services import channel_accounts
 from tests.factories import make_member, make_workspace, sign_in
 
@@ -82,11 +82,58 @@ async def test_lookup_by_token_finds_the_workspace(db_session: AsyncSession) -> 
 
 async def test_a_deactivated_account_is_not_found(db_session: AsyncSession) -> None:
     workspace = await make_workspace(db_session, slug="acme")
+    # A second account so deactivating the first is not deactivating the
+    # workspace's last one -- see the dedicated last-account test below.
     account = await channel_accounts.create(db_session, workspace.id, "Support")
+    await channel_accounts.create(db_session, workspace.id, "Sales")
     await channel_accounts.deactivate(db_session, workspace.id, account.id)
 
     found = await channel_accounts.find_by_token(db_session, account.ingest_token)
     assert found is None
+
+
+async def test_deactivating_the_last_active_account_is_refused(
+    db_session: AsyncSession,
+) -> None:
+    """Without this, a workspace can be left with no ingest address at
+    all: find_by_token then matches nothing, so all forwarded mail becomes
+    `unrouted`, list_for shows an empty list with no explanation, and
+    build_reply sends without the +c tag a reply needs to route back."""
+    workspace = await make_workspace(db_session, slug="acme")
+    account = await channel_accounts.create(db_session, workspace.id, "Support")
+
+    with pytest.raises(Conflict):
+        await channel_accounts.deactivate(db_session, workspace.id, account.id)
+
+    found = await channel_accounts.find_by_token(db_session, account.ingest_token)
+    assert found is not None
+
+
+async def test_deactivating_one_of_several_active_accounts_is_allowed(
+    db_session: AsyncSession,
+) -> None:
+    workspace = await make_workspace(db_session, slug="acme")
+    first = await channel_accounts.create(db_session, workspace.id, "Support")
+    await channel_accounts.create(db_session, workspace.id, "Sales")
+
+    await channel_accounts.deactivate(db_session, workspace.id, first.id)
+
+    remaining = await channel_accounts.list_for(db_session, workspace.id)
+    assert [account.display_name for account in remaining] == ["Sales"]
+
+
+async def test_deactivating_an_already_inactive_account_is_a_no_op(
+    db_session: AsyncSession,
+) -> None:
+    """A redundant deactivate call on an account that is already inactive
+    must stay a no-op -- not trip the last-account guard just because it is
+    now excluded from the active count."""
+    workspace = await make_workspace(db_session, slug="acme")
+    account = await channel_accounts.create(db_session, workspace.id, "Support")
+    await channel_accounts.create(db_session, workspace.id, "Sales")
+    await channel_accounts.deactivate(db_session, workspace.id, account.id)
+
+    await channel_accounts.deactivate(db_session, workspace.id, account.id)
 
 
 async def test_another_workspace_cannot_deactivate_your_account(
