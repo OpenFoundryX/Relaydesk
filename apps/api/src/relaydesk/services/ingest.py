@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import sqlalchemy as sa
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import TimeoutError as SATimeoutError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relaydesk.email_parse import normalize
@@ -43,23 +45,30 @@ _SUBJECT_NOISE = re.compile(
 # The sender's Date: header is attacker-controlled, but Conversation.
 # last_message_at -- the sort key for the keyset-paginated inbox -- is set
 # straight from it (via create_conversation / append_message). An unclamped
-# Date far in the past sorts a live ticket below every 50-row page forever;
+# Date far in the past sorts a live ticket below every 50-row page forever
+# *and* falls outside resolve_thread's SUBJECT_WINDOW lookback, so a later
+# reply with no In-Reply-To opens a duplicate ticket instead of threading;
 # one far in the future pins it to the top permanently, because
 # append_message's max() means no later, honest message can ever move it
 # back down. Clamping to RawMessage.received_at -- the time this poller
 # actually fetched the bytes, which the sender never controls -- with a
-# small allowance for real clock skew keeps the header useful for display
-# (Message.sent_at) while making it harmless as a sort key.
+# small allowance either direction keeps the header useful for display
+# (Message.sent_at) while making it harmless as a sort key. The floor is
+# relative for the same reason the ceiling is: a bare absolute floor (e.g.
+# year 2000) still leaves the entire 2000-to-today range unclamped, which
+# is exactly as capable of parking a ticket outside both the inbox's
+# recent pages and the threading window as no floor at all.
 _MAX_FUTURE_SKEW = timedelta(hours=1)
-_SENT_AT_FLOOR = datetime(2000, 1, 1, tzinfo=UTC)
+_MAX_PAST_SKEW = timedelta(days=3)
 
 
 def _clamp_sent_at(sent_at: datetime, received_at: datetime) -> datetime:
     ceiling = received_at + _MAX_FUTURE_SKEW
+    floor = received_at - _MAX_PAST_SKEW
     if sent_at > ceiling:
         return ceiling
-    if sent_at < _SENT_AT_FLOOR:
-        return _SENT_AT_FLOOR
+    if sent_at < floor:
+        return floor
     return sent_at
 
 
@@ -260,15 +269,59 @@ async def _handle_bounce(
     return RawMessageState.ingested
 
 
+# SQLSTATE class prefixes (the first two digits) that Postgres reserves for
+# conditions retrying is actually likely to fix: 08 connection exception,
+# 40 transaction rollback (deadlock, serialization failure), 53
+# insufficient resources, 57 operator intervention (admin shutdown, cannot
+# connect now, statement/query canceled), 58 system error. Everything else
+# -- 22 data exception, 23 integrity constraint violation, 42 syntax/access
+# rule violation, and any non-database exception -- is deterministic: the
+# same input produces the same failure on every retry.
+#
+# Classified by SQLSTATE rather than by sqlalchemy.exc's own subclass
+# hierarchy because asyncpg's dialect only maps a handful of asyncpg
+# exception types to a specific sqlalchemy.exc.* class (see
+# PGDialect_asyncpg._asyncpg_error_translate); most asyncpg errors --
+# transient or not -- surface as the same generic sqlalchemy.exc.DBAPIError,
+# so `isinstance(exc, sa.exc.OperationalError)` would not actually catch a
+# real deadlock or a dropped connection under this driver.
+_TRANSIENT_SQLSTATE_CLASSES = frozenset({"08", "40", "53", "57", "58"})
+
+
+def _is_transient_db_error(exc: BaseException) -> bool:
+    """A dropped connection, a deadlock, a serialization failure, a
+    statement timeout under a reset -- these self-heal, and
+    ``ingest_message``'s own ``autoretry_for``/``retry_backoff`` already
+    exists to ride them out (the same reasoning ``outbound.py``'s
+    ``_COMMIT_RETRIES`` applies one layer down, for the same class of
+    failure). Marking the row ``failed`` on the first occurrence of one of
+    these would trade a loud infinite loop for a quiet one-shot failure on
+    an error that almost always resolves on its own -- Celery's retry
+    budget would become dead code for ingest.
+    """
+    sqlstate = getattr(getattr(exc, "orig", None), "sqlstate", None) or getattr(
+        exc, "sqlstate", None
+    )
+    if sqlstate:
+        return sqlstate[:2] in _TRANSIENT_SQLSTATE_CLASSES
+    # No SQLSTATE at all means this either never reached Postgres (a
+    # connection couldn't be established, a pool checkout timed out) or
+    # isn't a database error in the first place -- the former is exactly as
+    # transient as a SQLSTATE-08 error, and OperationalError/TimeoutError
+    # are what those actually surface as.
+    transient_types = (OperationalError, SATimeoutError, ConnectionError, TimeoutError)
+    return isinstance(exc, transient_types)
+
+
 async def ingest_raw(
     session: AsyncSession, raw_message_id: uuid.UUID
 ) -> RawMessageState:
     """Route, classify, thread, and append -- or fail the row terminally.
 
-    Anything unexpected raised while doing that (most plausibly a database
-    constraint this module didn't anticipate) aborts the transaction it ran
-    in, which discards every mutation this call made, including any it made
-    to ``row`` itself -- so the row cannot be marked ``failed`` inside the
+    A deterministic failure (a database constraint this module didn't
+    anticipate, a genuine bug) aborts the transaction it ran in, which
+    discards every mutation this call made, including any it made to
+    ``row`` itself -- so the row cannot be marked ``failed`` inside the
     same transaction that raised. Instead: roll back the poisoned
     transaction, then record the failure in a fresh one. Without a terminal
     state, ``row.state`` stays ``fetched`` forever: ``ingest_message``
@@ -277,6 +330,11 @@ async def ingest_raw(
     forever -- silent, permanent message loss with no operator-visible
     trace. ``failed`` rows show up in ``relaydesk unrouted list`` precisely
     so there is one.
+
+    A *transient* failure (see ``_is_transient_db_error``) is different:
+    retrying is likely to succeed, so this re-raises instead, letting
+    ``ingest_message``'s own ``autoretry_for``/``retry_backoff`` ride it
+    out rather than giving up after the first occurrence.
     """
     row = await session.get(RawMessage, raw_message_id)
     if row is None:
@@ -289,6 +347,14 @@ async def ingest_raw(
         return await _ingest_routed(session, row)
     except Exception as exc:
         await session.rollback()
+        if _is_transient_db_error(exc):
+            logger.warning(
+                "ingest_raw hit a transient error for raw message %s;"
+                " leaving it at `fetched` for Celery's own retry",
+                raw_message_id,
+                exc_info=True,
+            )
+            raise
         failed = await session.get(RawMessage, raw_message_id)
         if failed is not None:
             failed.state = RawMessageState.failed

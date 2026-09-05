@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 
+import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,6 +10,7 @@ from relaydesk.models.contact import Contact
 from relaydesk.models.conversation import Conversation, ConversationStatus
 from relaydesk.models.message import Message, MessageDirection, MessageRole
 from relaydesk.models.raw_message import RawMessage, RawMessageState
+from relaydesk.models.workspace import Workspace
 from relaydesk.services import channel_accounts, contacts, conversations, ingest
 from tests.factories import make_workspace
 
@@ -547,13 +549,81 @@ async def test_an_unrecoverable_failure_lands_in_failed_not_stuck_at_fetched(
     assert await ingest.ingest_raw(db_session, row.id) is RawMessageState.failed
 
 
+async def test_a_genuinely_poisoned_transaction_still_lands_in_failed(
+    db_session: AsyncSession,
+) -> None:
+    """The test above proves the terminal-state plumbing with a plain
+    RuntimeError raised from a monkeypatch, but that never actually
+    poisons the session's transaction the way a real DBAPI-level failure
+    does (see test_outbound.py's identical technique for forcing one).
+    This drives a genuine unique-constraint violation instead, confirming
+    the rollback that recovers from a poisoned transaction actually works
+    against Postgres, not just against a mock -- and that the resulting
+    error (a deterministic integrity violation, not a transient one) still
+    lands in `failed` rather than being re-raised for Celery to retry."""
+    workspace, account = await _account(db_session)
+    address = channel_accounts.address_for(account, "acme")
+    row = await _store(db_session, _raw(address))
+    await db_session.commit()
+
+    # A second, doomed-to-conflict row sharing this session: the first
+    # query _ingest_routed issues (route()'s find_by_token lookup)
+    # autoflushes this pending row too and fails on the duplicate slug --
+    # a genuine IntegrityError, not a mock.
+    db_session.add(Workspace(name="Dupe", slug=workspace.slug, monogram="DP"))
+
+    state = await ingest.ingest_raw(db_session, row.id)
+
+    assert state is RawMessageState.failed
+    await db_session.refresh(row)
+    assert row.state is RawMessageState.failed
+    assert row.error is not None
+
+
+async def test_a_transient_db_error_re_raises_for_celery_to_retry(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    """A dropped connection, a deadlock, a serialization failure -- these
+    self-heal, and ingest_message's own autoretry_for/retry_backoff exists
+    precisely to ride them out (see outbound.py's _COMMIT_RETRIES for the
+    same reasoning one layer down). Marking the row failed on the first
+    occurrence would make that retry budget dead code for ingest -- so a
+    transient error must re-raise instead, leaving the row at `fetched`
+    for Celery's own retry."""
+    _workspace, account = await _account(db_session)
+    address = channel_accounts.address_for(account, "acme")
+    row = await _store(db_session, _raw(address))
+    await db_session.commit()
+
+    class _FakeOrig:
+        sqlstate = "40P01"  # deadlock_detected
+
+    async def deadlock(*args: object, **kwargs: object) -> None:
+        error = RuntimeError("simulated deadlock")
+        error.orig = _FakeOrig()
+        raise error
+
+    monkeypatch.setattr(conversations, "create_conversation", deadlock)
+
+    with pytest.raises(RuntimeError, match="simulated deadlock"):
+        await ingest.ingest_raw(db_session, row.id)
+
+    await db_session.refresh(row)
+    assert row.state is RawMessageState.fetched
+    assert row.error is None
+
+
 async def test_a_date_header_far_in_the_past_does_not_sink_the_conversation(
     db_session: AsyncSession,
 ) -> None:
     """The sender's Date: header is attacker-controlled, but
     Conversation.last_message_at -- the keyset-paginated inbox's sort key --
     was set straight from it. An unclamped Date this old would sort a brand
-    new ticket below every 50-row page forever."""
+    new ticket below every 50-row page forever. Pinned to the actual clamp
+    bound (received_at - _MAX_PAST_SKEW), not just "some year after 2000":
+    a bare absolute floor still leaves decades of drift unclamped, which is
+    exactly as capable of parking a ticket outside recent pages as no floor
+    at all."""
     _workspace, account = await _account(db_session)
     address = channel_accounts.address_for(account, "acme")
     row = await _store(
@@ -563,7 +633,41 @@ async def test_a_date_header_far_in_the_past_does_not_sink_the_conversation(
     await ingest.ingest_raw(db_session, row.id)
 
     conversation = await db_session.scalar(sa.select(Conversation))
-    assert conversation.last_message_at.year >= 2000
+    assert conversation.last_message_at >= row.received_at - ingest._MAX_PAST_SKEW
+
+
+async def test_a_stale_date_header_does_not_break_same_day_threading(
+    db_session: AsyncSession,
+) -> None:
+    """The harm of an unclamped past Date isn't just inbox ordering: it also
+    falls outside resolve_thread's SUBJECT_WINDOW lookback, so a same-day
+    reply with no In-Reply-To (a client that drops threading headers, or a
+    top-posted forward) opens a duplicate ticket instead of finding the
+    original. A relative floor keeps the clamped conversation inside that
+    window even when the header claims 2001."""
+    _workspace, account = await _account(db_session)
+    address = channel_accounts.address_for(account, "acme")
+    first = await _store(
+        db_session,
+        _raw(
+            address,
+            message_id="<one@x>",
+            date="Sun, 4 Mar 2001 10:00:00 +0000",
+        ),
+    )
+    await ingest.ingest_raw(db_session, first.id)
+
+    reply = await _store(
+        db_session,
+        _raw(address, subject="RE: Refund please", message_id="<two@x>"),
+        uid=2,
+    )
+    await ingest.ingest_raw(db_session, reply.id)
+
+    assert (
+        await db_session.scalar(sa.select(sa.func.count()).select_from(Conversation))
+        == 1
+    )
 
 
 async def test_a_date_header_far_in_the_future_does_not_pin_the_conversation(
