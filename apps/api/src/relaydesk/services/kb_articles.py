@@ -26,17 +26,29 @@ async def _category(
 
 
 async def _unique_slug(
-    session: AsyncSession, category_id: uuid.UUID, title: str
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    category_id: uuid.UUID,
+    title: str,
+    *,
+    exclude_id: uuid.UUID | None = None,
 ) -> str:
-    """Two articles may share a title; their URLs cannot."""
+    """Two articles may share a title; their URLs cannot.
+
+    ``exclude_id`` leaves the moving article's own row out of the "taken"
+    set -- otherwise, re-categorizing an article with autoflush on flushes
+    its just-assigned ``category_id`` before this SELECT runs, so it would
+    see its own current slug as already taken in the target category and
+    append a spurious suffix even when nothing there actually collides.
+    """
     base = slugify(title)
-    taken = set(
-        (
-            await session.scalars(
-                sa.select(KbArticle.slug).where(KbArticle.category_id == category_id)
-            )
-        ).all()
+    query = sa.select(KbArticle.slug).where(
+        KbArticle.workspace_id == workspace_id,
+        KbArticle.category_id == category_id,
     )
+    if exclude_id is not None:
+        query = query.where(KbArticle.id != exclude_id)
+    taken = set((await session.scalars(query)).all())
     if base not in taken:
         return base
     suffix = 2
@@ -57,7 +69,7 @@ async def create(
         workspace_id=workspace_id,
         category_id=category.id,
         title=title.strip(),
-        slug=await _unique_slug(session, category.id, title),
+        slug=await _unique_slug(session, workspace_id, category.id, title),
         excerpt="",
         doc=EMPTY_DOC,
         body_text="",
@@ -122,7 +134,9 @@ async def update(
             # can read the article.
             raise Invalid("An article cannot move between internal and external.")
         article.category_id = target.id
-        article.slug = await _unique_slug(session, target.id, article.title)
+        article.slug = await _unique_slug(
+            session, workspace_id, target.id, article.title, exclude_id=article.id
+        )
 
     if title is not None:
         # The slug is deliberately not recomputed -- it is the published URL.
@@ -136,6 +150,11 @@ async def update(
             article.excerpt = derive_excerpt(article.body_text)
 
     await session.flush()
+    # updated_at (onupdate) and search_vector (a generated column) come back
+    # expired after an UPDATE flush, not populated inline -- refresh so the
+    # router can serialize them without a synchronous lazy load blowing up
+    # with MissingGreenlet.
+    await session.refresh(article)
     return article
 
 

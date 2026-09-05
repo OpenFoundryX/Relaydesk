@@ -136,7 +136,7 @@ async def create_article(
     article = await kb_articles.create(
         session,
         scope_.workspace_id,
-        uuid.UUID(payload.category_id),
+        payload.category_id,
         payload.title,
         scope_.user,
     )
@@ -166,7 +166,7 @@ async def update_article(
         title=payload.title,
         excerpt=payload.excerpt,
         doc=payload.doc,
-        category_id=uuid.UUID(payload.category_id) if payload.category_id else None,
+        category_id=payload.category_id,
     )
     await session.commit()
     return _article_out(article)

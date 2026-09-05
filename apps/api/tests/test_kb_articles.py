@@ -161,6 +161,26 @@ async def test_moving_an_article_to_a_category_in_the_other_scope_is_refused(
         )
 
 
+async def test_moving_an_article_keeps_its_slug_when_the_title_is_unchanged(
+    db_session: AsyncSession,
+) -> None:
+    """A pure re-categorization must not touch the published URL. With
+    autoflush on, assigning the new category_id before the uniqueness check
+    runs could make the article collide with its own current slug."""
+    workspace, author, category = await _setup(db_session)
+    other = await kb_categories.create(
+        db_session, workspace.id, "Returns", KbScope.external
+    )
+    article = await kb_articles.create(
+        db_session, workspace.id, category.id, "Refunds", author
+    )
+
+    await kb_articles.update(db_session, workspace.id, article.id, category_id=other.id)
+
+    assert article.category_id == other.id
+    assert article.slug == "refunds"
+
+
 async def test_another_workspaces_article_is_a_404(db_session: AsyncSession) -> None:
     mine, author, category = await _setup(db_session, slug="mine")
     theirs, _, _ = await _setup(db_session, slug="theirs")
@@ -218,3 +238,53 @@ async def test_the_route_creates_and_reads_an_article(db_session, client) -> Non
     assert fetched.status_code == 200
     assert fetched.json()["slug"] == "refunds"
     assert fetched.json()["status"] == "draft"
+
+
+async def test_the_route_patches_an_article(db_session, client) -> None:
+    workspace, author, category = await _setup(db_session)
+    article = await kb_articles.create(
+        db_session, workspace.id, category.id, "Refunds", author
+    )
+    await db_session.commit()
+    headers = await sign_in(client, db_session, author.email)
+
+    patched = await client.patch(
+        f"/api/kb/articles/{article.id}",
+        json={"excerpt": "Read this first."},
+        headers=headers,
+    )
+
+    assert patched.status_code == 200
+    assert patched.json()["excerpt"] == "Read this first."
+    # The slug is the published URL; a patch that doesn't touch the title
+    # must not touch it either.
+    assert patched.json()["slug"] == "refunds"
+
+
+async def test_the_route_deletes_an_article(db_session, client) -> None:
+    workspace, author, category = await _setup(db_session)
+    article = await kb_articles.create(
+        db_session, workspace.id, category.id, "Refunds", author
+    )
+    await db_session.commit()
+    headers = await sign_in(client, db_session, author.email)
+
+    deleted = await client.delete(f"/api/kb/articles/{article.id}", headers=headers)
+    assert deleted.status_code == 204
+
+    fetched = await client.get(f"/api/kb/articles/{article.id}", headers=headers)
+    assert fetched.status_code == 404
+
+
+async def test_a_malformed_category_id_is_a_422_not_a_500(db_session, client) -> None:
+    workspace, author, _ = await _setup(db_session)
+    await db_session.commit()
+    headers = await sign_in(client, db_session, author.email)
+
+    created = await client.post(
+        "/api/kb/articles",
+        json={"categoryId": "not-a-uuid", "title": "Refunds"},
+        headers=headers,
+    )
+
+    assert created.status_code == 422
