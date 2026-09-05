@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from relaydesk.errors import Conflict, NotFound
+from relaydesk.errors import Conflict, Invalid, NotFound
 from relaydesk.models.kb import ArticleStatus, KbArticle, KbScope
 from relaydesk.services import kb_categories
 from relaydesk.services.kb_text import slugify
@@ -55,6 +55,33 @@ async def test_a_duplicate_name_in_one_scope_is_a_conflict(
         await kb_categories.create(
             db_session, workspace.id, "Billing", KbScope.external
         )
+
+
+@pytest.mark.parametrize("name", ["Images", "images", "Search", "search"])
+async def test_a_reserved_slug_cannot_be_used_for_a_category(
+    db_session: AsyncSession, name: str
+) -> None:
+    """`images` and `search` are reserved by the public KB routes --
+    `/kb/images/{id}` and `/kb/search` sit at the same path depth as
+    `/kb/{category_slug}/{article_slug}` -- so a category slugifying to
+    either would have every one of its articles swallowed by the wrong
+    handler."""
+    workspace = await make_workspace(db_session)
+
+    with pytest.raises(Invalid):
+        await kb_categories.create(db_session, workspace.id, name, KbScope.external)
+
+
+async def test_an_ordinary_category_slug_is_unaffected(
+    db_session: AsyncSession,
+) -> None:
+    workspace = await make_workspace(db_session)
+
+    category = await kb_categories.create(
+        db_session, workspace.id, "Billing", KbScope.external
+    )
+
+    assert category.slug == "billing"
 
 
 async def test_new_categories_append_to_the_end(db_session: AsyncSession) -> None:

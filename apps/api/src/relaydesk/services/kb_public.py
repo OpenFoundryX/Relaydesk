@@ -30,7 +30,10 @@ async def index(
         _visible(
             sa.select(KbCategory, KbArticle)
             .join(KbArticle, KbArticle.category_id == KbCategory.id)
-            .where(KbCategory.workspace_id == workspace_id)
+            .where(
+                KbCategory.workspace_id == workspace_id,
+                KbArticle.workspace_id == workspace_id,
+            )
         ).order_by(KbCategory.position, KbArticle.title)
     )
     grouped: dict[uuid.UUID, tuple[KbCategory, list[KbArticle]]] = {}
@@ -51,6 +54,7 @@ async def article(
             .join(KbCategory, KbCategory.id == KbArticle.category_id)
             .where(
                 KbArticle.workspace_id == workspace_id,
+                KbCategory.workspace_id == workspace_id,
                 KbCategory.slug == category_slug,
                 KbArticle.slug == article_slug,
             )
@@ -87,6 +91,8 @@ async def image(
             .where(
                 KbImage.id == image_id,
                 KbImage.workspace_id == workspace_id,
+                KbArticle.workspace_id == workspace_id,
+                KbCategory.workspace_id == workspace_id,
             )
         )
     )

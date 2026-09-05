@@ -3,15 +3,23 @@ import uuid
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from relaydesk.errors import Conflict, NotFound
+from relaydesk.errors import Conflict, Invalid, NotFound
 from relaydesk.models.kb import KbArticle, KbCategory, KbScope
 from relaydesk.services.kb_text import slugify
+
+# These collide with the public routes' fixed path segments --
+# `/kb/images/{id}` and `/kb/search` -- both of which sit at the same depth
+# as `/kb/{category_slug}/{article_slug}`. A category slugifying to one of
+# these would have every one of its articles swallowed by the wrong route.
+RESERVED_SLUGS = frozenset({"images", "search"})
 
 
 async def create(
     session: AsyncSession, workspace_id: uuid.UUID, name: str, scope: KbScope
 ) -> KbCategory:
     slug = slugify(name)
+    if slug in RESERVED_SLUGS:
+        raise Invalid("That category name collides with a reserved KB route.")
     existing = await session.scalar(
         sa.select(KbCategory.id).where(
             KbCategory.workspace_id == workspace_id,
