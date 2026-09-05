@@ -1,12 +1,20 @@
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Query, Response, status
 
 from relaydesk.api.deps import DbSession, Scope
 from relaydesk.errors import Invalid
-from relaydesk.models.kb import KbCategory, KbScope
-from relaydesk.schemas.kb import CategoryCreateRequest, CategoryOut, CategoryPatch
-from relaydesk.services import kb_categories
+from relaydesk.models.kb import ArticleStatus, KbArticle, KbCategory, KbScope
+from relaydesk.schemas.kb import (
+    ArticleCreateRequest,
+    ArticleOut,
+    ArticlePatch,
+    CategoryCreateRequest,
+    CategoryOut,
+    CategoryPatch,
+)
+from relaydesk.services import kb_articles, kb_categories
 
 router = APIRouter()
 
@@ -26,6 +34,20 @@ def _category_out(category: KbCategory, article_count: int) -> CategoryOut:
         scope=category.scope.value,
         position=category.position,
         article_count=article_count,
+    )
+
+
+def _article_out(article: KbArticle) -> ArticleOut:
+    return ArticleOut(
+        id=str(article.id),
+        title=article.title,
+        slug=article.slug,
+        excerpt=article.excerpt,
+        status=article.status.value,
+        category_id=str(article.category_id),
+        updated_at=article.updated_at,
+        doc=article.doc,
+        published_at=article.published_at,
     )
 
 
@@ -80,5 +102,72 @@ async def delete_category(
 ) -> Response:
     scope_.require_admin()
     await kb_categories.delete(session, scope_.workspace_id, category_id)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/articles", response_model=list[ArticleOut])
+async def list_articles(
+    scope_: Scope,
+    session: DbSession,
+    scope: KbScope | None = None,
+    status_filter: Annotated[ArticleStatus | None, Query(alias="status")] = None,
+) -> list[ArticleOut]:
+    rows = await kb_articles.list_for(
+        session, scope_.workspace_id, scope=scope, status=status_filter
+    )
+    return [_article_out(article) for article in rows]
+
+
+@router.post(
+    "/articles", response_model=ArticleOut, status_code=status.HTTP_201_CREATED
+)
+async def create_article(
+    payload: ArticleCreateRequest, scope_: Scope, session: DbSession
+) -> ArticleOut:
+    article = await kb_articles.create(
+        session,
+        scope_.workspace_id,
+        uuid.UUID(payload.category_id),
+        payload.title,
+        scope_.user,
+    )
+    await session.commit()
+    return _article_out(article)
+
+
+@router.get("/articles/{article_id}", response_model=ArticleOut)
+async def get_article(
+    article_id: uuid.UUID, scope_: Scope, session: DbSession
+) -> ArticleOut:
+    article = await kb_articles.get(session, scope_.workspace_id, article_id)
+    return _article_out(article)
+
+
+@router.patch("/articles/{article_id}", response_model=ArticleOut)
+async def update_article(
+    article_id: uuid.UUID,
+    payload: ArticlePatch,
+    scope_: Scope,
+    session: DbSession,
+) -> ArticleOut:
+    article = await kb_articles.update(
+        session,
+        scope_.workspace_id,
+        article_id,
+        title=payload.title,
+        excerpt=payload.excerpt,
+        doc=payload.doc,
+        category_id=uuid.UUID(payload.category_id) if payload.category_id else None,
+    )
+    await session.commit()
+    return _article_out(article)
+
+
+@router.delete("/articles/{article_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_article(
+    article_id: uuid.UUID, scope_: Scope, session: DbSession
+) -> Response:
+    await kb_articles.delete(session, scope_.workspace_id, article_id)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
