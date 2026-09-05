@@ -1,20 +1,16 @@
 import Link from "next/link";
-import { BookMarked, BookOpen, CircleCheck, ExternalLink, Upload } from "lucide-react";
+import { BookMarked, BookOpen } from "lucide-react";
 
 import { EmptyState } from "@/components/console/empty-state";
 import { PageHeader } from "@/components/console/page-header";
 import { PageShell } from "@/components/console/page-shell";
 import { TrialStrip } from "@/components/console/trial-strip";
 import { CategoryList } from "@/components/knowledge-base/category-list";
+import { NewArticleDialog } from "@/components/knowledge-base/new-article-dialog";
 import { NewCategoryDialog } from "@/components/knowledge-base/new-category-dialog";
 import { SourceDialog } from "@/components/knowledge-base/source-dialog";
-import { Button } from "@/components/ui/button";
-import { getWorkspace } from "@/lib/api/workspace";
-import {
-  externalSuggestions,
-  getKnowledgeBase,
-  internalSuggestions,
-} from "@/lib/mock/knowledge-base";
+import { getCategories, getArticles } from "@/lib/api/kb";
+import { getMe } from "@/lib/api/workspace";
 import { cn } from "@/lib/utils";
 
 export const metadata = { title: "Knowledge base" };
@@ -24,6 +20,16 @@ const tabs = [
   { id: "external", label: "External" },
 ] as const;
 
+const internalSuggestions = ["Billing", "Returns", "Technical Support"];
+
+const externalSuggestions = [
+  "Getting Started",
+  "Account & Billing",
+  "FAQs",
+  "Shipping & Returns",
+  "Troubleshooting",
+];
+
 export default async function KnowledgeBasePage({
   searchParams,
 }: {
@@ -31,13 +37,24 @@ export default async function KnowledgeBasePage({
 }) {
   const { tab } = await searchParams;
   const scope = tab === "external" ? "external" : "internal";
-  const [categories, workspace] = await Promise.all([getKnowledgeBase(scope), getWorkspace()]);
+  const [categories, articles, me] = await Promise.all([
+    getCategories(scope),
+    getArticles({ scope }),
+    getMe(),
+  ]);
 
   const isInternal = scope === "internal";
+  // Creating a category is admin-only in the API, so an agent is not shown
+  // a control that would come back 403. Writing articles is not restricted.
+  const isAdmin = me.membership.role === "admin";
+  const categoryLabel = isInternal ? "category" : "section";
 
   return (
     <PageShell>
-      <TrialStrip daysLeft={workspace.trialDaysLeft} plan={workspace.plan} />
+      <TrialStrip
+        daysLeft={me.workspace.trialDaysLeft}
+        plan={me.workspace.plan}
+      />
 
       <PageHeader
         title="Knowledge base"
@@ -49,17 +66,7 @@ export default async function KnowledgeBasePage({
         actions={
           <>
             <SourceDialog />
-            <Button variant="ghost" size="sm">
-              <CircleCheck />
-              Mark all ready
-            </Button>
-            <Button variant="secondary" size="sm">
-              <ExternalLink />
-              Preview
-            </Button>
-            <Button variant="primary" size="sm" disabled={categories.length === 0}>
-              Publish
-            </Button>
+            {categories.length > 0 && <NewArticleDialog categories={categories} />}
           </>
         }
       />
@@ -87,13 +94,16 @@ export default async function KnowledgeBasePage({
 
       {categories.length > 0 ? (
         <>
-          <div className="mb-3 flex justify-end">
-            <NewCategoryDialog
-              triggerLabel={isInternal ? "New category" : "New section"}
-              variant="secondary"
-            />
-          </div>
-          <CategoryList categories={categories} />
+          {isAdmin && (
+            <div className="mb-3 flex justify-end">
+              <NewCategoryDialog
+                scope={scope}
+                triggerLabel={isInternal ? "New category" : "New section"}
+                variant="secondary"
+              />
+            </div>
+          )}
+          <CategoryList categories={categories} articles={articles} />
         </>
       ) : (
         <EmptyState
@@ -110,17 +120,17 @@ export default async function KnowledgeBasePage({
           }
           suggestions={isInternal ? internalSuggestions : externalSuggestions}
           actions={
-            <>
+            isAdmin ? (
               <NewCategoryDialog
+                scope={scope}
                 triggerLabel={isInternal ? "New category" : "New section"}
               />
-              {!isInternal && (
-                <Button variant="secondary" size="sm">
-                  <Upload />
-                  Upload document
-                </Button>
-              )}
-            </>
+            ) : (
+              <p className="text-[13px] text-ink-500">
+                An admin has to create the first {categoryLabel} before you can
+                write an article.
+              </p>
+            )
           }
         />
       )}

@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 
 import { SettingSection } from "@/components/console/setting-section";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import type { KbCategory } from "@/lib/mock/types";
+import type { KbCategory } from "@/lib/types";
 
 export function PortalKbSettings({ categories }: { categories: KbCategory[] }) {
   const [showKb, setShowKb] = useState(categories.length > 0);
@@ -34,7 +35,7 @@ export function PortalKbSettings({ categories }: { categories: KbCategory[] }) {
               before you can show it here.
             </p>
             <Button asChild variant="secondary" size="sm" className="mt-2.5">
-              <a href="/knowledge-base?tab=external">Go to the knowledge base</a>
+              <Link href="/knowledge-base?tab=external">Go to the knowledge base</Link>
             </Button>
           </div>
         )}
@@ -56,7 +57,7 @@ export function PortalKbSettings({ categories }: { categories: KbCategory[] }) {
                   {category.name}
                 </span>
                 <span className="text-[12px] text-ink-500">
-                  {category.articles.length} articles
+                  {category.articleCount} articles
                 </span>
                 <Switch
                   defaultChecked

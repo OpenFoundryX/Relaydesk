@@ -52,6 +52,10 @@ export async function apiFetch<T>(path: string, options: Options = {}): Promise<
   const token = auth ? await getSessionToken() : null;
   const method = init.method ?? "GET";
   const startedAt = performance.now();
+  // A multipart body carries a generated boundary that only `fetch` knows,
+  // so it has to write the Content-Type itself. Setting ours would produce a
+  // body the API cannot parse. Every other call is JSON.
+  const multipart = init.body instanceof FormData;
 
   let response: Response;
   try {
@@ -59,7 +63,7 @@ export async function apiFetch<T>(path: string, options: Options = {}): Promise<
       ...init,
       cache: "no-store",
       headers: {
-        "Content-Type": "application/json",
+        ...(multipart ? {} : { "Content-Type": "application/json" }),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...headers,
       },

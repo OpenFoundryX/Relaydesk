@@ -110,18 +110,35 @@ export interface MetricSeries {
 
 export type ArticleStatus = "draft" | "ready" | "published";
 
+/** Internal articles are procedures for the AI agent; external ones are the customer-facing help site. */
+export type KbScope = "internal" | "external";
+
 export interface KbArticle {
   id: string;
   title: string;
+  slug: string;
   excerpt: string;
   status: ArticleStatus;
+  categoryId: string;
+  /**
+   * The article body as ProseMirror JSON. `unknown` on purpose: nothing in
+   * the console reads into it by hand -- the editor round-trips it through
+   * TipTap, and `DocRenderer` walks it defensively through a fixed node
+   * table. Typing it as a shape would invite code that trusts that shape.
+   */
+  doc: unknown;
   updatedAt: string;
+  /** When it first went live. Stays set after an unpublish; `status` says whether it is live now. */
+  publishedAt: string | null;
 }
 
 export interface KbCategory {
   id: string;
   name: string;
-  articles: KbArticle[];
+  slug: string;
+  scope: KbScope;
+  position: number;
+  articleCount: number;
 }
 
 export interface Snippet {
