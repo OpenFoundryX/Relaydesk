@@ -24,7 +24,7 @@ const RESERVED = new Set(["www", "app", "api", "admin", "mail", "inbound"]);
  * /help/billing/refunds stays exactly that in the address bar and in the
  * route tree.
  */
-function workspaceSlug(host: string | null): string | null {
+export function workspaceSlug(host: string | null): string | null {
   if (!host) return null;
   const bare = host.split(":")[0].toLowerCase();
   const root = PORTAL_DOMAIN.split(":")[0].toLowerCase();
