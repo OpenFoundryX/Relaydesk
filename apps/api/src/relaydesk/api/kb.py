@@ -4,6 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query, Response, UploadFile, status
 
 from relaydesk.api.deps import DbSession, Scope
+from relaydesk.config import get_settings
 from relaydesk.errors import Invalid
 from relaydesk.models.kb import ArticleStatus, KbArticle, KbCategory, KbScope
 from relaydesk.schemas.kb import (
@@ -208,6 +209,15 @@ async def upload_image(
     file: UploadFile,
 ) -> ImageOut:
     article = await kb_articles.get(session, scope_.workspace_id, article_id)
+
+    # A cheap check on the declared size before pulling the body into
+    # memory -- `file.size` is a client-supplied multipart header, so it is
+    # a hint to save memory on the common case, not the guard: `store`'s
+    # `len(content) > cap` check below remains the authoritative one.
+    cap = get_settings().kb_image_max_bytes
+    if file.size is not None and file.size > cap:
+        raise Invalid(kb_images.oversize_message(cap))
+
     image = await kb_images.store(
         session,
         article,

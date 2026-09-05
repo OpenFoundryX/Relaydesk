@@ -24,6 +24,14 @@ def storage_root() -> Path:
     return Path(get_settings().attachment_dir)
 
 
+def oversize_message(cap: int) -> str:
+    """Shared with the router, which checks the declared size before it
+    reads the body into memory -- this function is the one place the
+    wording of that rejection lives.
+    """
+    return f"That image is larger than the {cap // 1024 // 1024} MB limit."
+
+
 async def store(
     session: AsyncSession,
     article: KbArticle,
@@ -38,7 +46,7 @@ async def store(
 
     cap = get_settings().kb_image_max_bytes
     if len(content) > cap:
-        raise Invalid(f"That image is larger than the {cap // 1024 // 1024} MB limit.")
+        raise Invalid(oversize_message(cap))
 
     digest, key = blobs.write(storage_root(), article.workspace_id, content)
     image = KbImage(
