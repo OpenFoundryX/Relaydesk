@@ -84,6 +84,16 @@ def test_slugify_handles_accented_characters() -> None:
     assert slugify("Café basics") == "cafe-basics"
 
 
+def test_slugify_collapses_spaced_dashes() -> None:
+    """Runs of punctuation including spaced dashes collapse to single hyphen."""
+    assert slugify("Refunds - a guide") == "refunds-a-guide"
+
+
+def test_slugify_collapses_multiple_dashes() -> None:
+    """Multiple consecutive dashes collapse to a single hyphen."""
+    assert slugify("A -- B") == "a-b"
+
+
 def test_derive_excerpt_truncates_on_a_word_boundary() -> None:
     text = "Refunds are issued within thirty days of the original charge date."
 
