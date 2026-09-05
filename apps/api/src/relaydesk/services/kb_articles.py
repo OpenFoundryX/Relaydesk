@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -144,3 +145,35 @@ async def delete(
     article = await get(session, workspace_id, article_id)
     await session.delete(article)
     await session.flush()
+
+
+# draft -> ready -> published, plus the two ways back. Publishing skips no
+# step: the review state is the only thing standing between a half-written
+# article and a workspace's public site.
+ALLOWED_TRANSITIONS: dict[ArticleStatus, frozenset[ArticleStatus]] = {
+    ArticleStatus.draft: frozenset({ArticleStatus.ready}),
+    ArticleStatus.ready: frozenset({ArticleStatus.draft, ArticleStatus.published}),
+    ArticleStatus.published: frozenset({ArticleStatus.draft}),
+}
+
+
+async def set_status(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    article_id: uuid.UUID,
+    target: ArticleStatus,
+) -> KbArticle:
+    article = await get(session, workspace_id, article_id)
+    if target not in ALLOWED_TRANSITIONS[article.status]:
+        raise Invalid(
+            f"An article cannot go from {article.status.value} to {target.value}."
+        )
+
+    article.status = target
+    if target is ArticleStatus.published and article.published_at is None:
+        # Records when it first went live. Unpublishing leaves it, because
+        # status already says whether it is live now.
+        article.published_at = datetime.now(UTC)
+
+    await session.flush()
+    return article

@@ -13,6 +13,7 @@ from relaydesk.schemas.kb import (
     CategoryCreateRequest,
     CategoryOut,
     CategoryPatch,
+    StatusRequest,
 )
 from relaydesk.services import kb_articles, kb_categories
 
@@ -24,6 +25,13 @@ def _parsed_scope(raw: str) -> KbScope:
         return KbScope(raw)
     except ValueError:
         raise Invalid(f"Unknown scope {raw!r}.") from None
+
+
+def _parsed_status(raw: str) -> ArticleStatus:
+    try:
+        return ArticleStatus(raw)
+    except ValueError:
+        raise Invalid(f"Unknown status {raw!r}.") from None
 
 
 def _category_out(category: KbCategory, article_count: int) -> CategoryOut:
@@ -159,6 +167,20 @@ async def update_article(
         excerpt=payload.excerpt,
         doc=payload.doc,
         category_id=uuid.UUID(payload.category_id) if payload.category_id else None,
+    )
+    await session.commit()
+    return _article_out(article)
+
+
+@router.post("/articles/{article_id}/status", response_model=ArticleOut)
+async def set_article_status(
+    article_id: uuid.UUID,
+    payload: StatusRequest,
+    scope_: Scope,
+    session: DbSession,
+) -> ArticleOut:
+    article = await kb_articles.set_status(
+        session, scope_.workspace_id, article_id, _parsed_status(payload.status)
     )
     await session.commit()
     return _article_out(article)

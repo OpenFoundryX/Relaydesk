@@ -49,3 +49,7 @@ class ArticlePatch(CamelModel):
     excerpt: str | None = Field(default=None, max_length=400)
     doc: dict | None = None
     category_id: str | None = None
+
+
+class StatusRequest(CamelModel):
+    status: str
