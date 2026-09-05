@@ -422,14 +422,21 @@ async def unrouted(session: AsyncSession, limit: int = 20) -> list[RawMessage]:
     Most of these matched no workspace at all -- usually a forwarding rule
     pointing at the wrong address. A few routed fine but are a bounce that
     could not be threaded to any conversation (state is `unrouted` either
-    way; see `_handle_bounce`). The bytes are kept for both, so fixing the
-    rule and re-running ``relaydesk reingest <id>`` turns these into tickets
+    way; see `_handle_bounce`). ``failed`` rows are the third case: routing,
+    classification, or threading raised an exception ``ingest_raw`` did not
+    anticipate (see its docstring) -- these carry ``error`` describing what
+    went wrong. The bytes are kept for all three, so fixing the rule (or the
+    bug) and re-running ``relaydesk reingest <id>`` turns these into tickets
     rather than losing them.
     """
     return list(
         await session.scalars(
             sa.select(RawMessage)
-            .where(RawMessage.state == RawMessageState.unrouted)
+            .where(
+                RawMessage.state.in_(
+                    (RawMessageState.unrouted, RawMessageState.failed)
+                )
+            )
             .order_by(RawMessage.received_at.desc())
             .limit(limit)
         )
@@ -450,7 +457,9 @@ def _print_unrouted(rows: list[RawMessage]) -> None:
             detail = f"from={message.from_email!r}  subject={message.subject!r}"
         except Exception:
             detail = "(unparseable)"
-        print(f"{row.id}  {row.received_at.isoformat()}  {detail}")
+        if row.state is RawMessageState.failed and row.error:
+            detail = f"{detail}  error={row.error!r}"
+        print(f"{row.id}  {row.state.value}  {row.received_at.isoformat()}  {detail}")
 
 
 async def reingest(session: AsyncSession, raw_message_id: uuid.UUID) -> None:

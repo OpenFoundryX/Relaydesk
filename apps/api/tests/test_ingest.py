@@ -9,7 +9,7 @@ from relaydesk.models.contact import Contact
 from relaydesk.models.conversation import Conversation, ConversationStatus
 from relaydesk.models.message import Message, MessageDirection, MessageRole
 from relaydesk.models.raw_message import RawMessage, RawMessageState
-from relaydesk.services import channel_accounts, contacts, ingest
+from relaydesk.services import channel_accounts, contacts, conversations, ingest
 from tests.factories import make_workspace
 
 
@@ -470,6 +470,134 @@ async def test_a_contact_insert_race_does_not_lose_the_pipelines_earlier_mutatio
     assert row.workspace_id == workspace.id
     assert row.channel_account_id == account.id
     assert row.external_id == "<a1@example.com>"
+
+
+async def test_a_long_display_name_is_truncated_not_fatal(
+    db_session: AsyncSession,
+) -> None:
+    """A From: display name over Contact.name's 160 characters is not
+    adversarial -- automated senders and other ticketing systems produce
+    them routinely. Before normalize._header_fields bounded from_name,
+    contacts.upsert's insert raised StringDataRightTruncation deep inside
+    append_message's commit, aborting the whole ingest transaction. This
+    pins that the ticket is created anyway, with the contact's name simply
+    truncated to fit."""
+    _workspace, account = await _account(db_session)
+    address = channel_accounts.address_for(account, "acme")
+    long_name = "A" * 300
+    raw = (
+        f'From: "{long_name}" <ada@example.com>\r\n'
+        f"To: {address}\r\n"
+        f"Subject: Refund please\r\n"
+        f"Date: Tue, 2 Sep 2026 10:00:00 +0000\r\n"
+        f"Message-ID: <long-name@example.com>\r\n"
+        f"\r\n"
+        f"Please refund my order.\r\n"
+    ).encode()
+    row = await _store(db_session, raw)
+
+    state = await ingest.ingest_raw(db_session, row.id)
+
+    assert state is RawMessageState.ingested
+    assert (
+        await db_session.scalar(sa.select(sa.func.count()).select_from(Conversation))
+        == 1
+    )
+    contact = await db_session.scalar(
+        sa.select(Contact).where(Contact.email == "ada@example.com")
+    )
+    assert contact is not None
+    assert contact.name == long_name[:160]
+
+
+async def test_an_unrecoverable_failure_lands_in_failed_not_stuck_at_fetched(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    """Before ingest_raw had a terminal state, an exception here aborted the
+    transaction and left row.state at `fetched` forever: ingest_message
+    exhausts its five retries hitting the same error every time, and
+    reconcile_inbound re-enqueues the row every five minutes after that --
+    forever. A terminal `failed` state with the error recorded is what
+    stops the loop and gives the operator something to look at instead of
+    silent, permanent message loss."""
+    _workspace, account = await _account(db_session)
+    address = channel_accounts.address_for(account, "acme")
+    row = await _store(db_session, _raw(address))
+    # Committed, matching how imap.store_new leaves a real raw message:
+    # already durable in its own transaction by the time ingestion runs.
+    # Otherwise the rollback that recovers from the poisoned transaction
+    # below would undo this row's own insert along with everything else.
+    await db_session.commit()
+
+    async def boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("simulated unrecoverable failure")
+
+    monkeypatch.setattr(conversations, "create_conversation", boom)
+
+    state = await ingest.ingest_raw(db_session, row.id)
+
+    assert state is RawMessageState.failed
+    await db_session.refresh(row)
+    assert row.state is RawMessageState.failed
+    assert row.error is not None
+    assert "simulated unrecoverable failure" in row.error
+
+    # Terminal, not stuck: a redelivered task must not retry the same
+    # failing operation forever -- it short-circuits on the recorded state.
+    assert await ingest.ingest_raw(db_session, row.id) is RawMessageState.failed
+
+
+async def test_a_date_header_far_in_the_past_does_not_sink_the_conversation(
+    db_session: AsyncSession,
+) -> None:
+    """The sender's Date: header is attacker-controlled, but
+    Conversation.last_message_at -- the keyset-paginated inbox's sort key --
+    was set straight from it. An unclamped Date this old would sort a brand
+    new ticket below every 50-row page forever."""
+    _workspace, account = await _account(db_session)
+    address = channel_accounts.address_for(account, "acme")
+    row = await _store(
+        db_session, _raw(address, date="Tue, 2 Sep 1990 10:00:00 +0000")
+    )
+
+    await ingest.ingest_raw(db_session, row.id)
+
+    conversation = await db_session.scalar(sa.select(Conversation))
+    assert conversation.last_message_at.year >= 2000
+
+
+async def test_a_date_header_far_in_the_future_does_not_pin_the_conversation(
+    db_session: AsyncSession,
+) -> None:
+    """An unclamped Date far in the future would pin the conversation to
+    the top of the inbox permanently: append_message's max() means no
+    later, honest message could ever move it back down."""
+    _workspace, account = await _account(db_session)
+    address = channel_accounts.address_for(account, "acme")
+    row = await _store(
+        db_session, _raw(address, date="Fri, 2 Sep 2099 10:00:00 +0000")
+    )
+
+    await ingest.ingest_raw(db_session, row.id)
+
+    conversation = await db_session.scalar(sa.select(Conversation))
+    assert conversation.last_message_at.year < 2099
+    assert conversation.last_message_at <= row.received_at + ingest._MAX_FUTURE_SKEW
+
+
+async def test_an_ordinary_date_header_passes_through_unclamped(
+    db_session: AsyncSession,
+) -> None:
+    """A normal, recent Date must render exactly as sent -- the clamp only
+    ever engages far outside any plausible mail delivery window."""
+    _workspace, account = await _account(db_session)
+    address = channel_accounts.address_for(account, "acme")
+    row = await _store(db_session, _raw(address))
+
+    await ingest.ingest_raw(db_session, row.id)
+
+    message = await db_session.scalar(sa.select(Message))
+    assert message.sent_at == datetime(2026, 9, 2, 10, 0, tzinfo=UTC)
 
 
 async def test_requeue_unprocessed_finds_a_stalled_raw_message(

@@ -27,10 +27,29 @@ _WHITESPACE = re.compile(r"[ \t]+")
 _BLANK_LINES = re.compile(r"\n{3,}")
 _MESSAGE_ID = re.compile(r"<[^<>@\s]+@[^<>@\s]+>")
 # CR/LF (and other C0/DEL control characters) can reach a decoded filename
-# through an RFC 2047 encoded-word. Every consumer of Attachment.filename --
-# today just a Content-Disposition header -- inherits this once here rather
-# than each one growing its own ad hoc sanitizer.
+# -- or a decoded subject -- through an RFC 2047 encoded-word. Every consumer
+# of Attachment.filename (today just a Content-Disposition header) and of
+# InboundMessage.subject (an outbound EmailMessage header) inherits this once
+# here rather than each one growing its own ad hoc sanitizer. For the
+# subject specifically: EmailMessage.__setitem__ raises ValueError on a
+# header value containing \r or \n, which would otherwise permanently fail
+# every reply on the conversation.
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+# Column widths of the bounded fields these values eventually reach --
+# Contact.name (String(160)), Message.to_address (String(320)),
+# Message/RawMessage.external_id and Message.in_reply_to (String(998)).
+# Bounding once here, at parse time, is what makes every downstream
+# consumer (contacts.upsert, ingest.py's to_address/external_id/
+# in_reply_to assignments) safe by construction instead of by convention --
+# the same reasoning append_message and create_conversation already apply
+# to author_name and subject. An unbounded value here (a hostile or simply
+# broken sender's From: display name, an absurdly long Message-ID) would
+# otherwise raise StringDataRightTruncation deep in a commit, aborting the
+# whole ingest transaction.
+_NAME_MAX = 160
+_ADDRESS_MAX = 320
+_MESSAGE_ID_MAX = 998
 
 
 @dataclass(frozen=True)
@@ -72,8 +91,19 @@ def _decode(value: str | None) -> str:
 def _addresses(message: Message, name: str) -> tuple[str, ...]:
     values = message.get_all(name, [])
     return tuple(
-        address.lower() for _display, address in getaddresses(values) if address
+        address.lower()[:_ADDRESS_MAX]
+        for _display, address in getaddresses(values)
+        if address
     )
+
+
+def _subject(raw: str | None) -> str:
+    """A decoded RFC 2047 encoded-word can itself contain a CR or LF. Left
+    in, ``EmailMessage.__setitem__`` raises ``ValueError`` the moment this
+    subject is used to build a reply, which fails every future reply on the
+    conversation -- so this strips control characters the same way
+    ``_safe_filename`` does for a decoded filename."""
+    return _CONTROL_CHARS.sub("", _decode(raw))
 
 
 def _safe_filename(raw: str | None) -> str:
@@ -165,7 +195,12 @@ def _walk(message: Message) -> tuple[str, str | None, list[ParsedAttachment]]:
 
 
 def _message_ids(raw: str) -> tuple[str, ...]:
-    return tuple(_MESSAGE_ID.findall(raw or ""))
+    # The regex itself has no length bound (a hostile or merely broken
+    # References header can carry an arbitrarily long angle-bracket run), so
+    # bound the result here rather than in the pattern -- this is what keeps
+    # each id safe for Message/RawMessage.external_id and Message.in_reply_to
+    # (both String(998)).
+    return tuple(match[:_MESSAGE_ID_MAX] for match in _MESSAGE_ID.findall(raw or ""))
 
 
 def _safe_headers(message: Message) -> dict[str, str]:
@@ -213,8 +248,8 @@ def _header_fields(message: Message) -> dict[str, Any]:
         "references": _guarded(
             lambda: _message_ids(str(message.get("References", ""))), ()
         ),
-        "from_email": from_email.lower(),
-        "from_name": _decode(from_name) or from_email,
+        "from_email": from_email.lower()[:_ADDRESS_MAX],
+        "from_name": (_decode(from_name) or from_email)[:_NAME_MAX],
         "to": _guarded(lambda: _addresses(message, "To"), ()),
         "cc": _guarded(lambda: _addresses(message, "Cc"), ()),
         "delivered_to": _guarded(
@@ -225,7 +260,7 @@ def _header_fields(message: Message) -> dict[str, Any]:
             (),
         ),
         "subject": _guarded(
-            lambda: _decode(message.get("Subject")) or NO_SUBJECT, NO_SUBJECT
+            lambda: _subject(message.get("Subject")) or NO_SUBJECT, NO_SUBJECT
         ),
     }
 

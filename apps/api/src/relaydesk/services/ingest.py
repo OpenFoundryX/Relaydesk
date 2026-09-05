@@ -4,6 +4,7 @@ Order matters: route, classify, thread, append. Classification runs before
 anything is created so a bounce or a newsletter never becomes a ticket.
 """
 
+import logging
 import re
 import uuid
 from dataclasses import dataclass
@@ -23,6 +24,8 @@ from relaydesk.models.message import Message, MessageDirection, MessageRole
 from relaydesk.models.raw_message import RawMessage, RawMessageState
 from relaydesk.services import attachments, channel_accounts, contacts, conversations
 
+logger = logging.getLogger(__name__)
+
 CONTACT_HOURLY_CAP = 20
 SUBJECT_WINDOW = timedelta(days=7)
 REOPENING_STATUSES = frozenset(
@@ -36,6 +39,28 @@ REOPENING_STATUSES = frozenset(
 _SUBJECT_NOISE = re.compile(
     r"^(?:\s*(?:re|fw|fwd|aw|sv|vs)\s*:\s*|\s*\[[^\]]{1,40}\]\s*)+", re.IGNORECASE
 )
+
+# The sender's Date: header is attacker-controlled, but Conversation.
+# last_message_at -- the sort key for the keyset-paginated inbox -- is set
+# straight from it (via create_conversation / append_message). An unclamped
+# Date far in the past sorts a live ticket below every 50-row page forever;
+# one far in the future pins it to the top permanently, because
+# append_message's max() means no later, honest message can ever move it
+# back down. Clamping to RawMessage.received_at -- the time this poller
+# actually fetched the bytes, which the sender never controls -- with a
+# small allowance for real clock skew keeps the header useful for display
+# (Message.sent_at) while making it harmless as a sort key.
+_MAX_FUTURE_SKEW = timedelta(hours=1)
+_SENT_AT_FLOOR = datetime(2000, 1, 1, tzinfo=UTC)
+
+
+def _clamp_sent_at(sent_at: datetime, received_at: datetime) -> datetime:
+    ceiling = received_at + _MAX_FUTURE_SKEW
+    if sent_at > ceiling:
+        return ceiling
+    if sent_at < _SENT_AT_FLOOR:
+        return _SENT_AT_FLOOR
+    return sent_at
 
 
 @dataclass(frozen=True)
@@ -201,6 +226,7 @@ async def _handle_bounce(
     workspace_id: uuid.UUID,
     message: InboundMessage,
     to_address: str,
+    sent_at: datetime,
 ) -> RawMessageState:
     conversation = await resolve_thread(session, workspace_id, message, None)
     if conversation is None:
@@ -220,7 +246,7 @@ async def _handle_bounce(
         author_name="Mail delivery",
         to_address=to_address,
         body=f"Delivery failed: {message.subject}",
-        sent_at=message.sent_at,
+        sent_at=sent_at,
     )
     conversations.record(
         session,
@@ -237,6 +263,21 @@ async def _handle_bounce(
 async def ingest_raw(
     session: AsyncSession, raw_message_id: uuid.UUID
 ) -> RawMessageState:
+    """Route, classify, thread, and append -- or fail the row terminally.
+
+    Anything unexpected raised while doing that (most plausibly a database
+    constraint this module didn't anticipate) aborts the transaction it ran
+    in, which discards every mutation this call made, including any it made
+    to ``row`` itself -- so the row cannot be marked ``failed`` inside the
+    same transaction that raised. Instead: roll back the poisoned
+    transaction, then record the failure in a fresh one. Without a terminal
+    state, ``row.state`` stays ``fetched`` forever: ``ingest_message``
+    exhausts its five retries hitting the same error every time, and
+    ``reconcile_inbound`` re-enqueues the row every five minutes after that,
+    forever -- silent, permanent message loss with no operator-visible
+    trace. ``failed`` rows show up in ``relaydesk unrouted list`` precisely
+    so there is one.
+    """
     row = await session.get(RawMessage, raw_message_id)
     if row is None:
         return RawMessageState.failed
@@ -244,6 +285,22 @@ async def ingest_raw(
         # Redelivered task for a message already handled.
         return row.state
 
+    try:
+        return await _ingest_routed(session, row)
+    except Exception as exc:
+        await session.rollback()
+        failed = await session.get(RawMessage, raw_message_id)
+        if failed is not None:
+            failed.state = RawMessageState.failed
+            failed.error = str(exc)[:2000]
+            await session.commit()
+        logger.exception(
+            "ingest_raw failed permanently for raw message %s", raw_message_id
+        )
+        return RawMessageState.failed
+
+
+async def _ingest_routed(session: AsyncSession, row: RawMessage) -> RawMessageState:
     message = normalize.parse(row.raw)
     row.external_id = message.message_id
 
@@ -256,6 +313,7 @@ async def ingest_raw(
     row.workspace_id = matched.account.workspace_id
     row.channel_account_id = matched.account.id
     workspace_id = matched.account.workspace_id
+    sent_at = _clamp_sent_at(message.sent_at, row.received_at)
 
     if await _already_ingested(session, matched.account.id, message.message_id):
         row.state = RawMessageState.ingested
@@ -265,7 +323,7 @@ async def ingest_raw(
     disposition = classify(message)
     if disposition is Disposition.bounce:
         row.state = await _handle_bounce(
-            session, workspace_id, message, matched.address
+            session, workspace_id, message, matched.address, sent_at
         )
         await session.commit()
         return row.state
@@ -297,7 +355,7 @@ async def ingest_raw(
             contact,
             message.subject,
             Channel.email,
-            message.sent_at,
+            sent_at,
         )
         conversations.record(
             session,
@@ -321,7 +379,7 @@ async def ingest_raw(
         to_address=matched.address,
         body=message.text_body,
         body_html=message.html_body,
-        sent_at=message.sent_at,
+        sent_at=sent_at,
         external_id=message.message_id,
         in_reply_to=message.in_reply_to,
         channel_account_id=matched.account.id,

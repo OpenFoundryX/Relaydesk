@@ -1,3 +1,4 @@
+import base64
 from datetime import UTC, datetime
 from email.message import EmailMessage, Message
 
@@ -326,3 +327,74 @@ def test_minimal_message_preserves_delivered_to_and_message_id() -> None:
     assert parsed.cc == ("cc@acme.com",)
     assert parsed.text_body == ""
     assert parsed.attachments == ()
+
+
+def test_a_crlf_in_an_encoded_subject_cannot_break_an_outbound_reply() -> None:
+    """Same class of bug as the encoded-word filename case above: an RFC
+    2047 encoded-word decodes in memory, so a Subject that is on-the-wire
+    harmless (no raw header can carry a literal CR/LF) can still decode to a
+    string containing one -- confirmed directly against Python's own email
+    package, which decodes ``Subject`` through the same path ``_decode``
+    does. Left in, ``EmailMessage.__setitem__`` raises ``ValueError`` the
+    moment ``outbound.build_reply`` sets this as the reply's Subject header,
+    which would fail every future reply on the conversation."""
+    encoded = base64.b64encode(b"hi\r\nX-Injected: 1").decode()
+    raw = (
+        b"From: ada@example.com\r\n"
+        b"To: support@acme.com\r\n"
+        b"Subject: =?utf-8?B?" + encoded.encode() + b"?=\r\n"
+        b"Date: Tue, 2 Sep 2026 10:00:00 +0000\r\n"
+        b"Message-ID: <a1@example.com>\r\n"
+        b"\r\n"
+        b"body\r\n"
+    )
+
+    subject = normalize.parse(raw).subject
+
+    assert "\r" not in subject
+    assert "\n" not in subject
+    assert subject == "hiX-Injected: 1"
+
+
+def test_a_long_display_name_is_bounded_to_contact_names_column_width() -> None:
+    """Contact.name is String(160). An unbounded From: display name --
+    routine for automated senders and other ticketing systems, not just an
+    attacker -- must not reach contacts.upsert's INSERT and raise
+    StringDataRightTruncation deep inside a commit, aborting the whole
+    ingest transaction."""
+    message = _build(From=f'"{"A" * 300}" <ada@example.com>')
+    message.set_content("hi")
+
+    parsed = normalize.parse(message.as_bytes())
+
+    assert len(parsed.from_name) <= 160
+    assert parsed.from_name == "A" * 160
+
+
+def test_a_long_address_is_bounded_to_the_to_address_columns_width() -> None:
+    """Message.to_address is String(320). ingest.py assigns the matched
+    route's address straight to it, so an oversized (forged or merely
+    malformed) recipient address must not blow that column the same way an
+    oversized display name blows Contact.name."""
+    long_local_part = "a" * 320
+    message = _build(To=f"{long_local_part}@example.com")
+    message.set_content("hi")
+
+    parsed = normalize.parse(message.as_bytes())
+
+    assert len(parsed.to[0]) <= 320
+
+
+def test_a_long_message_id_is_bounded_to_its_columns_width() -> None:
+    """Message/RawMessage.external_id and Message.in_reply_to are all
+    String(998), and the Message-ID regex itself has no length bound --
+    unlike the +c tag's digit-count bound in channel_accounts.py, an
+    absurdly long angle-bracket run here would otherwise reach the column
+    unbounded."""
+    long_id = f"<{'a' * 1200}@example.com>"
+    message = _build(**{"Message-ID": long_id})
+    message.set_content("hi")
+
+    parsed = normalize.parse(message.as_bytes())
+
+    assert len(parsed.message_id) <= 998

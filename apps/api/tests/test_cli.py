@@ -19,6 +19,7 @@ from relaydesk.models import (
     Membership,
     Message,
     RawMessage,
+    RawMessageState,
     SavedView,
     User,
     Workspace,
@@ -234,3 +235,28 @@ async def test_unrouted_lists_mail_that_failed_to_route_and_omits_the_rest(
     ids = {row.id for row in rows}
     assert unroutable.id in ids
     assert routed.id not in ids
+
+
+async def test_unrouted_also_lists_mail_that_failed_permanently(
+    db_session: AsyncSession,
+) -> None:
+    """``failed`` is the third terminal state ingest_raw can leave a row in
+    -- an unrecoverable exception, not a routing miss. It belongs in the
+    same operator listing as `unrouted`: both are "mail this deployment
+    could not turn into a ticket" (see the docstring), and this is the only
+    place an operator would ever see one."""
+    failed = RawMessage(
+        mailbox="INBOX",
+        uidvalidity=1,
+        uid=3,
+        raw=_raw("nobody@nowhere.example.com", subject="Broke"),
+        received_at=datetime.now(UTC),
+        state=RawMessageState.failed,
+        error="simulated unrecoverable failure",
+    )
+    db_session.add(failed)
+    await db_session.commit()
+
+    rows = await unrouted(db_session)
+
+    assert failed.id in {row.id for row in rows}
