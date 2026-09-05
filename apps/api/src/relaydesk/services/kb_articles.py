@@ -195,4 +195,9 @@ async def set_status(
         article.published_at = datetime.now(UTC)
 
     await session.flush()
+    # updated_at (onupdate) and search_vector (a generated column) come back
+    # expired after an UPDATE flush, not populated inline -- refresh so the
+    # router can serialize them without a synchronous lazy load blowing up
+    # with MissingGreenlet.
+    await session.refresh(article)
     return article

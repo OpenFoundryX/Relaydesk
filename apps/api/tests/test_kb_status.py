@@ -115,3 +115,48 @@ async def test_an_illegal_transition_over_http_is_a_422(db_session, client) -> N
     )
 
     assert response.status_code == 422
+
+
+async def test_a_legal_transition_over_http_returns_the_updated_article(
+    db_session, client
+) -> None:
+    """The success path mutates the row and then serializes it in the same
+    request -- exactly the shape that made a successful PATCH 500 until
+    ``update()`` was fixed with a post-flush refresh."""
+    workspace, author, article = await _article(db_session)
+    await db_session.commit()
+    headers = await sign_in(client, db_session, author.email)
+
+    response = await client.post(
+        f"/api/kb/articles/{article.id}/status",
+        json={"status": "ready"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "ready"
+
+
+async def test_a_self_transition_is_rejected(db_session: AsyncSession) -> None:
+    """Nothing in the table allows a status to transition to itself; a
+    future refactor must not silently turn this into a no-op success."""
+    workspace, _, article = await _article(db_session, status=ArticleStatus.ready)
+
+    with pytest.raises(Invalid):
+        await kb_articles.set_status(
+            db_session, workspace.id, article.id, ArticleStatus.ready
+        )
+
+
+async def test_an_unparseable_status_over_http_is_a_422(db_session, client) -> None:
+    workspace, author, article = await _article(db_session)
+    await db_session.commit()
+    headers = await sign_in(client, db_session, author.email)
+
+    response = await client.post(
+        f"/api/kb/articles/{article.id}/status",
+        json={"status": "not-a-real-status"},
+        headers=headers,
+    )
+
+    assert response.status_code == 422
