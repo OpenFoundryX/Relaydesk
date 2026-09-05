@@ -1,5 +1,7 @@
 """Turning a stored reply into mail that threads."""
 
+import asyncio
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
@@ -14,6 +16,20 @@ from relaydesk.models.conversation import Conversation
 from relaydesk.models.message import DeliveryState, Message, MessageDirection
 from relaydesk.models.workspace import Workspace
 from relaydesk.services import channel_accounts, mailer
+
+logger = logging.getLogger(__name__)
+
+# Delivery is at-least-once by design: SMTP has no idempotency key, and
+# marking `sent` before the send would trade a rare duplicate for a rare
+# silent non-delivery, which is worse for a support product. These bound
+# (without eliminating) the specific case of an ordinary transient failure
+# -- a dropped connection, a statement timeout -- landing in the narrow
+# window *after* the mail has already left the building but before the
+# commit that records it. A handful of immediate retries turns that into a
+# non-event; only a true outage still falls through to Celery's own retry,
+# which is where the residual duplicate risk lives.
+_COMMIT_RETRIES = 3
+_COMMIT_RETRY_DELAY_SECONDS = 0.05
 
 
 def new_message_id() -> str:
@@ -66,6 +82,17 @@ async def build_reply(session: AsyncSession, message: Message) -> EmailMessage:
         )
         sender = f'"{workspace.name}" <{address}>'
         reply_to = address
+    else:
+        # channel_accounts.deactivate can leave a workspace with no active
+        # account. The send still succeeds, but the +c tag that lets the
+        # customer's reply route back onto this conversation is silently
+        # gone -- loud in the log even though nothing here fails.
+        logger.warning(
+            "workspace %s has no active channel account; reply to "
+            "conversation %s will not carry a routable +c tag",
+            workspace.id,
+            conversation.id,
+        )
 
     headers: dict[str, str] = {"Reply-To": reply_to}
     if last_inbound is not None and last_inbound.external_id:
@@ -97,10 +124,33 @@ async def deliver(session: AsyncSession, message_id: uuid.UUID) -> DeliveryState
     built = await build_reply(session, message)
     await mailer.send_message(built)
 
-    message.delivery_state = DeliveryState.sent
-    message.delivery_error = None
-    await session.commit()
-    return DeliveryState.sent
+    # The mail is already gone. From here, an ordinary transient failure --
+    # not a hard crash -- would otherwise fall straight through to Celery's
+    # autoretry, which resends: the guard above only protects a *second*
+    # invocation, not this one finishing what it started. Retrying the
+    # commit in place turns a brief database blip into a non-event instead
+    # of a duplicate email.
+    last_error: BaseException | None = None
+    for attempt in range(_COMMIT_RETRIES):
+        message.delivery_state = DeliveryState.sent
+        message.delivery_error = None
+        try:
+            await session.commit()
+            return DeliveryState.sent
+        except Exception as error:
+            last_error = error
+            if attempt < _COMMIT_RETRIES - 1:
+                logger.warning(
+                    "commit failed after sending message %s (attempt %d/%d);"
+                    " retrying",
+                    message_id,
+                    attempt + 1,
+                    _COMMIT_RETRIES,
+                    exc_info=True,
+                )
+                await asyncio.sleep(_COMMIT_RETRY_DELAY_SECONDS)
+    assert last_error is not None
+    raise last_error
 
 
 async def mark_failed(session: AsyncSession, message_id: uuid.UUID, error: str) -> None:

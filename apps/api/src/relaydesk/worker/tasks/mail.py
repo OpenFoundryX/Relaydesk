@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import timedelta
 
@@ -5,6 +6,8 @@ from relaydesk.services import ingest, mailer, outbound
 from relaydesk.worker import bridge
 from relaydesk.worker.app import app
 from relaydesk.worker.tasks.inbound import ingest_message
+
+logger = logging.getLogger(__name__)
 
 
 @app.task(
@@ -72,7 +75,18 @@ def send_conversation_message(self, message_id: str) -> str:
 def reconcile_outbound() -> int:
     stalled = bridge.run(_requeue_stalled())
     for message_id in stalled:
-        send_conversation_message.delay(str(message_id))
+        # One broker hiccup mid-loop must not abandon the rest of this
+        # cycle's stalled messages -- the next tick would still catch them,
+        # but there's no reason to let a single failed publish cost the
+        # others when the guard is this cheap.
+        try:
+            send_conversation_message.delay(str(message_id))
+        except Exception:
+            logger.warning(
+                "could not republish relaydesk.send_conversation_message for %s",
+                message_id,
+                exc_info=True,
+            )
     return len(stalled)
 
 
@@ -89,5 +103,12 @@ def reconcile_inbound() -> int:
     """
     stuck = bridge.run(_requeue_unprocessed())
     for raw_message_id in stuck:
-        ingest_message.delay(str(raw_message_id))
+        try:
+            ingest_message.delay(str(raw_message_id))
+        except Exception:
+            logger.warning(
+                "could not republish relaydesk.ingest_message for %s",
+                raw_message_id,
+                exc_info=True,
+            )
     return len(stuck)

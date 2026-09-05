@@ -1,7 +1,9 @@
+import logging
 from datetime import UTC, datetime, timedelta
 from email import message_from_bytes
 from email.policy import default as default_policy
 
+import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,7 +13,8 @@ from relaydesk.models.message import (
     MessageDirection,
     MessageRole,
 )
-from relaydesk.services import channel_accounts, conversations, outbound
+from relaydesk.services import channel_accounts, conversations, outbound, queue
+from relaydesk.worker.tasks.mail import send_conversation_message
 from tests.factories import make_conversation, make_member, make_workspace
 
 
@@ -135,3 +138,126 @@ async def test_the_reconciler_ignores_a_fresh_reply(
     stalled = await outbound.requeue_stalled(db_session, timedelta(minutes=2))
 
     assert stalled == []
+
+
+async def test_a_broker_failure_during_add_reply_does_not_propagate(
+    db_session: AsyncSession, monkeypatch, caplog
+) -> None:
+    """By the time add_reply calls queue.enqueue_reply, the message row is
+    already committed. A broker hiccup here must not turn a successful reply
+    into a 500 for the agent -- the row stays `queued` for the reconciler."""
+    workspace = await make_workspace(db_session, slug="acme-broker")
+    member = await make_member(db_session, workspace, email="nilesh@example.com")
+    conversation = await make_conversation(db_session, workspace)
+
+    def raise_broker_error(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("broker unreachable")
+
+    monkeypatch.setattr(send_conversation_message, "delay", raise_broker_error)
+    # See test_queue.py's identical comment: migrations disable every logger
+    # created before they run, including this module's.
+    monkeypatch.setattr(queue.logger, "disabled", False)
+
+    with caplog.at_level(logging.WARNING):
+        await conversations.add_reply(
+            db_session, workspace.id, conversation.id, "On its way.", member
+        )
+
+    assert "relaydesk.send_conversation_message" in caplog.text
+
+    message = await db_session.scalar(
+        sa.select(Message)
+        .where(
+            Message.conversation_id == conversation.id,
+            Message.direction == MessageDirection.outbound,
+        )
+        .order_by(Message.sent_at.desc())
+        .limit(1)
+    )
+    assert message is not None
+    assert message.delivery_state is DeliveryState.queued
+
+
+async def test_a_reply_without_a_channel_account_omits_the_c_tag_and_logs(
+    db_session: AsyncSession, monkeypatch, caplog
+) -> None:
+    """channel_accounts.deactivate can leave a workspace with no active
+    account. The fallback address still sends, but silently drops the +c tag
+    the customer's reply needs to route back -- so this pins the fallback's
+    actual shape and makes sure it is loud, not silent."""
+    monkeypatch.setattr(outbound.logger, "disabled", False)
+    workspace = await make_workspace(db_session, slug="acme-no-account")
+    member = await make_member(db_session, workspace, email="nilesh@example.com")
+    conversation = await make_conversation(
+        db_session, workspace, subject="Refund please"
+    )
+    await conversations.append_message(
+        db_session,
+        conversation,
+        role=MessageRole.customer,
+        direction=MessageDirection.inbound,
+        author_name="Ada",
+        body="Where is my refund?",
+        sent_at=datetime.now(UTC),
+        external_id="<customer@example.com>",
+    )
+    await conversations.add_reply(
+        db_session, workspace.id, conversation.id, "On its way.", member
+    )
+    message = await db_session.scalar(
+        sa.select(Message).where(
+            Message.conversation_id == conversation.id,
+            Message.direction == MessageDirection.outbound,
+        )
+    )
+
+    with caplog.at_level(logging.WARNING):
+        built = await outbound.build_reply(db_session, message)
+
+    assert "+c" not in built["Reply-To"]
+    assert str(workspace.id) in caplog.text
+    assert str(conversation.id) in caplog.text
+    assert "no active channel account" in caplog.text
+
+
+async def test_a_transient_commit_failure_retries_in_place(
+    db_session: AsyncSession, smtp_server, monkeypatch
+) -> None:
+    """A dropped connection or a statement timeout right after the mail
+    leaves the building must not fall straight through to Celery's autoretry
+    -- that would resend for something as mundane as a database blip."""
+    _workspace, _conversation, message = await _reply(db_session)
+    real_commit = db_session.commit
+    calls = {"n": 0}
+
+    async def flaky_commit() -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("connection reset")
+        await real_commit()
+
+    monkeypatch.setattr(db_session, "commit", flaky_commit)
+
+    state = await outbound.deliver(db_session, message.id)
+
+    assert state is DeliveryState.sent
+    assert calls["n"] == 2
+    assert len(smtp_server.messages) == 1
+
+
+async def test_commit_failure_exhausting_retries_still_sent_only_once(
+    db_session: AsyncSession, smtp_server, monkeypatch
+) -> None:
+    """When every retry fails, the caller must see the error (so Celery's
+    own retry takes over) -- but the mail was only ever sent the once."""
+    _workspace, _conversation, message = await _reply(db_session)
+
+    async def always_fail() -> None:
+        raise RuntimeError("connection reset")
+
+    monkeypatch.setattr(db_session, "commit", always_fail)
+
+    with pytest.raises(RuntimeError):
+        await outbound.deliver(db_session, message.id)
+
+    assert len(smtp_server.messages) == 1
