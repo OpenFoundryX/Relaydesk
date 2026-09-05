@@ -80,6 +80,7 @@ class MessageOut(CamelModel):
     role: str
     body: str
     sent_at: str
+    delivery_state: str
     attachments: list[AttachmentOut] = []
 
 
@@ -177,6 +178,7 @@ def message_out(message: Message, timezone: str) -> MessageOut:
         role=message.role.value,
         body=message.body,
         sent_at=f"{local:%b} {local.day}, {local:%-I:%M %p}",
+        delivery_state=message.delivery_state.value,
         attachments=[attachment_out(item) for item in message.attachments],
     )
 

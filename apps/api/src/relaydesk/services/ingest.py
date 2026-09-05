@@ -143,6 +143,28 @@ async def resolve_thread(
     return None
 
 
+async def requeue_unprocessed(
+    session: AsyncSession, older_than: timedelta
+) -> list[uuid.UUID]:
+    """Raw messages the poller stored but never got onto the broker.
+
+    ``imap_poll`` writes ``raw_messages`` rows and then publishes one
+    ``ingest_message`` per row. The publish is not part of that transaction,
+    and the queue seam swallows broker failures by design, so a RabbitMQ
+    outage leaves rows sitting in ``fetched`` with nothing to pick them up.
+    Re-enqueuing is safe because ``ingest_raw`` returns early for any row
+    whose state is not ``fetched``.
+    """
+    cutoff = datetime.now(UTC) - older_than
+    result = await session.scalars(
+        sa.select(RawMessage.id).where(
+            RawMessage.state == RawMessageState.fetched,
+            RawMessage.created_at < cutoff,
+        )
+    )
+    return list(result)
+
+
 async def _already_ingested(
     session: AsyncSession, account_id: uuid.UUID, external_id: str | None
 ) -> bool:

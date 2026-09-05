@@ -6,6 +6,7 @@ directly — which would make importing any service pull in the worker.
 """
 
 import logging
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -27,4 +28,20 @@ def enqueue_system_email(
     except Exception:
         logger.warning(
             "Failed to enqueue relaydesk.send_system_email for %s", to, exc_info=True
+        )
+
+
+def enqueue_reply(message_id: uuid.UUID) -> None:
+    from relaydesk.worker.tasks.mail import send_conversation_message
+
+    # Same reasoning as enqueue_system_email above, doubly so here: the
+    # message row is already committed as `queued`, so a broker hiccup must
+    # not surface as a failed reply. reconcile_outbound republishes it.
+    try:
+        send_conversation_message.delay(str(message_id))
+    except Exception:
+        logger.warning(
+            "could not publish relaydesk.send_conversation_message for %s",
+            message_id,
+            exc_info=True,
         )

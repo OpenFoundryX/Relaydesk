@@ -1,46 +1,7 @@
-import socket
 from email import message_from_bytes
 from email.policy import default as default_policy
 
-import pytest
-from aiosmtpd.controller import Controller
-
-from relaydesk.config import get_settings
 from relaydesk.services import mailer
-
-
-class _Collector:
-    def __init__(self) -> None:
-        self.messages: list[bytes] = []
-
-    async def handle_DATA(self, server, session, envelope) -> str:  # noqa: N802
-        self.messages.append(envelope.content)
-        return "250 OK"
-
-
-def _free_port() -> int:
-    """aiosmtpd's Controller never learns the port the OS picked for it when
-    given ``port=0`` (it keeps echoing back the 0 it was passed, so its own
-    startup probe fails to connect) — so we find a free one ourselves and
-    hand it a concrete port instead."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.bind(("127.0.0.1", 0))
-        return probe.getsockname()[1]
-
-
-@pytest.fixture
-def smtp_server(monkeypatch):
-    collector = _Collector()
-    controller = Controller(collector, hostname="127.0.0.1", port=_free_port())
-    controller.start()
-    settings = get_settings()
-    monkeypatch.setattr(settings, "smtp_host", "127.0.0.1")
-    monkeypatch.setattr(settings, "smtp_port", controller.port)
-    monkeypatch.setattr(settings, "smtp_use_tls", False)
-    try:
-        yield collector
-    finally:
-        controller.stop()
 
 
 async def test_send_delivers_a_multipart_alternative(smtp_server) -> None:

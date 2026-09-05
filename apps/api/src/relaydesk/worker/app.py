@@ -28,6 +28,10 @@ app.conf.update(
             "task": "relaydesk.reconcile_outbound",
             "schedule": 300.0,
         },
+        "reconcile-inbound": {
+            "task": "relaydesk.reconcile_inbound",
+            "schedule": 300.0,
+        },
     },
 )
 

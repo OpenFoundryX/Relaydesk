@@ -27,7 +27,7 @@ from relaydesk.models import (
     User,
     Workspace,
 )
-from relaydesk.services import notifications
+from relaydesk.services import notifications, outbound, queue
 
 DEFAULT_LIMIT = 50
 
@@ -529,18 +529,20 @@ async def add_reply(
         raise Invalid("A reply needs a body.")
 
     now = datetime.now(UTC)
-    session.add(
-        Message(
-            workspace_id=workspace_id,
-            conversation_id=conversation.id,
-            role=MessageRole.agent,
-            author_name=actor.name,
-            author_user_id=actor.id,
-            to_address=conversation.contact.email,
-            body=trimmed,
-            sent_at=now,
-        )
+    message = Message(
+        workspace_id=workspace_id,
+        conversation_id=conversation.id,
+        role=MessageRole.agent,
+        author_name=actor.name,
+        author_user_id=actor.id,
+        to_address=conversation.contact.email,
+        body=trimmed,
+        sent_at=now,
+        direction=MessageDirection.outbound,
+        external_id=outbound.new_message_id(),
+        delivery_state=DeliveryState.queued,
     )
+    session.add(message)
     conversation.preview = trimmed
     conversation.last_message_at = now
     conversation.unread = False
@@ -558,6 +560,7 @@ async def add_reply(
     )
     await session.commit()
     await session.refresh(conversation, ["draft", "labels", "assignee"])
+    queue.enqueue_reply(message.id)
     return conversation
 
 

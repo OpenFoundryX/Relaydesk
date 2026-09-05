@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 
 import sqlalchemy as sa
@@ -470,3 +470,42 @@ async def test_a_contact_insert_race_does_not_lose_the_pipelines_earlier_mutatio
     assert row.workspace_id == workspace.id
     assert row.channel_account_id == account.id
     assert row.external_id == "<a1@example.com>"
+
+
+async def test_requeue_unprocessed_finds_a_stalled_raw_message(
+    db_session: AsyncSession,
+) -> None:
+    """imap_poll writes the row and publishes ingest_message separately, so
+    a broker outage can leave a raw message sitting in `fetched` with no
+    task ever picked up to ingest it."""
+    row = await _store(db_session, _raw("acme-abc@inbound.localhost"))
+    row.created_at = datetime.now(UTC) - timedelta(minutes=5)
+    await db_session.commit()
+
+    stuck = await ingest.requeue_unprocessed(db_session, timedelta(minutes=2))
+
+    assert row.id in stuck
+
+
+async def test_requeue_unprocessed_ignores_a_fresh_raw_message(
+    db_session: AsyncSession,
+) -> None:
+    await _store(db_session, _raw("acme-abc@inbound.localhost"))
+    await db_session.commit()
+
+    stuck = await ingest.requeue_unprocessed(db_session, timedelta(minutes=2))
+
+    assert stuck == []
+
+
+async def test_requeue_unprocessed_ignores_an_already_ingested_message(
+    db_session: AsyncSession,
+) -> None:
+    row = await _store(db_session, _raw("acme-abc@inbound.localhost"))
+    row.state = RawMessageState.ingested
+    row.created_at = datetime.now(UTC) - timedelta(minutes=5)
+    await db_session.commit()
+
+    stuck = await ingest.requeue_unprocessed(db_session, timedelta(minutes=2))
+
+    assert stuck == []
