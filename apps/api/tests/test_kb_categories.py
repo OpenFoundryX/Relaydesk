@@ -166,3 +166,43 @@ async def test_creating_a_category_requires_admin(db_session, client) -> None:
     )
 
     assert response.status_code == 403
+
+
+async def test_updating_a_category_requires_admin(db_session, client) -> None:
+    from relaydesk.models.membership import Role
+
+    workspace = await make_workspace(db_session)
+    category = await kb_categories.create(
+        db_session, workspace.id, "Billing", KbScope.external
+    )
+    agent = await make_member(
+        db_session, workspace, email="sara@example.com", role=Role.agent
+    )
+    await db_session.commit()
+    headers = await sign_in(client, db_session, agent.email)
+
+    response = await client.patch(
+        f"/api/kb/categories/{category.id}",
+        json={"name": "Refunds"},
+        headers=headers,
+    )
+
+    assert response.status_code == 403
+
+
+async def test_deleting_a_category_requires_admin(db_session, client) -> None:
+    from relaydesk.models.membership import Role
+
+    workspace = await make_workspace(db_session)
+    category = await kb_categories.create(
+        db_session, workspace.id, "Billing", KbScope.external
+    )
+    agent = await make_member(
+        db_session, workspace, email="sara@example.com", role=Role.agent
+    )
+    await db_session.commit()
+    headers = await sign_in(client, db_session, agent.email)
+
+    response = await client.delete(f"/api/kb/categories/{category.id}", headers=headers)
+
+    assert response.status_code == 403

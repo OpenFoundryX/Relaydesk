@@ -101,11 +101,12 @@ async def delete(
     held = await session.scalar(
         sa.select(sa.func.count())
         .select_from(KbArticle)
-        .where(KbArticle.category_id == category.id)
+        .where(
+            KbArticle.category_id == category.id,
+            KbArticle.workspace_id == workspace_id,
+        )
     )
     if held:
-        raise Conflict(
-            "That category still holds articles. Move or delete them first."
-        )
+        raise Conflict("That category still holds articles. Move or delete them first.")
     await session.delete(category)
     await session.flush()
