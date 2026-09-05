@@ -314,6 +314,14 @@ def downgrade() -> None:
     op.drop_column("messages", "direction")
 
     op.drop_constraint("ck_messages_role", "messages", type_="check")
+    # Re-arm nothing: a 'system' row (a bounce notice; see
+    # ingest._handle_bounce) has no meaning under the narrower constraint
+    # this recreates below, so it must go first -- the same reasoning
+    # 0009's upgrade applies to an already-accepted invite before dropping
+    # the column that used to reject it. Left as a bare drop-and-recreate,
+    # this raises a check violation on any database that has actually
+    # received a bounce.
+    op.execute("DELETE FROM messages WHERE role = 'system'")
     op.create_check_constraint(
         "ck_messages_role",
         "messages",

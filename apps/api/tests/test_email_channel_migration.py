@@ -202,3 +202,165 @@ async def test_migration_0007_backfills_direction_from_role() -> None:
 
     assert directions["customer"] == "inbound"
     assert directions["agent"] == "outbound"
+
+
+async def _seed_a_workspace(connection: asyncpg.Connection) -> uuid.UUID:
+    workspace_id = uuid.uuid4()
+    await connection.execute(
+        """
+        INSERT INTO workspaces
+            (id, name, slug, monogram, timezone, conversation_seq,
+             plan, trial_days_left, tickets_this_period, projected_tickets)
+        VALUES ($1, 'Acme', 'acme', 'AC', 'UTC', 0, 'Starter', 0, 0, 0)
+        """,
+        workspace_id,
+    )
+    return workspace_id
+
+
+async def test_migration_0010_downgrade_does_not_delete_channel_accounts() -> None:
+    """The original downgrade unconditionally ``DELETE FROM
+    channel_accounts``, destroying every workspace's ingest token
+    irrecoverably -- including rows created through the ordinary product
+    path long after this deploy, which a downgrade run today cannot tell
+    apart from what 0010's own upgrade backfilled. Going 0010 -> 0009 must
+    leave every row in place instead.
+    """
+    await _recreate_scratch_database()
+    try:
+        config = _alembic_config()
+        await asyncio.to_thread(command.upgrade, config, "0009")
+
+        # A workspace with no channel_accounts row yet, present *before*
+        # 0010 runs -- exactly what 0010's upgrade backfills.
+        connection = await _connect(SCRATCH_DATABASE)
+        try:
+            backfilled_workspace = await _seed_a_workspace(connection)
+        finally:
+            await connection.close()
+
+        await asyncio.to_thread(command.upgrade, config, "0010")
+
+        # A second account, simulating one an admin adds through the
+        # product long after this deploy -- exactly what a blanket DELETE
+        # would also destroy.
+        connection = await _connect(SCRATCH_DATABASE)
+        try:
+            await connection.execute(
+                """
+                INSERT INTO channel_accounts
+                    (id, workspace_id, kind, ingest_token, display_name,
+                     active)
+                VALUES ($1, $2, 'email', 'cafefacecafe', 'Sales', true)
+                """,
+                uuid.uuid4(),
+                backfilled_workspace,
+            )
+            count_before = await connection.fetchval(
+                "SELECT count(*) FROM channel_accounts"
+            )
+        finally:
+            await connection.close()
+
+        await asyncio.to_thread(command.downgrade, config, "0009")
+
+        connection = await _connect(SCRATCH_DATABASE)
+        try:
+            count_after = await connection.fetchval(
+                "SELECT count(*) FROM channel_accounts"
+            )
+        finally:
+            await connection.close()
+    finally:
+        await _drop_scratch_database()
+
+    assert count_before == 2
+    assert count_after == count_before
+
+
+async def _seed_a_system_role_message() -> uuid.UUID:
+    """A bounce notice, the shape ``ingest._handle_bounce`` writes: role
+    'system', which only exists once 0007's widened check constraint is in
+    place."""
+    connection = await _connect(SCRATCH_DATABASE)
+    try:
+        workspace_id = await _seed_a_workspace(connection)
+        contact_id = uuid.uuid4()
+        conversation_id = uuid.uuid4()
+        message_id = uuid.uuid4()
+        now = datetime.now(UTC)
+
+        await connection.execute(
+            """
+            INSERT INTO contacts (id, workspace_id, email, name)
+            VALUES ($1, $2, 'priya@northwind.io', 'Priya Raman')
+            """,
+            contact_id,
+            workspace_id,
+        )
+        await connection.execute(
+            """
+            INSERT INTO conversations
+                (id, workspace_id, number, subject, contact_id, channel,
+                 status, priority, preview, last_message_at, unread,
+                 summary_state)
+            VALUES
+                ($1, $2, 1, 'Checkout fails with a 402', $3, 'email', 'open',
+                 'urgent', 'Delivery failed', $4, false, 'none')
+            """,
+            conversation_id,
+            workspace_id,
+            contact_id,
+            now,
+        )
+        await connection.execute(
+            """
+            INSERT INTO messages
+                (id, workspace_id, conversation_id, role, direction,
+                 author_name, to_address, body, sent_at)
+            VALUES ($1, $2, $3, 'system', 'inbound', 'Mail delivery',
+                    'support@acme.com', 'Delivery failed: Hi', $4)
+            """,
+            message_id,
+            workspace_id,
+            conversation_id,
+            now,
+        )
+        return message_id
+    finally:
+        await connection.close()
+
+
+async def test_migration_0007_downgrade_survives_a_bounce_system_row() -> None:
+    """downgrade() recreates the narrower ``ck_messages_role`` (``customer``,
+    ``agent``, ``ai`` -- no ``system``) without first removing ``system``
+    rows. Left as it was, ``create_check_constraint`` raises a check
+    violation on any database that has actually received a bounce --
+    compare 0009's upgrade, which deletes the rows that would violate its
+    own incoming constraint change before applying it.
+    """
+    await _recreate_scratch_database()
+    try:
+        config = _alembic_config()
+        await asyncio.to_thread(command.upgrade, config, "0010")
+
+        message_id = await _seed_a_system_role_message()
+
+        # Must not raise -- this is the assertion. Downgrading all the way
+        # to 0006 exercises 0007's downgrade() specifically, since 0008-0010
+        # touch neither `messages` nor `ck_messages_role`.
+        await asyncio.to_thread(command.downgrade, config, "0006")
+
+        connection = await _connect(SCRATCH_DATABASE)
+        try:
+            # The row itself is gone too: `role = 'system'` has no meaning
+            # once the column it would violate is back to the narrow set.
+            exists = await connection.fetchval(
+                "SELECT 1 FROM messages WHERE id = $1", message_id
+            )
+        finally:
+            await connection.close()
+    finally:
+        await _drop_scratch_database()
+
+    assert exists is None

@@ -50,6 +50,18 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Nothing else creates channel_accounts rows before this migration, so a
-    # plain delete is correct here.
-    op.execute("DELETE FROM channel_accounts")
+    # Deliberately a no-op. This migration's upgrade cannot be told apart
+    # from any channel_accounts row created afterward through the ordinary
+    # product path (services.workspaces.create_workspace, or an admin
+    # adding a second address) -- there is no marker column distinguishing
+    # "backfilled by 0010" from "created since". A blanket DELETE here
+    # (the original version of this downgrade) would destroy every
+    # workspace's ingest token unconditionally, including ones minted long
+    # after this deploy, which is irrecoverable: find_by_token then matches
+    # nothing and every workspace's forwarded mail becomes `unrouted`.
+    # Going 0010 -> 0009 leaves the backfilled rows in place; they are
+    # harmless extra data under 0009's schema (which has no code path that
+    # reads channel_accounts at all), and re-running 0010's upgrade after a
+    # re-upgrade is already idempotent (it skips any workspace that already
+    # has a row).
+    pass
