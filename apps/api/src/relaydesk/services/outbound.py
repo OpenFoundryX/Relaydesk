@@ -130,6 +130,13 @@ async def deliver(session: AsyncSession, message_id: uuid.UUID) -> DeliveryState
     # invocation, not this one finishing what it started. Retrying the
     # commit in place turns a brief database blip into a non-event instead
     # of a duplicate email.
+    #
+    # A failed commit leaves the session's transaction in a state that
+    # raises PendingRollbackError on any further use until it is explicitly
+    # rolled back -- verified against a real DBAPI-level failure (a unique
+    # violation), not assumed. Rolling back before each retry is required
+    # for the retry to ever reach a fresh commit attempt at all, not an
+    # optional safety measure.
     last_error: BaseException | None = None
     for attempt in range(_COMMIT_RETRIES):
         message.delivery_state = DeliveryState.sent
@@ -139,6 +146,7 @@ async def deliver(session: AsyncSession, message_id: uuid.UUID) -> DeliveryState
             return DeliveryState.sent
         except Exception as error:
             last_error = error
+            await session.rollback()
             if attempt < _COMMIT_RETRIES - 1:
                 logger.warning(
                     "commit failed after sending message %s (attempt %d/%d);"

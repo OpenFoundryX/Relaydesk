@@ -13,7 +13,8 @@ from relaydesk.models.message import (
     MessageDirection,
     MessageRole,
 )
-from relaydesk.services import channel_accounts, conversations, outbound, queue
+from relaydesk.models.workspace import Workspace
+from relaydesk.services import channel_accounts, conversations, mailer, outbound, queue
 from relaydesk.worker.tasks.mail import send_conversation_message
 from tests.factories import make_conversation, make_member, make_workspace
 
@@ -214,34 +215,49 @@ async def test_a_reply_without_a_channel_account_omits_the_c_tag_and_logs(
     with caplog.at_level(logging.WARNING):
         built = await outbound.build_reply(db_session, message)
 
-    assert "+c" not in built["Reply-To"]
+    # Pinned to the literal value, not just "no +c tag": a regression that
+    # produced some other broken address would still satisfy a negative
+    # check on "+c" alone.
+    assert built["Reply-To"] == mailer.from_address()
     assert str(workspace.id) in caplog.text
     assert str(conversation.id) in caplog.text
     assert "no active channel account" in caplog.text
 
 
 async def test_a_transient_commit_failure_retries_in_place(
-    db_session: AsyncSession, smtp_server, monkeypatch
+    db_session: AsyncSession, smtp_server
 ) -> None:
     """A dropped connection or a statement timeout right after the mail
     leaves the building must not fall straight through to Celery's autoretry
-    -- that would resend for something as mundane as a database blip."""
+    -- that would resend for something as mundane as a database blip.
+
+    This forces a genuine DBAPI-level failure (a unique violation) instead
+    of mocking `commit`, so it also proves the required rollback-before-
+    retry actually recovers a live session: verified directly (see the
+    round-2 fix report) that a bare retry without an intervening rollback
+    raises PendingRollbackError rather than ever reaching Postgres again."""
     _workspace, _conversation, message = await _reply(db_session)
-    real_commit = db_session.commit
-    calls = {"n": 0}
 
-    async def flaky_commit() -> None:
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise RuntimeError("connection reset")
-        await real_commit()
-
-    monkeypatch.setattr(db_session, "commit", flaky_commit)
-
-    state = await outbound.deliver(db_session, message.id)
+    # A second, doomed-to-conflict row shares this session with `message`.
+    # deliver()'s first commit flushes both together and fails on the
+    # duplicate slug; the rollback it performs discards this pending row
+    # (it was never persisted) while the retry loop re-applies `message`'s
+    # own change, so the second commit reaches Postgres with only that
+    # change pending, and succeeds. Autoflush is disabled for the call so
+    # the conflict surfaces only at the intended `commit()`, not at one of
+    # deliver()'s own earlier reads (session.get, the channel-account
+    # lookup, ...), each of which would otherwise autoflush it prematurely
+    # and fail outside the retry loop entirely.
+    db_session.add(Workspace(name="Dupe", slug=_workspace.slug, monogram="DP"))
+    db_session.autoflush = False
+    try:
+        state = await outbound.deliver(db_session, message.id)
+    finally:
+        db_session.autoflush = True
 
     assert state is DeliveryState.sent
-    assert calls["n"] == 2
+    await db_session.refresh(message)
+    assert message.delivery_state is DeliveryState.sent
     assert len(smtp_server.messages) == 1
 
 
@@ -249,15 +265,31 @@ async def test_commit_failure_exhausting_retries_still_sent_only_once(
     db_session: AsyncSession, smtp_server, monkeypatch
 ) -> None:
     """When every retry fails, the caller must see the error (so Celery's
-    own retry takes over) -- but the mail was only ever sent the once."""
+    own retry takes over) -- but the mail was only ever sent the once.
+
+    A persistently-failing DBAPI error is impractical to arrange
+    deterministically (the prior test's duplicate-row trick only fails
+    once, by design -- the rollback it triggers removes the conflict).
+    `commit` is mocked here instead; `rollback` is a spy wrapping the real
+    method, confirming it genuinely runs on every failed attempt rather
+    than merely appearing in the source."""
     _workspace, _conversation, message = await _reply(db_session)
 
     async def always_fail() -> None:
         raise RuntimeError("connection reset")
 
+    real_rollback = db_session.rollback
+    rollback_calls = {"n": 0}
+
+    async def counting_rollback() -> None:
+        rollback_calls["n"] += 1
+        await real_rollback()
+
     monkeypatch.setattr(db_session, "commit", always_fail)
+    monkeypatch.setattr(db_session, "rollback", counting_rollback)
 
     with pytest.raises(RuntimeError):
         await outbound.deliver(db_session, message.id)
 
     assert len(smtp_server.messages) == 1
+    assert rollback_calls["n"] == outbound._COMMIT_RETRIES
