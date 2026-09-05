@@ -14,9 +14,10 @@ labels, saved views, and activity history — are implemented on a
 multi-tenant Next.js, FastAPI, and PostgreSQL foundation. Email is a fully
 working channel: mail forwarded to a workspace's ingest address becomes a
 ticket, replies are delivered over SMTP with retry and bounce handling, and
-attachments are stored and served back safely. Discord, one-click import
-from another help desk, AI features, the knowledge base, analytics, and
-billing are not yet implemented.
+attachments are stored and served back safely. The knowledge base lets a
+workspace write and publish help articles, with a public help site anonymous
+customers can read and search. Discord, one-click import from another help
+desk, AI features, analytics, and billing are not yet implemented.
 
 Team invites are sent by email: accepting one lets you choose an account's
 password and sign in as it, so the invite link is only ever mailed to the
@@ -90,6 +91,32 @@ every ticket, with no error.
 
 Find a workspace's address under **Settings → Channels**, then forward your
 own support address to it. Anything that arrives there becomes a ticket.
+
+## Knowledge base
+
+Articles live in one of two scopes:
+
+- **Internal** — procedures for the AI agent, describing how to handle a
+  kind of request step by step. Never shown to a customer.
+- **External** — the customer-facing help site, written as if speaking
+  directly to a customer.
+
+Every article moves through the same review workflow: **draft** while it is
+being written, **ready** once it is written but held back, and **published**
+once it should go live. Only a published article in an external category is
+ever served to an anonymous visitor; a draft or ready article at a guessable
+URL 404s exactly like one that never existed.
+
+Published external articles are served at
+`<slug>.<portal domain>/help`, with per-category pages, per-article pages,
+and full-text search. **Deployment requirement:** the portal domain needs
+wildcard DNS (`*.<portal domain>`) pointed at the app and a wildcard TLS
+certificate covering it, since every workspace gets its own subdomain
+resolved at request time. In local development this is already handled:
+`PORTAL_DOMAIN` defaults to `localhost:3000`, and every workspace is reached
+at `<slug>.localhost:3000` (e.g. `http://chronon.localhost:3000/help`)
+without any DNS or certificate setup, because browsers resolve
+`*.localhost` to the loopback address on their own.
 
 ## Development commands
 
