@@ -43,6 +43,7 @@ class Settings(BaseSettings):
 
     attachment_dir: str = "/var/lib/relaydesk/attachments"
     attachment_max_bytes: int = 26214400
+    kb_image_max_bytes: int = 5242880
 
     model_config = SettingsConfigDict(
         env_file=".env",

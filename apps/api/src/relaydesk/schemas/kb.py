@@ -54,3 +54,8 @@ class ArticlePatch(CamelModel):
 
 class StatusRequest(CamelModel):
     status: str
+
+
+class ImageOut(CamelModel):
+    id: str
+    url: str

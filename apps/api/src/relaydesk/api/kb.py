@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Query, Response, status
+from fastapi import APIRouter, Query, Response, UploadFile, status
 
 from relaydesk.api.deps import DbSession, Scope
 from relaydesk.errors import Invalid
@@ -13,9 +13,10 @@ from relaydesk.schemas.kb import (
     CategoryCreateRequest,
     CategoryOut,
     CategoryPatch,
+    ImageOut,
     StatusRequest,
 )
-from relaydesk.services import kb_articles, kb_categories
+from relaydesk.services import kb_articles, kb_categories, kb_images
 
 router = APIRouter()
 
@@ -197,3 +198,34 @@ async def delete_article(
     await kb_articles.delete(session, scope_.workspace_id, article_id)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/articles/{article_id}/images", status_code=status.HTTP_201_CREATED)
+async def upload_image(
+    article_id: uuid.UUID,
+    scope_: Scope,
+    session: DbSession,
+    file: UploadFile,
+) -> ImageOut:
+    article = await kb_articles.get(session, scope_.workspace_id, article_id)
+    image = await kb_images.store(
+        session,
+        article,
+        file.filename or "image",
+        file.content_type or "",
+        await file.read(),
+    )
+    await session.commit()
+    return ImageOut(id=str(image.id), url=f"/api/kb/images/{image.id}")
+
+
+@router.get("/images/{image_id}")
+async def download_image(
+    image_id: uuid.UUID, scope_: Scope, session: DbSession
+) -> Response:
+    row, content = await kb_images.read(session, scope_.workspace_id, image_id)
+    return Response(
+        content=content,
+        media_type=row.content_type,
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
