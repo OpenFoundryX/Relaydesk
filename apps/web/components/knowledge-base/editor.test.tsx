@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ArticleEditor } from "./editor";
 import type { ArticleStatus, KbArticle, KbCategory } from "@/lib/types";
@@ -11,6 +11,12 @@ vi.mock("@/app/(console)/knowledge-base/actions", () => ({
   setArticleStatusAction: vi.fn(),
   uploadArticleImageAction: vi.fn(),
 }));
+
+// There is no App Router mounted here, so the editor's own `useRouter` has
+// to be stood in for. It doubles as the assertion that leaving is something
+// the editor decides to do, not something that merely happens.
+const { push } = vi.hoisted(() => ({ push: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 
 const category: KbCategory = {
   id: "cat-1",
@@ -37,9 +43,21 @@ function article(overrides: Partial<KbArticle> = {}): KbArticle {
   };
 }
 
+beforeEach(() => {
+  push.mockClear();
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+/** Anything that flips the editor's `dirty` flag will do; typing is the plainest. */
+function makeDirty() {
+  fireEvent.change(screen.getByRole("textbox", { name: "Title" }), {
+    target: { value: "Handling a refund request, revised" },
+  });
+  expect(screen.getByText("Unsaved changes")).toBeDefined();
+}
 
 describe("ArticleEditor", () => {
   it("mounts on a brand new article, whose stored document has no blocks", () => {
@@ -48,6 +66,83 @@ describe("ArticleEditor", () => {
       "value",
       "Handling a refund request",
     );
+  });
+
+  describe("leaving with unsaved changes", () => {
+    it("does not intercept the back link while everything is saved", () => {
+      render(<ArticleEditor article={article()} category={category} />);
+      const back = screen.getByRole("link", { name: "Knowledge base" });
+
+      // `fireEvent` returns false when a handler called preventDefault. A
+      // clean article must let the link navigate on its own.
+      expect(fireEvent.click(back)).toBe(true);
+      expect(screen.queryByText("Leave without saving?")).toBeNull();
+    });
+
+    it("stops the back link and asks first when there are unsaved changes", () => {
+      render(<ArticleEditor article={article()} category={category} />);
+      makeDirty();
+
+      expect(
+        fireEvent.click(screen.getByRole("link", { name: "Knowledge base" })),
+      ).toBe(false);
+      expect(screen.getByText("Leave without saving?")).toBeDefined();
+      expect(push).not.toHaveBeenCalled();
+    });
+
+    it("stays put when you keep editing", () => {
+      render(<ArticleEditor article={article()} category={category} />);
+      makeDirty();
+      fireEvent.click(screen.getByRole("link", { name: "Knowledge base" }));
+
+      fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+
+      expect(push).not.toHaveBeenCalled();
+      expect(screen.getByText("Unsaved changes")).toBeDefined();
+    });
+
+    it("leaves for the right scope's tab once you confirm", () => {
+      render(<ArticleEditor article={article()} category={category} />);
+      makeDirty();
+      fireEvent.click(screen.getByRole("link", { name: "Knowledge base" }));
+
+      fireEvent.click(screen.getByRole("button", { name: "Discard and leave" }));
+
+      expect(push).toHaveBeenCalledWith("/knowledge-base?tab=internal");
+    });
+
+    it("does not follow a link inside the preview", () => {
+      render(
+        <ArticleEditor
+          article={article({
+            doc: {
+              type: "doc",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [
+                    {
+                      type: "text",
+                      marks: [
+                        { type: "link", attrs: { href: "https://example.com/policy" } },
+                      ],
+                      text: "the refund policy",
+                    },
+                  ],
+                },
+              ],
+            },
+          })}
+          category={category}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+
+      expect(
+        fireEvent.click(screen.getByRole("link", { name: "the refund policy" })),
+      ).toBe(false);
+    });
   });
 
   it("renders a stored image node through the console's image proxy", () => {

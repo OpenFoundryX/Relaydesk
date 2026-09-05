@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import NextLink from "next/link";
+import { useRouter } from "next/navigation";
 import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { Link } from "@tiptap/extension-link";
@@ -38,6 +39,14 @@ import {
 import { DocRenderer } from "@/components/knowledge-base/doc-renderer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -183,6 +192,9 @@ export function ArticleEditor({
   const [error, setError] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [linkDraft, setLinkDraft] = useState<string | null>(null);
+  const [leaving, setLeaving] = useState(false);
+
+  const router = useRouter();
 
   const fileInput = useRef<HTMLInputElement>(null);
   // ProseMirror's paste and drop handlers are registered once, when the
@@ -336,14 +348,27 @@ export function ArticleEditor({
   }
 
   const canSave = editor !== null && title.trim().length > 0 && !saving;
+  const backHref = `/knowledge-base?tab=${category?.scope ?? "internal"}`;
+
+  /**
+   * `beforeunload` covers a reload or a closed tab, but a click on the back
+   * link is a client-side route change the browser never hears about -- and
+   * it is the likeliest way out of this page. Ask first when there is
+   * unsaved work. A modified click (new tab, new window) is left alone: it
+   * leaves this tab, and its edits, exactly where they are.
+   */
+  function handleBack(event: MouseEvent<HTMLAnchorElement>) {
+    if (!dirty) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    setLeaving(true);
+  }
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
         <Button asChild variant="ghost" size="sm">
-          <NextLink
-            href={`/knowledge-base?tab=${category?.scope ?? "internal"}`}
-          >
+          <NextLink href={backHref} onClick={handleBack}>
             <ArrowLeft />
             Knowledge base
           </NextLink>
@@ -352,6 +377,32 @@ export function ArticleEditor({
           <span className="text-[13px] text-ink-500">{category.name}</span>
         )}
       </div>
+
+      <Dialog open={leaving} onOpenChange={setLeaving}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Leave without saving?</DialogTitle>
+            <DialogDescription>
+              This article has changes you have not saved. Leaving now discards
+              them.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setLeaving(false)}>
+              Keep editing
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                setLeaving(false);
+                router.push(backHref);
+              }}
+            >
+              Discard and leave
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-ink-200 bg-white px-3 py-2.5">
         <Badge variant={STATUS_TONE[status]}>{status}</Badge>
@@ -439,7 +490,19 @@ export function ArticleEditor({
 
       <div className="overflow-hidden rounded-lg border border-ink-200 bg-white">
         {previewing ? (
-          <div className={cn(docStyles, "px-4 py-3")}>
+          // The links in a preview are the article's own, and following one
+          // would walk out of an unsaved document -- the same loss the back
+          // link now asks about, but with a destination this editor has no
+          // business confirming. A preview shows you the link; it does not
+          // take you there.
+          <div
+            className={cn(docStyles, "px-4 py-3")}
+            onClick={(event) => {
+              if ((event.target as HTMLElement).closest("a")) {
+                event.preventDefault();
+              }
+            }}
+          >
             <DocRenderer doc={editor?.getJSON()} imageSrc={articleImageSrc} />
           </div>
         ) : (
