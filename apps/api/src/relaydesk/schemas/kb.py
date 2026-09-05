@@ -71,3 +71,24 @@ class PublicWorkspaceOut(CamelModel):
 
     name: str
     monogram: str
+
+
+class PublicArticleSummary(CamelModel):
+    """An entry in the index or search results -- no body, no doc."""
+
+    id: str
+    title: str
+    slug: str
+    excerpt: str
+
+
+class PublicArticleOut(PublicArticleSummary):
+    doc: dict
+    published_at: datetime | None
+
+
+class PublicCategoryOut(CamelModel):
+    id: str
+    name: str
+    slug: str
+    articles: list[PublicArticleSummary]
