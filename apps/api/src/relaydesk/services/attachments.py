@@ -4,7 +4,6 @@ Content-addressed by SHA-256, never by the sender's filename: that string is
 attacker-controlled, and the only safe thing to do with it is show it.
 """
 
-import hashlib
 import uuid
 from collections.abc import Sequence
 from pathlib import Path
@@ -17,6 +16,7 @@ from relaydesk.email_parse.normalize import ParsedAttachment
 from relaydesk.errors import NotFound
 from relaydesk.models.attachment import Attachment
 from relaydesk.models.message import Message
+from relaydesk.services import blobs
 
 # Everything else is served as an opaque download. Note SVG is absent: it
 # executes script when rendered inline.
@@ -41,8 +41,6 @@ async def store(
     session: AsyncSession, message: Message, parsed: Sequence[ParsedAttachment]
 ) -> list[Attachment]:
     cap = get_settings().attachment_max_bytes
-    directory = _root() / str(message.workspace_id)
-    directory.mkdir(parents=True, exist_ok=True)
 
     stored: list[Attachment] = []
     budget = cap
@@ -53,14 +51,7 @@ async def store(
             continue
         budget -= len(item.content)
 
-        digest = hashlib.sha256(item.content).hexdigest()
-        path = directory / digest
-        if not path.exists():
-            # Write to a temporary name and rename, so a crash mid-write
-            # cannot leave a truncated file at a hash that claims to be whole.
-            temporary = directory / f".{digest}.{uuid.uuid4().hex}"
-            temporary.write_bytes(item.content)
-            temporary.rename(path)
+        digest, storage_key = blobs.write(_root(), message.workspace_id, item.content)
 
         row = Attachment(
             workspace_id=message.workspace_id,
@@ -69,7 +60,7 @@ async def store(
             content_type=item.content_type,
             size_bytes=len(item.content),
             sha256=digest,
-            storage_key=f"{message.workspace_id}/{digest}",
+            storage_key=storage_key,
             inline=item.inline,
             content_id=item.content_id,
         )
@@ -92,15 +83,4 @@ async def read(
     if row is None:
         raise NotFound("That attachment does not exist.")
 
-    # Rebuilt from the validated workspace_id argument and the row's own
-    # hash -- never from storage_key -- so a malformed storage_key (a bad
-    # migration, a manual edit, a second writer) can't be trusted to stay
-    # inside the workspace's directory just because it matched on the
-    # workspace_id column. The descendant check is the same
-    # structurally-impossible standard the write side already gets, carried
-    # through to reads.
-    base = (_root() / str(workspace_id)).resolve()
-    path = (base / row.sha256).resolve()
-    if not path.is_relative_to(base) or not path.is_file():
-        raise NotFound("That attachment does not exist.")
-    return row, path.read_bytes()
+    return row, blobs.read(_root(), workspace_id, row.sha256)

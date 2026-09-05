@@ -19,6 +19,7 @@ from relaydesk.models.conversation import (
 )
 from relaydesk.models.draft import Draft
 from relaydesk.models.invite import Invite
+from relaydesk.models.kb import ArticleStatus, KbArticle, KbCategory, KbImage, KbScope
 from relaydesk.models.label import Label, LabelColor
 from relaydesk.models.membership import Membership, MembershipStatus, Role
 from relaydesk.models.message import (
@@ -37,6 +38,7 @@ from relaydesk.models.workspace import Workspace
 __all__ = [
     "ActivityEvent",
     "ActivityKind",
+    "ArticleStatus",
     "Attachment",
     "Base",
     "Channel",
@@ -49,6 +51,10 @@ __all__ = [
     "DeliveryState",
     "Draft",
     "Invite",
+    "KbArticle",
+    "KbCategory",
+    "KbImage",
+    "KbScope",
     "Label",
     "LabelColor",
     "Membership",

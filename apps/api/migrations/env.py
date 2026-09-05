@@ -43,6 +43,8 @@ ENUM_CHECK_CONSTRAINTS = frozenset(
         "ck_conversations_status",
         "ck_conversations_summary_state",
         "ck_invites_role",
+        "ck_kb_articles_status",
+        "ck_kb_categories_scope",
         "ck_labels_color",
         "ck_memberships_role",
         "ck_memberships_status",
