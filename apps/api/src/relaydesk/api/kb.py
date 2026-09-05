@@ -120,10 +120,14 @@ async def list_articles(
     session: DbSession,
     scope: KbScope | None = None,
     status_filter: Annotated[ArticleStatus | None, Query(alias="status")] = None,
+    q: str | None = None,
 ) -> list[ArticleOut]:
-    rows = await kb_articles.list_for(
-        session, scope_.workspace_id, scope=scope, status=status_filter
-    )
+    if q is not None:
+        rows = await kb_articles.search(session, scope_.workspace_id, q, scope=scope)
+    else:
+        rows = await kb_articles.list_for(
+            session, scope_.workspace_id, scope=scope, status=status_filter
+        )
     return [_article_out(article) for article in rows]
 
 

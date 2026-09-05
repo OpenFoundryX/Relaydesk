@@ -166,6 +166,44 @@ async def delete(
     await session.flush()
 
 
+async def search(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    query: str,
+    *,
+    scope: KbScope | None = None,
+    published_only: bool = False,
+) -> list[KbArticle]:
+    """Full-text over title and body, ranked.
+
+    `websearch_to_tsquery` rather than `to_tsquery`: this takes input straight
+    from a search box, and `to_tsquery` raises a syntax error on ordinary
+    punctuation. The websearch parser accepts quoted phrases, OR, and leading
+    minus, and simply ignores anything it cannot parse.
+    """
+    terms = query.strip()
+    if not terms:
+        return []
+
+    tsquery = sa.func.websearch_to_tsquery("english", terms)
+    statement = (
+        sa.select(KbArticle)
+        .join(KbCategory, KbCategory.id == KbArticle.category_id)
+        .where(
+            KbArticle.workspace_id == workspace_id,
+            KbArticle.search_vector.op("@@")(tsquery),
+        )
+        .order_by(sa.func.ts_rank(KbArticle.search_vector, tsquery).desc())
+        .limit(50)
+    )
+    if scope is not None:
+        statement = statement.where(KbCategory.scope == scope)
+    if published_only:
+        statement = statement.where(KbArticle.status == ArticleStatus.published)
+
+    return list((await session.scalars(statement)).all())
+
+
 # draft -> ready -> published, plus the two ways back. Publishing skips no
 # step: the review state is the only thing standing between a half-written
 # article and a workspace's public site.
