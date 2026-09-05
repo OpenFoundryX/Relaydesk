@@ -393,6 +393,23 @@ design, so a transient failure is normal rather than exceptional. Exhausted
 retries set `delivery_state = 'failed'` with the error, and the thread
 renders the message as undelivered.
 
+**Delivery is at-least-once, and that is a deliberate limit.** SMTP offers
+no idempotency key, so there is no protocol-level way to make a resend a
+no-op. `deliver` guards on `delivery_state`, which covers the ordinary
+redelivery case, but it cannot cover the window between SMTP accepting a
+message and the `sent` commit landing. Any failure in that window — a
+process kill, but also an ordinary transient database error, since
+`autoretry_for=(Exception,)` does not distinguish where an exception came
+from — leaves the row `queued` and causes a retry to send a second copy.
+
+The window is narrowed rather than closed: the commit that follows a
+successful send is retried in place before the task is allowed to fail, so
+a brief database blip does not become a duplicate email. Beyond that,
+duplicate delivery is accepted. It is the standard failure mode for mail
+systems, and the alternative — marking `sent` before the send — trades a
+rare duplicate for a rare silent non-delivery, which is strictly worse for
+a support product.
+
 **The reconciler.** Because publishing to RabbitMQ is not part of the
 database transaction, a message can be committed as `queued` and never
 published. A Beat task runs every five minutes and re-publishes any
