@@ -32,6 +32,14 @@ app.conf.update(
             "task": "relaydesk.reconcile_inbound",
             "schedule": 300.0,
         },
+        # Rate-limit hits are never read individually; once they are older
+        # than every window they are dead weight on a table only anonymous
+        # traffic writes to. Hourly is far more often than it needs to be
+        # and costs one indexed delete.
+        "sweep-rate-limits": {
+            "task": "relaydesk.sweep_rate_limits",
+            "schedule": 3600.0,
+        },
     },
 )
 

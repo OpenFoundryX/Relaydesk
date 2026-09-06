@@ -11,7 +11,9 @@ class RateLimitHit(UUIDMixin, Base):
 
     Deliberately not workspace-scoped: the caller is anonymous and the whole
     point is to bound them before any workspace is trusted. Rows are counted
-    inside a window and swept by age, never read individually.
+    inside a window and swept by age, never read individually -- the sweep
+    is `relaydesk.services.ratelimit.sweep`, run on the beat schedule in
+    `relaydesk.worker.app` by `relaydesk.worker.tasks.ratelimit`.
     """
 
     __tablename__ = "rate_limit_hits"
