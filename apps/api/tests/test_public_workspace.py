@@ -46,14 +46,14 @@ async def test_an_unknown_slug_is_a_404(db_session, client) -> None:
 async def test_the_endpoint_leaks_nothing_beyond_display_fields(
     db_session, client
 ) -> None:
-    """It is public, so it must not carry plan, seat counts, ticket volume, or
+    """It is public, so it must not carry internal counters, timestamps, or
     anything else a competitor could scrape."""
     await make_workspace(db_session, slug="acme")
     await db_session.commit()
 
     body = await client.get("/api/public/workspaces/acme")
 
-    for leaked in ("plan", "conversationSeq", "ticketsThisPeriod", "timezone", "id"):
+    for leaked in ("conversationSeq", "timezone", "id"):
         assert leaked not in body.json()
 
 

@@ -287,11 +287,7 @@ export interface Workspace {
    */
   slug: string;
   monogram: string;
-  plan: string;
-  trialDaysLeft: number;
   seats: number;
-  ticketsThisPeriod: number;
-  projectedTickets: number;
 }
 
 export interface CurrentUser {

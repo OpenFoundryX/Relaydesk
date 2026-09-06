@@ -1,7 +1,6 @@
 import { Suspense, type ReactNode } from "react";
 
 import { PageShell } from "@/components/console/page-shell";
-import { TrialStrip } from "@/components/console/trial-strip";
 import { ArticleGuardProvider } from "@/components/knowledge-base/article-guard";
 import { KnowledgeBaseConsole } from "@/components/knowledge-base/console-shell";
 import { getArticles, getCategories } from "@/lib/api/kb";
@@ -44,10 +43,6 @@ export default async function KnowledgeBaseLayout({
 
   return (
     <PageShell>
-      <TrialStrip
-        daysLeft={me.workspace.trialDaysLeft}
-        plan={me.workspace.plan}
-      />
       <ArticleGuardProvider>
         {/* `KnowledgeBaseConsole` reads `?tab=`, which is a dynamic read the
             way `components/console/sidebar` does it one layout up. */}

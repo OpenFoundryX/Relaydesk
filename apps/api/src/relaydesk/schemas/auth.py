@@ -43,11 +43,7 @@ class WorkspaceOut(CamelModel):
     #: cannot link a member to their own published article without it.
     slug: str
     monogram: str
-    plan: str
-    trial_days_left: int
     seats: int
-    tickets_this_period: int
-    projected_tickets: int
 
 
 class MembershipOut(CamelModel):

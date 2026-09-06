@@ -5,23 +5,22 @@ import { SettingSection } from "@/components/console/setting-section";
 import { InviteDialog } from "@/components/settings/invite-dialog";
 import { Badge } from "@/components/ui/badge";
 import { getTeam } from "@/lib/api/team";
-import { getWorkspace } from "@/lib/api/workspace";
 
 export const metadata = { title: "Team" };
 
 export default async function TeamPage() {
-  const [team, workspace] = await Promise.all([getTeam(), getWorkspace()]);
+  const team = await getTeam();
 
   return (
     <>
       <PageHeader
         title="Team"
-        description={`${team.length} of your seats are in use on the ${workspace.plan} plan.`}
+        description={`${team.length} of your seats are in use.`}
       />
 
       <SettingSection
         title="Members"
-        description="Admins can change settings and billing. Agents work the queue."
+        description="Admins can change settings. Agents work the queue."
         action={<InviteDialog />}
       >
         <ul className="divide-y divide-ink-200 rounded-md border border-ink-200">

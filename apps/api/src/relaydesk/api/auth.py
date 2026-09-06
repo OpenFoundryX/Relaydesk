@@ -89,11 +89,7 @@ async def me(scope: Scope, session: DbSession) -> MeResponse:
             name=scope.workspace.name,
             slug=scope.workspace.slug,
             monogram=scope.workspace.monogram,
-            plan=scope.workspace.plan,
-            trial_days_left=scope.workspace.trial_days_left,
             seats=seats,
-            tickets_this_period=scope.workspace.tickets_this_period,
-            projected_tickets=scope.workspace.projected_tickets,
         ),
         membership=MembershipOut(role=scope.membership.role.value),
     )

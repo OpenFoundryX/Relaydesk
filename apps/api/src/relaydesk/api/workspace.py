@@ -15,11 +15,7 @@ def _to_workspace_out(workspace: Workspace, seats: int) -> WorkspaceOut:
         name=workspace.name,
         slug=workspace.slug,
         monogram=workspace.monogram,
-        plan=workspace.plan,
-        trial_days_left=workspace.trial_days_left,
         seats=seats,
-        tickets_this_period=workspace.tickets_this_period,
-        projected_tickets=workspace.projected_tickets,
     )
 
 

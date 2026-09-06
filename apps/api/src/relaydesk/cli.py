@@ -215,10 +215,6 @@ async def seed(session: AsyncSession) -> None:
         slug="chronon",
         monogram="CH",
         timezone="Asia/Kolkata",
-        plan="Starter",
-        trial_days_left=6,
-        tickets_this_period=412,
-        projected_tickets=480,
     )
 
     admin = User(

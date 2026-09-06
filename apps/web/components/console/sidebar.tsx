@@ -60,7 +60,6 @@ const settingsItems: NavItem[] = [
   { label: "Templates", href: "/settings/templates", icon: FileText },
   { label: "API keys", href: "/settings/api-keys", icon: CircleDot },
   { label: "Team", href: "/settings/team", icon: CircleDot },
-  { label: "Billing", href: "/settings/billing", icon: CircleDot },
   { label: "Account", href: "/settings/account", icon: CircleDot },
 ];
 

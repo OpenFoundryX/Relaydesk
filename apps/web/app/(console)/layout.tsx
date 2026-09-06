@@ -3,7 +3,6 @@ import { Suspense, type ReactNode } from "react";
 import { Sidebar } from "@/components/console/sidebar";
 import { TopBar } from "@/components/console/top-bar";
 import { OnboardingProvider } from "@/components/onboarding/onboarding-provider";
-import { TrialBanner } from "@/components/console/trial-banner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { getDraftCount, getStatusCounts } from "@/lib/api/conversations";
 import { getLabels } from "@/lib/api/labels";
@@ -38,7 +37,6 @@ export default async function ConsoleLayout({
     <TooltipProvider delayDuration={250}>
       <OnboardingProvider>
         <div className="flex h-screen flex-col overflow-hidden">
-          {workspace.trialDaysLeft > 0 && <TrialBanner daysLeft={workspace.trialDaysLeft} />}
           <TopBar
             workspaceName={workspace.name}
             userName={currentUser.name}

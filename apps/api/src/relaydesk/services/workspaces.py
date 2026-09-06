@@ -36,9 +36,8 @@ async def create_workspace(
     that built ``Workspace(...)`` directly would silently produce one
     that can never route inbound mail — Task 11's lookup would simply
     never find a ``ChannelAccount`` for it, with no error and no signal.
-    ``**extra`` passes through optional columns (``timezone``, ``plan``,
-    demo seed data, ...) without this helper needing to know about all of
-    them.
+    ``**extra`` passes through optional columns (``timezone``, demo seed
+    data, ...) without this helper needing to know about all of them.
     """
     # Normalised here, not just on lookup: `resolve_workspace` queries by
     # `slug.lower()`, so a mixed-case slug stored as typed would be
@@ -107,7 +106,6 @@ async def setup_tasks(
         ),
         SetupTask("portal", "Launch your user portal", "/user-portal/general", False),
         SetupTask("triage", "Turn on AI triage", "/settings/ai-triage", False),
-        SetupTask("billing", "Choose a plan", "/settings/billing", False),
     ]
 
 
