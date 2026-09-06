@@ -3,11 +3,9 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { getPublicKb, searchPublicKb } from "@/lib/api/public";
 
-export const metadata: Metadata = { title: "Search the help center" };
+export const metadata: Metadata = { title: "Search the knowledge base" };
 
 type SearchParams = Promise<{ q?: string }>;
 
@@ -22,30 +20,17 @@ export default async function HelpSearchPage({
   const { q } = await searchParams;
   const query = (q ?? "").trim();
 
-  const form = (
-    <form action="/help/search" className="mt-6 flex gap-2">
-      <Input
-        type="search"
-        name="q"
-        defaultValue={query}
-        placeholder="Search articles…"
-        aria-label="Search articles"
-      />
-      <Button type="submit" variant="secondary">
-        Search
-      </Button>
-    </form>
-  );
-
+  // The box itself is in the portal's shared header now -- present on every
+  // portal page, prefilled from this same `?q=`. This page renders results
+  // only. The endpoint and the parameter are unchanged.
   if (!query) {
     return (
       <main className="mx-auto max-w-2xl px-6 py-12">
         <h1 className="text-2xl font-semibold tracking-tight text-ink-900">
           Search
         </h1>
-        {form}
-        <p className="mt-10 text-[13px] text-ink-500">
-          Enter a search term to look through the help center.
+        <p className="mt-6 text-[13px] text-ink-500">
+          Enter a search term to look through the knowledge base.
         </p>
       </main>
     );
@@ -73,14 +58,13 @@ export default async function HelpSearchPage({
       <h1 className="text-2xl font-semibold tracking-tight text-ink-900">
         Search
       </h1>
-      {form}
 
       {results.length === 0 ? (
-        <p className="mt-10 text-[13px] text-ink-500">
+        <p className="mt-6 text-[13px] text-ink-500">
           No articles matched “{query}”.
         </p>
       ) : (
-        <ul className="mt-10 space-y-4">
+        <ul className="mt-6 space-y-4">
           {results.map((article) => (
             <li key={article.id}>
               <Link

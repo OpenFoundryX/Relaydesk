@@ -37,7 +37,7 @@ export default async function HelpCategoryPage({ params }: { params: Params }) {
   return (
     <main className="mx-auto max-w-2xl px-6 py-12">
       <Link href="/help" className="text-[13px] text-ink-500 hover:text-ink-900">
-        ← Help center
+        ← Knowledge Base
       </Link>
       <h1 className="mt-3 text-2xl font-semibold tracking-tight text-ink-900">
         {category.name}

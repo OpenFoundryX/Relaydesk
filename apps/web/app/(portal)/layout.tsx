@@ -1,9 +1,10 @@
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 
 import { PortalFooter } from "@/components/portal/portal-footer";
 import { PortalNav } from "@/components/portal/portal-nav";
+import { PortalSearch } from "@/components/portal/portal-search";
 import { getPublicWorkspace } from "@/lib/api/public";
 
 /**
@@ -25,13 +26,26 @@ export default async function PortalLayout({ children }: { children: ReactNode }
   return (
     <div className="min-h-screen bg-white">
       <header className="border-b border-ink-200">
-        <div className="mx-auto flex h-14 max-w-2xl items-center gap-2 px-6">
-          <span className="flex size-6 items-center justify-center rounded-md bg-ink-900 text-[10px] font-semibold text-white">
-            {workspace.monogram}
+        <div className="mx-auto flex min-h-14 max-w-5xl flex-wrap items-center gap-x-6 gap-y-2 px-6 py-2.5">
+          <span className="flex items-center gap-2">
+            <span className="flex size-6 items-center justify-center rounded-md bg-ink-900 text-[10px] font-semibold text-white">
+              {workspace.monogram}
+            </span>
+            <span className="text-[15px] font-semibold tracking-tight text-ink-900">
+              {workspace.name}
+            </span>
           </span>
-          <span className="text-[15px] font-semibold tracking-tight text-ink-900">
-            {workspace.name}
-          </span>
+          {/*
+           * Search sits in the header rather than on the two pages that
+           * used to carry a copy each, so it is reachable from an article
+           * and from the ticket form as well as from the index. It reads
+           * `?q=` to prefill itself, which is a dynamic read -- hence the
+           * boundary, the way the console does it in
+           * app/(console)/knowledge-base/layout.tsx.
+           */}
+          <Suspense fallback={<div className="h-9 min-w-0 flex-1 sm:max-w-xs" />}>
+            <PortalSearch className="min-w-0 flex-1 sm:max-w-xs" />
+          </Suspense>
           <PortalNav />
         </div>
       </header>

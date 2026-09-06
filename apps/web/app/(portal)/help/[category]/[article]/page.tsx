@@ -3,38 +3,12 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 
-import { DocRenderer } from "@/components/knowledge-base/doc-renderer";
-import { getPublicArticle } from "@/lib/api/public";
-import { cn } from "@/lib/utils";
+import { ArticleView } from "@/components/portal/article-view";
+import { PortalKbSidebar } from "@/components/portal/kb-sidebar";
+import { helpTree } from "@/components/portal/kb-tree";
+import { getPublicArticle, getPublicKb } from "@/lib/api/public";
 
 type Params = Promise<{ category: string; article: string }>;
-
-/**
- * Typography for a rendered article. Written out rather than pulled from a
- * plugin -- the web app carries no typography plugin -- and kept separate
- * from the console editor's own copy of this: that one styles an editable
- * TipTap surface, this one styles read-only output for anonymous visitors,
- * and the two have no reason to change together.
- */
-const articleStyles = cn(
-  "text-[15px] leading-relaxed text-ink-800",
-  "[&_h1]:mb-2.5 [&_h1]:mt-8 [&_h1]:text-[22px] [&_h1]:font-semibold [&_h1]:tracking-tight [&_h1]:text-ink-900",
-  "[&_h2]:mb-2 [&_h2]:mt-7 [&_h2]:text-[18px] [&_h2]:font-semibold [&_h2]:tracking-tight [&_h2]:text-ink-900",
-  "[&_h3]:mb-1.5 [&_h3]:mt-5 [&_h3]:text-[16px] [&_h3]:font-semibold [&_h3]:text-ink-900",
-  "[&_p]:my-3",
-  "[&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-5",
-  "[&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-5",
-  "[&_li]:my-1 [&_li>p]:my-0",
-  "[&_blockquote]:my-4 [&_blockquote]:border-l-2 [&_blockquote]:border-accent-500 [&_blockquote]:pl-3 [&_blockquote]:text-ink-600",
-  "[&_pre]:my-4 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:bg-ink-900 [&_pre]:p-3 [&_pre]:font-mono [&_pre]:text-[13px] [&_pre]:text-ink-50",
-  "[&_:not(pre)>code]:rounded [&_:not(pre)>code]:bg-ink-100 [&_:not(pre)>code]:px-1 [&_:not(pre)>code]:py-0.5 [&_:not(pre)>code]:font-mono [&_:not(pre)>code]:text-[13px]",
-  "[&_a]:text-accent-950 [&_a]:underline [&_a]:underline-offset-2",
-  "[&_hr]:my-6 [&_hr]:border-ink-200",
-  "[&_img]:my-4 [&_img]:max-w-full [&_img]:rounded-md [&_img]:border [&_img]:border-ink-200",
-  "[&_table]:my-4 [&_table]:w-full [&_table]:table-fixed [&_table]:border-collapse",
-  "[&_td]:border [&_td]:border-ink-200 [&_td]:px-2 [&_td]:py-1.5 [&_td]:align-top",
-  "[&_th]:border [&_th]:border-ink-200 [&_th]:bg-ink-50 [&_th]:px-2 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-semibold",
-);
 
 /**
  * The image resolver for public pages. Deliberately not the console's
@@ -77,22 +51,41 @@ export default async function HelpArticlePage({ params }: { params: Params }) {
   if (!slug) notFound();
 
   const { category, article: articleSlug } = await params;
-  const article = await getPublicArticle(slug, category, articleSlug);
+  // The index is read for the sidebar. `getPublicKb` is `cache()`-wrapped
+  // and request-scoped, and `generateMetadata` above has already paid for
+  // `getPublicArticle`, so neither of these is an extra round trip. Both
+  // apply the same published/external predicates, so the tree beside an
+  // article can only ever list articles that are themselves public.
+  const [article, categories] = await Promise.all([
+    getPublicArticle(slug, category, articleSlug),
+    getPublicKb(slug),
+  ]);
   if (!article) notFound();
 
   return (
-    <main className="mx-auto max-w-2xl px-6 py-12">
-      <Link
-        href={`/help/${category}`}
-        className="text-[13px] text-ink-500 hover:text-ink-900"
-      >
-        ← Back
-      </Link>
-      <h1 className="mt-3 text-2xl font-semibold tracking-tight text-ink-900">
-        {article.title}
-      </h1>
-      <div className={cn(articleStyles, "mt-6")}>
-        <DocRenderer doc={article.doc} imageSrc={publicImageSrc(slug)} />
+    <main className="mx-auto max-w-5xl px-6 py-10">
+      <div className="flex flex-col gap-10 md:flex-row md:gap-12">
+        <div className="w-full shrink-0 md:w-56">
+          <Link
+            href={`/help/${category}`}
+            className="mb-4 inline-block text-[13px] text-ink-500 hover:text-ink-900"
+          >
+            ← Back
+          </Link>
+          <PortalKbSidebar
+            categories={helpTree(categories)}
+            activeArticleId={article.id}
+          />
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <ArticleView
+            title={article.title}
+            doc={article.doc}
+            imageSrc={publicImageSrc(slug)}
+            updatedAt={article.updatedAt}
+          />
+        </div>
       </div>
     </main>
   );

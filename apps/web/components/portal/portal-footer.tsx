@@ -14,7 +14,7 @@ export function PortalFooter() {
   const onHelpCentre = pathname === "/help" || pathname.startsWith("/help/");
 
   return (
-    <footer className="mx-auto max-w-2xl px-6 py-8">
+    <footer className="mx-auto max-w-5xl px-6 py-8">
       {onHelpCentre && (
         <p className="mb-3 text-[13px] text-ink-500">
           Can&apos;t find what you need?{" "}
