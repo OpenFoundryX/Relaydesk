@@ -2,7 +2,7 @@
 
 import { Suspense, type MouseEvent, type ReactNode } from "react";
 import Link from "next/link";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { PageHeader } from "@/components/console/page-header";
 import { useArticleGuard } from "@/components/knowledge-base/article-guard";
@@ -55,6 +55,7 @@ export function KnowledgeBaseConsole({
   children: ReactNode;
 }) {
   const searchParams = useSearchParams();
+  const pathname = usePathname();
   const router = useRouter();
   const guard = useArticleGuard();
 
@@ -63,6 +64,20 @@ export function KnowledgeBaseConsole({
   // /knowledge-base, and unaffected by where the console is mounted.
   const { id } = useParams<{ id?: string }>();
   const activeArticleId = id ?? null;
+
+  /**
+   * `/knowledge-base/{id}/preview` shows the article the way the help site
+   * shows it -- including the help site's own category tree. Wrapping that
+   * in this shell would put two trees on screen side by side, one console
+   * and one portal, which is exactly the picture the preview exists to
+   * avoid. So on that one route the shell steps out of the way and the
+   * console's outer chrome (top bar, sidebar) is all that frames it.
+   *
+   * Read from the path because a layout is never told the URL any other
+   * way, and `useParams` cannot see a static segment. Below every hook, so
+   * the shell keeps the same hook order on both routes.
+   */
+  if (pathname.endsWith("/preview")) return <>{children}</>;
 
   const scope: KbScope = activeArticleId
     ? external.articles.some((article) => article.id === activeArticleId)

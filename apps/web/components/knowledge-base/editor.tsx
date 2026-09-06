@@ -13,6 +13,7 @@ import { TableHeader } from "@tiptap/extension-table-header";
 import { TableRow } from "@tiptap/extension-table-row";
 import {
   Bold,
+  BookOpen,
   Code,
   ExternalLink,
   Eye,
@@ -508,6 +509,26 @@ export function ArticleEditor({
           <Button variant="secondary" size="sm" disabled title={previewReason}>
             <ExternalLink />
             Preview live page
+          </Button>
+        )}
+
+        {/* The complement to the button above, for the case it cannot cover:
+            an external article that is not live yet has no public URL to
+            open, and this reads the same article through the console's own
+            authenticated API instead. Offered on external articles only --
+            an internal one has no help-centre page to preview. A new tab,
+            like its neighbour, so it never walks out of unsaved edits; the
+            "Preview" toggle beside it is what shows those. */}
+        {category?.scope === "external" && (
+          <Button asChild variant="secondary" size="sm">
+            <a
+              href={`/knowledge-base/${article.id}/preview`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              <BookOpen />
+              Preview help page
+            </a>
           </Button>
         )}
 

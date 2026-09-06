@@ -17,13 +17,15 @@ vi.mock("@/app/(console)/knowledge-base/actions", () => ({
 // There is no App Router mounted here. `params` and `?tab=` are exactly what
 // the shell reads to work out which scope is showing, so the stubs are the
 // whole point of this file rather than incidental scaffolding.
-const { params, search } = vi.hoisted(() => ({
+const { params, search, path } = vi.hoisted(() => ({
   params: { current: {} as { id?: string } },
   search: { current: new URLSearchParams() },
+  path: { current: "/knowledge-base" },
 }));
 vi.mock("next/navigation", () => ({
   useParams: () => params.current,
   useSearchParams: () => search.current,
+  usePathname: () => path.current,
   useRouter: () => ({ push: vi.fn() }),
 }));
 
@@ -77,6 +79,7 @@ function currentTab(): string | null {
 beforeEach(() => {
   params.current = {};
   search.current = new URLSearchParams();
+  path.current = "/knowledge-base";
 });
 
 describe("KnowledgeBaseConsole", () => {
@@ -148,5 +151,29 @@ describe("KnowledgeBaseConsole", () => {
   it("renders the route below it into the right-hand pane", () => {
     shell();
     expect(screen.getByText("the article pane")).toBeDefined();
+  });
+
+  // The preview route renders the help site's own layout, tree included.
+  // Wrapped in this shell it would show two category trees at once, one
+  // console and one portal, which is the picture the preview exists to
+  // avoid.
+  describe("on the preview route", () => {
+    it("steps out of the way and renders only the route below it", () => {
+      params.current = { id: "art-ext" };
+      path.current = "/knowledge-base/art-ext/preview";
+      shell();
+
+      expect(screen.getByText("the article pane")).toBeDefined();
+      expect(screen.queryByRole("navigation", { name: "Knowledge base" })).toBeNull();
+      expect(screen.queryByRole("link", { name: "External" })).toBeNull();
+    });
+
+    it("still renders its own chrome on the editor route", () => {
+      params.current = { id: "art-ext" };
+      path.current = "/knowledge-base/art-ext";
+      shell();
+
+      expect(screen.getByRole("navigation", { name: "Knowledge base" })).toBeDefined();
+    });
   });
 });
