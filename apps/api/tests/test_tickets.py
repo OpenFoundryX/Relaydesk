@@ -3,7 +3,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relaydesk.email_parse.normalize import ParsedAttachment
-from relaydesk.errors import Invalid
+from relaydesk.errors import Invalid, TooManyRequests
 from relaydesk.models.conversation import Channel, Conversation
 from relaydesk.models.message import Message, MessageDirection, MessageRole
 from relaydesk.services import tickets
@@ -187,7 +187,12 @@ async def test_a_submission_never_threads_into_an_existing_conversation(
 async def test_a_sender_over_the_hourly_cap_is_refused(
     db_session: AsyncSession,
 ) -> None:
-    """Reuses the same per-contact cap email ingest enforces."""
+    """Reuses the same per-contact cap email ingest enforces.
+
+    Raises the same exception type as the portal router's IP cap
+    (`TooManyRequests`), not `Invalid` -- both are abuse controls and must
+    be indistinguishable to the caller.
+    """
     workspace = await make_workspace(db_session)
     for _ in range(20):
         await tickets.submit(
@@ -200,7 +205,7 @@ async def test_a_sender_over_the_hourly_cap_is_refused(
             attachments=[],
         )
 
-    with pytest.raises(Invalid):
+    with pytest.raises(TooManyRequests):
         await tickets.submit(
             db_session,
             workspace.id,

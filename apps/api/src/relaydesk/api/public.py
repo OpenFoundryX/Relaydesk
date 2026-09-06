@@ -160,6 +160,20 @@ async def submit_ticket(
     if not within:
         raise TooManyRequests("We could not accept that just now.")
 
+    # Commit the charge immediately, before anything else in this request
+    # runs. `ratelimit.check` only flushes, and flushed-but-uncommitted
+    # work still lives inside an open transaction -- `get_session` closes
+    # (and so rolls back) that transaction at the end of any request that
+    # never explicitly committed. Without this line, a caller who trips
+    # the honeypot just below, or the per-email cap inside
+    # `tickets.submit`, pays nothing: the request ends in an early return
+    # or a raised error, the session closes uncommitted, and the hit just
+    # recorded disappears with it -- exactly the free-hammering the
+    # honeypot-after-rate-limit ordering above was meant to close off.
+    # This looks removable, since nothing here reads the row back; it is
+    # not, because closing the session is what would undo it.
+    await session.commit()
+
     # The honeypot. `company` is hidden from humans by the form's
     # stylesheet, so anything in it came from something filling fields
     # blindly. Answered with the same 201 a real submission gets: telling a
@@ -168,6 +182,8 @@ async def submit_ticket(
         return TicketSubmittedOut(received=True)
 
     uploads = files or []
+    if len(uploads) > get_settings().ticket_attachment_max_count:
+        raise Invalid("Too many attachments.")
 
     # A cheap check on the declared size before pulling any body into
     # memory -- `upload.size` is a client-supplied multipart header, so it

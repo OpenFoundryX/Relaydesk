@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from relaydesk.config import get_settings
 from relaydesk.email_parse.normalize import ParsedAttachment
-from relaydesk.errors import Invalid
+from relaydesk.errors import Invalid, TooManyRequests
 from relaydesk.models.conversation import Channel, Conversation
 from relaydesk.models.message import MessageDirection, MessageRole
 from relaydesk.services import attachments as attachment_store
@@ -42,8 +42,16 @@ async def submit(
         if item.content_type.lower() not in attachment_store.INLINE_SAFE_TYPES:
             raise Invalid("That file type is not accepted.")
 
+    # The per-email cap is an abuse control, the same category as the
+    # portal router's IP cap and honeypot. A caller who can tell this cap
+    # apart from the IP cap -- by status code or by wording -- learns which
+    # control fired and how to route around it, so this raises the same
+    # exception type with the same generic message the IP cap uses. Input
+    # validation above (blank message, size, attachment count/type) stays
+    # specific on purpose: those are genuine mistakes a real submitter
+    # benefits from being told about, not an abuse signal to hide.
     if await ingest._over_cap(session, workspace_id, email):
-        raise Invalid("Too many messages from this address just now.")
+        raise TooManyRequests("We could not accept that just now.")
 
     display_name = name.strip() or email
     contact = await contacts.upsert(session, workspace_id, email, display_name)
