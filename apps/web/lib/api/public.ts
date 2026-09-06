@@ -25,6 +25,8 @@ export interface PublicArticleSummary {
 export interface PublicArticle extends PublicArticleSummary {
   doc: unknown;
   publishedAt: string | null;
+  /** ISO-8601. Printed under the body as "Last updated". */
+  updatedAt: string;
 }
 
 export interface PublicCategory {

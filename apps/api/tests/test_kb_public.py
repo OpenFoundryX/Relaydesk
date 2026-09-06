@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -283,6 +285,26 @@ async def test_the_article_route_serves_a_published_article(
 
     assert response.status_code == 200
     assert response.json()["title"] == "Refunds"
+
+
+async def test_the_article_route_reports_when_it_was_last_updated(
+    client, db_session: AsyncSession
+) -> None:
+    """The help site prints this under the body as "Last updated".
+
+    Asserted against the stored row, not merely "the key is present", so
+    both dropping the field and filling it from the wrong column fail --
+    `published_at` in particular is None here, because `_published` sets
+    the status on the model directly.
+    """
+    workspace, category, article = await _published(db_session)
+
+    response = await client.get(
+        f"/api/public/{workspace.slug}/kb/{category.slug}/{article.slug}"
+    )
+
+    assert response.status_code == 200
+    assert datetime.fromisoformat(response.json()["updatedAt"]) == article.updated_at
 
 
 @HIDDEN

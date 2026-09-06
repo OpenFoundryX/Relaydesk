@@ -75,6 +75,7 @@ def _article_out(article: KbArticle) -> PublicArticleOut:
         excerpt=article.excerpt,
         doc=article.doc,
         published_at=article.published_at,
+        updated_at=article.updated_at,
     )
 
 

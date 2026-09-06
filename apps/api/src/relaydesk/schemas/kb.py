@@ -101,6 +101,12 @@ class PublicArticleSummary(CamelModel):
 class PublicArticleOut(PublicArticleSummary):
     doc: dict
     published_at: datetime | None
+    #: When the article last changed. The help site prints it under the body
+    #: as "Last updated", which is the one thing a reader needs to judge
+    #: whether an answer is still current. Safe to publish: it says when a
+    #: *published* article was edited, not who edited it, and every article
+    #: this schema is ever built for is already public.
+    updated_at: datetime
 
 
 class PublicCategoryOut(CamelModel):
