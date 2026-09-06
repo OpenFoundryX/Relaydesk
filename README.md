@@ -118,6 +118,40 @@ at `<slug>.localhost:3000` (e.g. `http://chronon.localhost:3000/help`)
 without any DNS or certificate setup, because browsers resolve
 `*.localhost` to the loopback address on their own.
 
+## Public ticket submission
+
+Every workspace's portal has a ticket form at `<slug>.<portal domain>/submit-ticket`,
+backed by `POST /api/public/{slug}/tickets`. A submission there lands in the
+console inbox exactly like an emailed one, tagged with the `portal` channel.
+A `company` field on the form is a honeypot: it is hidden from a human with
+CSS (not `type="hidden"`, which a scraper checks for and skips), and filling
+it gets the same `201` a real submission gets, so a bot never learns it was
+caught.
+
+**`TRUSTED_PROXY_IPS` must name the address of the container in front of the
+API — the `web` service — or this degrades silently.** The browser posts to
+the Next server, which calls the API on the customer's behalf; without this
+setting the API sees the Next server's own address for every submission, so
+every portal visitor shares one rate-limit bucket instead of getting their
+own. Nothing errors when this is wrong — the limit still enforces, just not
+per-visitor — which is exactly why it belongs here and not only in code
+comments.
+
+In `docker-compose.yml`, `TRUSTED_PROXY_IPS` for the `api` service currently
+defaults to `172.20.0.8`, the `web` container's address on the Compose
+default bridge network at the time this was wired up (confirmed with
+`docker network inspect <project>_default` and by resolving `web` from
+inside the `api` container). That address is assigned by Docker's network
+allocator, not pinned by this file, so it is stable across restarting or
+recreating individual containers but **is not guaranteed to survive a full
+`docker compose down && up`**, which tears down and recreates the network
+from scratch. If portal rate limiting looks like it is sharing one bucket
+across visitors after a full recreate, re-check the `web` container's
+current address (`docker network inspect <project>_default`) against this
+value first. For a setup that cannot drift, give the network a fixed subnet
+and pin `web` to a static `ipv4_address` in `docker-compose.yml`, then point
+`TRUSTED_PROXY_IPS` at that fixed address instead.
+
 ## Development commands
 
 ```sh

@@ -105,3 +105,36 @@ export const searchPublicKb = cache(
     );
   },
 );
+
+/** The API's answer to a ticket submission -- a real one or a caught honeypot look identical. */
+export interface TicketSubmitted {
+  received: boolean;
+}
+
+/**
+ * Submit a portal ticket. `POST /public/{slug}/tickets`, multipart.
+ *
+ * Not wrapped in `cache()` -- unlike every read above, this is a mutation,
+ * and caching a POST would mean a retried submission after a transient
+ * failure silently replays the first attempt's result instead of trying
+ * again.
+ *
+ * `forwardedFor` carries the submitter's address for the API's rate
+ * limiter. It is passed through as `X-Forwarded-For` rather than baked into
+ * this function's own logic, because the API only believes that header
+ * from a peer listed in `TRUSTED_PROXY_IPS` (see docker-compose.yml /
+ * README) -- deciding whether to trust it is the API's job, not this
+ * function's.
+ */
+export async function submitPublicTicket(
+  slug: string,
+  form: FormData,
+  forwardedFor: string | null,
+): Promise<TicketSubmitted> {
+  return apiFetch<TicketSubmitted>(`/public/${slug}/tickets`, {
+    method: "POST",
+    auth: false,
+    body: form,
+    headers: forwardedFor ? { "X-Forwarded-For": forwardedFor } : undefined,
+  });
+}

@@ -43,6 +43,18 @@ services:
       SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Relaydesk}
       ATTACHMENT_DIR: ${ATTACHMENT_DIR:-/var/lib/relaydesk/attachments}
       ATTACHMENT_MAX_BYTES: ${ATTACHMENT_MAX_BYTES:-26214400}
+      # The only proxy this API should ever believe an X-Forwarded-For
+      # header from. The public ticket form's server action (apps/web/app/
+      # (portal)/submit-ticket/actions.ts) forwards the portal visitor's
+      # address on every call it makes to this service; the API only reads
+      # that header back off a peer listed here (see
+      # relaydesk/services/client_ip.py) -- anyone else's copy of the
+      # header is ignored, and the visitor's raw socket address is used
+      # instead. Empty (the default) means "trust nobody," which is safe
+      # but silently collapses every portal ticket's rate limit onto this
+      # one address (Docker's `web` container). See the README for how
+      # this value was found and why it can drift.
+      TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:-172.20.0.8}
     ports:
       - "8000:8000"
     volumes:
