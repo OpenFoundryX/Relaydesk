@@ -1,12 +1,44 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from relaydesk.config import get_settings
 from relaydesk.errors import NotFound
-from relaydesk.models.kb import ArticleStatus, KbScope
-from relaydesk.services import kb_articles, kb_categories, kb_images, kb_public
+from relaydesk.models.kb import ArticleStatus, KbImage, KbScope
+from relaydesk.services import blobs, kb_articles, kb_categories, kb_images, kb_public
 from tests.factories import make_member, make_workspace
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+
+
+async def _unsafe_image(session, article, content_type: str) -> KbImage:
+    """A row whose stored `content_type` is not on the image allowlist.
+
+    Built directly through the model rather than `kb_images.store`, which
+    correctly refuses to write one -- this exists to prove the public read
+    path also refuses to trust it.
+    """
+    content = b"<script>alert(1)</script>"
+    digest, key = blobs.write(
+        kb_images.storage_root(), article.workspace_id, content
+    )
+    image = KbImage(
+        workspace_id=article.workspace_id,
+        article_id=article.id,
+        filename="payload.html",
+        content_type=content_type,
+        size_bytes=len(content),
+        sha256=digest,
+        storage_key=key,
+    )
+    session.add(image)
+    await session.flush()
+    return image
+
+
+@pytest.fixture(autouse=True)
+def image_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(get_settings(), "attachment_dir", str(tmp_path))
+    return tmp_path
 
 
 def _doc(text: str) -> dict:
@@ -139,6 +171,21 @@ async def test_public_search_excludes_internal_scope_even_when_published(
         db_session, workspace.id, draft.id, doc=_doc("Within thirty days of dispatch.")
     )
 
+    assert await kb_public.search(db_session, workspace.id, "thirty") == []
+
+
+async def test_visibility_and_search_share_one_definition_of_public(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    """`_visible()` (used by `index`, `article`, and `image`) and `search()`
+    must read the definition of "public" from the same place. Patching
+    `PUBLIC_STATUS` and seeing both an index query and a search query react
+    pins that they share one source rather than each hardcoding
+    `ArticleStatus.published` on its own."""
+    workspace, _, article = await _published(db_session)
+    monkeypatch.setattr(kb_public, "PUBLIC_STATUS", ArticleStatus.ready)
+
+    assert await kb_public.index(db_session, workspace.id) == []
     assert await kb_public.search(db_session, workspace.id, "thirty") == []
 
 
@@ -341,3 +388,20 @@ async def test_the_image_route_404s_for_a_different_workspace(
     response = await client.get(f"/api/public/{mine.slug}/kb/images/{image.id}")
 
     assert response.status_code == 404
+
+
+async def test_the_image_route_refuses_a_content_type_off_the_allowlist(
+    client, db_session: AsyncSession
+) -> None:
+    """`kb_images.store` refuses this on write, but the public read route
+    must not trust the stored value regardless -- this is the anonymous,
+    unauthenticated origin, so it is the one route where this matters most."""
+    workspace, _, article = await _published(db_session)
+    image = await _unsafe_image(db_session, article, "text/html")
+
+    response = await client.get(f"/api/public/{workspace.slug}/kb/images/{image.id}")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/octet-stream"
+    assert response.headers["content-disposition"] == "attachment"
+    assert response.headers["x-content-type-options"] == "nosniff"

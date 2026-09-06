@@ -22,6 +22,7 @@ from relaydesk.schemas.kb import (
     PublicWorkspaceOut,
 )
 from relaydesk.services import kb_public
+from relaydesk.services.attachments import INLINE_SAFE_TYPES, safe_content_type
 from relaydesk.services.workspaces import RESERVED_SLUGS
 
 router = APIRouter()
@@ -39,6 +40,12 @@ async def resolve_workspace(session: DbSession, slug: str) -> Workspace:
     return workspace
 
 
+# Every route below adds one more fixed first path segment under `/public`
+# (`workspaces`, `kb` reads through `{slug}/kb...`, ...). Each one is a
+# potential collision with a workspace slug that happens to match it -- see
+# `RESERVED_SLUGS` in `relaydesk.services.workspaces`, which both
+# `resolve_workspace` above and `create_workspace` consult. Any new fixed
+# first segment added here must be added to that set too.
 @router.get("/workspaces/{slug}", response_model=PublicWorkspaceOut)
 async def read_workspace(slug: str, session: DbSession) -> PublicWorkspaceOut:
     workspace = await resolve_workspace(session, slug)
@@ -93,10 +100,13 @@ async def search_kb(
 async def read_kb_image(slug: str, image_id: uuid.UUID, session: DbSession) -> Response:
     workspace = await resolve_workspace(session, slug)
     row, content = await kb_public.image(session, workspace.id, image_id)
+    headers = {"X-Content-Type-Options": "nosniff"}
+    if row.content_type.lower() not in INLINE_SAFE_TYPES:
+        headers["Content-Disposition"] = "attachment"
     return Response(
         content=content,
-        media_type=row.content_type,
-        headers={"X-Content-Type-Options": "nosniff"},
+        media_type=safe_content_type(row.content_type),
+        headers=headers,
     )
 
 

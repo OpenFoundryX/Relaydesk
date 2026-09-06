@@ -113,13 +113,23 @@ export type ArticleStatus = "draft" | "ready" | "published";
 /** Internal articles are procedures for the AI agent; external ones are the customer-facing help site. */
 export type KbScope = "internal" | "external";
 
-export interface KbArticle {
+/**
+ * An entry in `GET /kb/articles` -- no `doc`, no `publishedAt`. The list
+ * page only ever renders title, excerpt, status and updatedAt, so the API
+ * doesn't ship every article's full ProseMirror document just to fill a
+ * list row.
+ */
+export interface KbArticleSummary {
   id: string;
   title: string;
   slug: string;
   excerpt: string;
   status: ArticleStatus;
   categoryId: string;
+  updatedAt: string;
+}
+
+export interface KbArticle extends KbArticleSummary {
   /**
    * The article body as ProseMirror JSON. `unknown` on purpose: nothing in
    * the console reads into it by hand -- the editor round-trips it through
@@ -127,7 +137,6 @@ export interface KbArticle {
    * table. Typing it as a shape would invite code that trusts that shape.
    */
   doc: unknown;
-  updatedAt: string;
   /** When it first went live. Stays set after an unpublish; `status` says whether it is live now. */
   publishedAt: string | null;
 }

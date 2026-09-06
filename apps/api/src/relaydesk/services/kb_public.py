@@ -14,12 +14,20 @@ from relaydesk.errors import NotFound
 from relaydesk.models.kb import ArticleStatus, KbArticle, KbCategory, KbImage, KbScope
 from relaydesk.services import blobs, kb_articles, kb_images
 
+# The two predicates that define "public", in one place. `_visible()` below
+# applies them directly to a query; `search()` translates them into the
+# keyword arguments `kb_articles.search` understands. Nothing else in this
+# module should spell out `KbScope.external` or `ArticleStatus.published`
+# again -- that would be the same definition stated twice, free to drift.
+PUBLIC_SCOPE = KbScope.external
+PUBLIC_STATUS = ArticleStatus.published
+
 
 def _visible(statement):
     """The two predicates that define 'public'. Applied by every query here."""
     return statement.where(
-        KbCategory.scope == KbScope.external,
-        KbArticle.status == ArticleStatus.published,
+        KbCategory.scope == PUBLIC_SCOPE,
+        KbArticle.status == PUBLIC_STATUS,
     )
 
 
@@ -71,7 +79,7 @@ async def search(
     session: AsyncSession, workspace_id: uuid.UUID, query: str
 ) -> list[KbArticle]:
     return await kb_articles.search(
-        session, workspace_id, query, scope=KbScope.external, published_only=True
+        session, workspace_id, query, scope=PUBLIC_SCOPE, status=PUBLIC_STATUS
     )
 
 

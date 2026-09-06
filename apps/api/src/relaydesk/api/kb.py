@@ -11,6 +11,7 @@ from relaydesk.schemas.kb import (
     ArticleCreateRequest,
     ArticleOut,
     ArticlePatch,
+    ArticleSummary,
     CategoryCreateRequest,
     CategoryOut,
     CategoryPatch,
@@ -18,6 +19,7 @@ from relaydesk.schemas.kb import (
     StatusRequest,
 )
 from relaydesk.services import kb_articles, kb_categories, kb_images
+from relaydesk.services.attachments import INLINE_SAFE_TYPES, safe_content_type
 
 router = APIRouter()
 
@@ -44,6 +46,18 @@ def _category_out(category: KbCategory, article_count: int) -> CategoryOut:
         scope=category.scope.value,
         position=category.position,
         article_count=article_count,
+    )
+
+
+def _article_summary(article: KbArticle) -> ArticleSummary:
+    return ArticleSummary(
+        id=str(article.id),
+        title=article.title,
+        slug=article.slug,
+        excerpt=article.excerpt,
+        status=article.status.value,
+        category_id=str(article.category_id),
+        updated_at=article.updated_at,
     )
 
 
@@ -116,21 +130,21 @@ async def delete_category(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/articles", response_model=list[ArticleOut])
+@router.get("/articles", response_model=list[ArticleSummary])
 async def list_articles(
     scope_: Scope,
     session: DbSession,
     scope: KbScope | None = None,
     status_filter: Annotated[ArticleStatus | None, Query(alias="status")] = None,
     q: str | None = None,
-) -> list[ArticleOut]:
+) -> list[ArticleSummary]:
     if q is not None:
         rows = await kb_articles.search(session, scope_.workspace_id, q, scope=scope)
     else:
         rows = await kb_articles.list_for(
             session, scope_.workspace_id, scope=scope, status=status_filter
         )
-    return [_article_out(article) for article in rows]
+    return [_article_summary(article) for article in rows]
 
 
 @router.post(
@@ -234,8 +248,11 @@ async def download_image(
     image_id: uuid.UUID, scope_: Scope, session: DbSession
 ) -> Response:
     row, content = await kb_images.read(session, scope_.workspace_id, image_id)
+    headers = {"X-Content-Type-Options": "nosniff"}
+    if row.content_type.lower() not in INLINE_SAFE_TYPES:
+        headers["Content-Disposition"] = "attachment"
     return Response(
         content=content,
-        media_type=row.content_type,
-        headers={"X-Content-Type-Options": "nosniff"},
+        media_type=safe_content_type(row.content_type),
+        headers=headers,
     )

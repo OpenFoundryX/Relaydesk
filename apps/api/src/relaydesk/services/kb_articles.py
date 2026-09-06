@@ -104,7 +104,10 @@ async def list_for(
     query = (
         sa.select(KbArticle)
         .join(KbCategory, KbCategory.id == KbArticle.category_id)
-        .where(KbArticle.workspace_id == workspace_id)
+        .where(
+            KbArticle.workspace_id == workspace_id,
+            KbCategory.workspace_id == workspace_id,
+        )
         .order_by(KbCategory.position, KbArticle.title)
     )
     if scope is not None:
@@ -172,7 +175,7 @@ async def search(
     query: str,
     *,
     scope: KbScope | None = None,
-    published_only: bool = False,
+    status: ArticleStatus | None = None,
 ) -> list[KbArticle]:
     """Full-text over title and body, ranked.
 
@@ -180,6 +183,11 @@ async def search(
     from a search box, and `to_tsquery` raises a syntax error on ordinary
     punctuation. The websearch parser accepts quoted phrases, OR, and leading
     minus, and simply ignores anything it cannot parse.
+
+    ``status`` takes the actual status to filter to (or ``None`` for no
+    filter) rather than a "published only" flag, so a caller like
+    ``kb_public.search`` can pass through the exact value it treats as
+    "public" instead of restating it as a boolean.
     """
     terms = query.strip()
     if not terms:
@@ -191,6 +199,7 @@ async def search(
         .join(KbCategory, KbCategory.id == KbArticle.category_id)
         .where(
             KbArticle.workspace_id == workspace_id,
+            KbCategory.workspace_id == workspace_id,
             KbArticle.search_vector.op("@@")(tsquery),
         )
         .order_by(sa.func.ts_rank(KbArticle.search_vector, tsquery).desc())
@@ -198,8 +207,8 @@ async def search(
     )
     if scope is not None:
         statement = statement.where(KbCategory.scope == scope)
-    if published_only:
-        statement = statement.where(KbArticle.status == ArticleStatus.published)
+    if status is not None:
+        statement = statement.where(KbArticle.status == status)
 
     return list((await session.scalars(statement)).all())
 

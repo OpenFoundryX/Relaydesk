@@ -3,11 +3,36 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from relaydesk.config import get_settings
 from relaydesk.errors import Invalid, NotFound
-from relaydesk.models.kb import KbScope
-from relaydesk.services import kb_articles, kb_categories, kb_images
+from relaydesk.models.kb import KbImage, KbScope
+from relaydesk.services import blobs, kb_articles, kb_categories, kb_images
 from tests.factories import make_member, make_workspace, sign_in
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+
+
+async def _unsafe_image(session: AsyncSession, article, content_type: str) -> KbImage:
+    """A row whose stored `content_type` is not on the image allowlist.
+
+    Built directly through the model rather than `kb_images.store`, which
+    correctly refuses to write one -- this exists to prove the *read* path
+    also refuses to trust it, independent of that write-side guard.
+    """
+    content = b"<script>alert(1)</script>"
+    digest, key = blobs.write(
+        kb_images.storage_root(), article.workspace_id, content
+    )
+    image = KbImage(
+        workspace_id=article.workspace_id,
+        article_id=article.id,
+        filename="payload.html",
+        content_type=content_type,
+        size_bytes=len(content),
+        sha256=digest,
+        storage_key=key,
+    )
+    session.add(image)
+    await session.flush()
+    return image
 
 
 @pytest.fixture(autouse=True)
@@ -172,4 +197,23 @@ async def test_the_download_route_serves_an_image_inline(db_session, client) -> 
     assert response.status_code == 200
     assert response.content == PNG
     assert response.headers["content-type"] == "image/png"
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
+async def test_the_download_route_refuses_a_content_type_off_the_allowlist(
+    db_session, client
+) -> None:
+    """`kb_images.store` refuses this on write, but the read route must not
+    trust the stored value regardless -- a widened allowlist, a future
+    import path, or a row written by a later slice could all put one here."""
+    workspace, author, article = await _article(db_session)
+    image = await _unsafe_image(db_session, article, "text/html")
+    await db_session.commit()
+    headers = await sign_in(client, db_session, author.email)
+
+    response = await client.get(f"/api/kb/images/{image.id}", headers=headers)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/octet-stream"
+    assert response.headers["content-disposition"] == "attachment"
     assert response.headers["x-content-type-options"] == "nosniff"

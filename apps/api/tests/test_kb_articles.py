@@ -221,6 +221,27 @@ async def test_listing_filters_by_scope(db_session: AsyncSession) -> None:
     assert [a.title for a in rows] == ["Private one"]
 
 
+async def test_listing_excludes_an_article_whose_category_is_another_workspaces(
+    db_session: AsyncSession,
+) -> None:
+    """`create`/`update` never let an article's category cross a workspace
+    boundary, so this inconsistent state should not arise in practice. But
+    `list_for` joins `kb_categories` and used to filter only
+    `KbArticle.workspace_id`, not `KbCategory.workspace_id` -- the same gap
+    every query in `kb_public.py` already closes. Forcing the state directly
+    proves the added predicate rather than just that normal usage stays
+    scoped."""
+    mine, author, category = await _setup(db_session, slug="mine")
+    _, _, theirs_category = await _setup(db_session, slug="theirs")
+    article = await kb_articles.create(
+        db_session, mine.id, category.id, "Refunds", author
+    )
+    article.category_id = theirs_category.id
+    await db_session.flush()
+
+    assert await kb_articles.list_for(db_session, mine.id) == []
+
+
 async def test_the_route_creates_and_reads_an_article(db_session, client) -> None:
     workspace, author, category = await _setup(db_session)
     await db_session.commit()

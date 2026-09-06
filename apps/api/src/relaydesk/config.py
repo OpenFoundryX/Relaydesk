@@ -17,9 +17,12 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     web_url: str = "http://localhost:3000"
     # The root a workspace subdomain is resolved against: a workspace with
-    # slug "acme" is reachable at "acme.<portal_domain>". See
-    # relaydesk.api.public and apps/web/middleware.ts, which mirrors this
-    # value client-side as NEXT_PUBLIC_PORTAL_DOMAIN.
+    # slug "acme" is reachable at "acme.<portal_domain>". Not read anywhere
+    # in the API today -- `relaydesk.api.public` resolves a workspace from
+    # the `{slug}` path parameter it is handed, not from a hostname. The
+    # value that is actually consumed for host-to-slug resolution is
+    # apps/web/middleware.ts, via its own NEXT_PUBLIC_PORTAL_DOMAIN env var,
+    # which this setting's default is kept in sync with by convention.
     portal_domain: str = "localhost:3000"
 
     celery_broker_url: str = "amqp://guest:guest@rabbitmq:5672//"

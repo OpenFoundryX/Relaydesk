@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
-import type { ArticleStatus, KbArticle, KbCategory } from "@/lib/types";
+import type { ArticleStatus, KbArticleSummary, KbCategory } from "@/lib/types";
 
 const statusTone: Record<ArticleStatus, "neutral" | "accent" | "positive"> = {
   draft: "neutral",
@@ -28,7 +28,7 @@ export function CategoryList({
   articles,
 }: {
   categories: KbCategory[];
-  articles: KbArticle[];
+  articles: KbArticleSummary[];
 }) {
   return (
     <div className="space-y-4">

@@ -10,8 +10,15 @@ from relaydesk.models import Label, Membership, MembershipStatus, Workspace
 from relaydesk.services import channel_accounts
 
 # A workspace is reachable at <slug>.<portal domain>, so a slug that collides
-# with a hostname the deployment needs would take it over.
-RESERVED_SLUGS = frozenset({"www", "app", "api", "admin", "mail", "inbound"})
+# with a hostname the deployment needs would take it over. "workspaces" is
+# here for a second reason: it is also the first fixed path segment of
+# `GET /api/public/workspaces/{slug}`, and a workspace slugged "workspaces"
+# would make `/api/public/workspaces/kb` route to that lookup handler
+# instead of to `/api/public/{slug}/kb` for the workspace actually named
+# "workspaces".
+RESERVED_SLUGS = frozenset(
+    {"www", "app", "api", "admin", "mail", "inbound", "workspaces"}
+)
 
 
 async def create_workspace(
@@ -33,9 +40,13 @@ async def create_workspace(
     demo seed data, ...) without this helper needing to know about all of
     them.
     """
-    if slug.lower() in RESERVED_SLUGS:
+    # Normalised here, not just on lookup: `resolve_workspace` queries by
+    # `slug.lower()`, so a mixed-case slug stored as typed would be
+    # permanently unreachable on its own subdomain.
+    normalized_slug = slug.lower()
+    if normalized_slug in RESERVED_SLUGS:
         raise Invalid("That workspace address is reserved.")
-    workspace = Workspace(name=name, slug=slug, monogram=monogram, **extra)
+    workspace = Workspace(name=name, slug=normalized_slug, monogram=monogram, **extra)
     session.add(workspace)
     await session.flush()
     await channel_accounts.create(session, workspace.id, "Support")

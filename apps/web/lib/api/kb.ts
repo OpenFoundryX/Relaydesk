@@ -3,7 +3,13 @@ import "server-only";
 import { cache } from "react";
 
 import { ApiError, apiFetch } from "@/lib/api/client";
-import type { ArticleStatus, KbArticle, KbCategory, KbScope } from "@/lib/types";
+import type {
+  ArticleStatus,
+  KbArticle,
+  KbArticleSummary,
+  KbCategory,
+  KbScope,
+} from "@/lib/types";
 
 export const getCategories = cache(async (scope: KbScope): Promise<KbCategory[]> => {
   return apiFetch<KbCategory[]>(`/kb/categories?scope=${scope}`);
@@ -23,11 +29,13 @@ export interface ArticleQuery {
  * two call sites can actually match on -- and `getArticles` below is the
  * object-shaped wrapper around it.
  */
-const articlesFor = cache(async (query: string): Promise<KbArticle[]> => {
-  return apiFetch<KbArticle[]>(`/kb/articles${query}`);
+const articlesFor = cache(async (query: string): Promise<KbArticleSummary[]> => {
+  return apiFetch<KbArticleSummary[]>(`/kb/articles${query}`);
 });
 
-export async function getArticles(params: ArticleQuery = {}): Promise<KbArticle[]> {
+export async function getArticles(
+  params: ArticleQuery = {},
+): Promise<KbArticleSummary[]> {
   const query = new URLSearchParams();
   if (params.scope) query.set("scope", params.scope);
   if (params.status) query.set("status", params.status);

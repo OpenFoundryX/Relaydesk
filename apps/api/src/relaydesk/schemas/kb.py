@@ -1,9 +1,21 @@
 import uuid
 from datetime import datetime
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from relaydesk.schemas.base import CamelModel
+
+
+def _reject_blank(value: str | None) -> str | None:
+    """`min_length=1` only counts characters, so "   " passes it and the
+    service's own `.strip()` would then store an empty title -- an empty
+    `<h1>` on the public site, with the slug falling back to "untitled".
+    Rejecting here keeps that decision at the schema boundary rather than
+    letting it depend on what the service happens to do with the value.
+    """
+    if value is not None and not value.strip():
+        raise ValueError("Title cannot be blank.")
+    return value
 
 
 class CategoryOut(CamelModel):
@@ -44,12 +56,16 @@ class ArticleCreateRequest(CamelModel):
     category_id: uuid.UUID
     title: str = Field(min_length=1, max_length=200)
 
+    _validate_title = field_validator("title")(_reject_blank)
+
 
 class ArticlePatch(CamelModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     excerpt: str | None = Field(default=None, max_length=400)
     doc: dict | None = None
     category_id: uuid.UUID | None = None
+
+    _validate_title = field_validator("title")(_reject_blank)
 
 
 class StatusRequest(CamelModel):

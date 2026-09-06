@@ -76,7 +76,9 @@ async def test_search_never_crosses_a_workspace(db_session: AsyncSession) -> Non
     assert await kb_articles.search(db_session, mine.id, "thirty") == []
 
 
-async def test_published_only_excludes_drafts(db_session: AsyncSession) -> None:
+async def test_a_status_filter_excludes_other_statuses(
+    db_session: AsyncSession,
+) -> None:
     """This is the mode the public hub uses; a draft leaking into it would
     publish something nobody approved."""
     workspace, author, category = await _setup(db_session)
@@ -92,7 +94,7 @@ async def test_published_only_excludes_drafts(db_session: AsyncSession) -> None:
     )
 
     hits = await kb_articles.search(
-        db_session, workspace.id, "thirty", published_only=True
+        db_session, workspace.id, "thirty", status=ArticleStatus.published
     )
 
     assert [a.title for a in hits] == ["Live one"]
@@ -119,6 +121,23 @@ async def test_an_empty_query_returns_nothing(db_session: AsyncSession) -> None:
     await _write(db_session, workspace, category, author, "Refunds", "thirty days")
 
     assert await kb_articles.search(db_session, workspace.id, "   ") == []
+
+
+async def test_search_excludes_an_article_whose_category_is_another_workspaces(
+    db_session: AsyncSession,
+) -> None:
+    """Same gap as `list_for`: the join against `kb_categories` used to
+    filter only `KbArticle.workspace_id`. `search` is the query behind the
+    public search box, so this is the more consequential of the two."""
+    mine, mine_author, mine_category = await _setup(db_session, slug="mine")
+    _, _, theirs_category = await _setup(db_session, slug="theirs")
+    article = await _write(
+        db_session, mine, mine_category, mine_author, "Refunds", "thirty days"
+    )
+    article.category_id = theirs_category.id
+    await db_session.flush()
+
+    assert await kb_articles.search(db_session, mine.id, "thirty") == []
 
 
 async def test_punctuation_in_a_query_does_not_raise(db_session: AsyncSession) -> None:

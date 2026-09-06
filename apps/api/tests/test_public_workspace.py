@@ -98,3 +98,30 @@ async def test_the_unknown_and_reserved_404_bodies_are_byte_identical(
 
     assert unknown.status_code == reserved.status_code == 404
     assert unknown.content == reserved.content
+
+
+async def test_a_workspace_cannot_be_slugged_workspaces(
+    db_session: AsyncSession,
+) -> None:
+    """`/workspaces/{slug}` is registered before `/{slug}/kb`, and both are
+    two-segment paths under `/public` -- a workspace slugged "workspaces"
+    would have `/api/public/workspaces/kb` swallowed by the workspace-lookup
+    handler (slug="kb") instead of reaching the KB index for the workspace
+    actually named "workspaces"."""
+    with pytest.raises(Invalid):
+        await workspaces.create_workspace(
+            db_session, name="Workspaces Inc", slug="workspaces", monogram="WS"
+        )
+
+
+async def test_a_mixed_case_slug_is_normalised_on_creation(
+    db_session: AsyncSession,
+) -> None:
+    """`resolve_workspace` looks the slug up as `slug.lower()`; storing the
+    caller's casing verbatim would make a workspace permanently unreachable
+    on its own subdomain."""
+    workspace = await workspaces.create_workspace(
+        db_session, name="Acme", slug="AcMe", monogram="AC"
+    )
+
+    assert workspace.slug == "acme"
