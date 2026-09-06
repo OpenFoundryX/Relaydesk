@@ -9,6 +9,7 @@ import type { middleware as MiddlewareFn } from "./middleware";
 // set (or not set) for that variable.
 let workspaceSlug: (host: string | null) => string | null;
 let middleware: typeof MiddlewareFn;
+let config: { matcher: string[] };
 
 beforeAll(async () => {
   // Vitest isolates each test file's module registry, and this is the
@@ -19,7 +20,7 @@ beforeAll(async () => {
   // "next/server" module instance for middleware.ts's internal import,
   // diverging from the one this file imports statically below.)
   vi.stubEnv("NEXT_PUBLIC_PORTAL_DOMAIN", "localhost:3000");
-  ({ workspaceSlug, middleware } = await import("./middleware"));
+  ({ workspaceSlug, middleware, config } = await import("./middleware"));
 });
 
 afterAll(() => {
@@ -221,5 +222,55 @@ describe("root path resolution", () => {
     expect(response.headers.get(OVERRIDE_HEADER)?.split(",") ?? []).not.toContain(
       WORKSPACE_HEADER,
     );
+  });
+});
+
+describe("matcher coverage", () => {
+  // Every other test in this file calls `middleware()` directly, which
+  // bypasses `config.matcher` entirely -- so all of them would still pass
+  // if the /submit-ticket entry were deleted and the middleware simply
+  // stopped running on that route. It is the route the public ticket form
+  // posts from, and the X-Forwarded-For strip above is what stops a caller
+  // choosing its own rate-limit bucket; with no matcher entry, none of that
+  // executes and the whole limiter collapses onto the Next server's address.
+  //
+  // Next compiles these patterns with path-to-regexp, which is not a
+  // dependency here. These two forms are the only ones this file uses, so
+  // they are converted directly rather than approximated: a literal path,
+  // and a literal path followed by `/:param*` (zero or more trailing
+  // segments -- which is why `/submit-ticket` itself matches
+  // `/submit-ticket/:path*`).
+  function matches(pattern: string, pathname: string): boolean {
+    const suffix = "/:path*";
+    if (pattern.endsWith(suffix)) {
+      const base = pattern.slice(0, -suffix.length);
+      return pathname === base || pathname.startsWith(`${base}/`);
+    }
+    return pathname === pattern;
+  }
+
+  function covered(pathname: string): boolean {
+    return config.matcher.some((pattern) => matches(pattern, pathname));
+  }
+
+  it("runs the middleware on the public ticket form's route", () => {
+    expect(covered("/submit-ticket")).toBe(true);
+  });
+
+  it("runs it on paths beneath that route too", () => {
+    expect(covered("/submit-ticket/anything")).toBe(true);
+  });
+
+  it("still runs it on the help centre and the app's protected routes", () => {
+    expect(covered("/help/billing/refunds")).toBe(true);
+    expect(covered("/conversations")).toBe(true);
+    expect(covered("/settings/channels")).toBe(true);
+  });
+
+  it("does not claim to cover a route that is deliberately unmatched", () => {
+    // /invites is excluded on purpose -- see the comment at the top of
+    // middleware.ts. If this ever starts passing, the helper above has
+    // become too generous to be proving anything.
+    expect(covered("/invites")).toBe(false);
   });
 });

@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { CircleCheck, Paperclip, TriangleAlert, X } from "lucide-react";
+import { CircleCheck, Paperclip, TriangleAlert } from "lucide-react";
 
 import { submitTicketAction } from "@/app/(portal)/submit-ticket/actions";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,7 +17,6 @@ type Status = "idle" | "submitting" | "submitted" | "failed";
 export function SubmitTicketForm({ workspaceName }: { workspaceName: string }) {
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
-  const [attachments, setAttachments] = useState<string[]>([]);
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
 
@@ -27,7 +27,6 @@ export function SubmitTicketForm({ workspaceName }: { workspaceName: string }) {
     setError(null);
     setEmail("");
     setMessage("");
-    setAttachments([]);
   }
 
   if (status === "submitted") {
@@ -37,9 +36,15 @@ export function SubmitTicketForm({ workspaceName }: { workspaceName: string }) {
         <h2 className="mt-3 text-[15px] font-semibold tracking-tight text-ink-900">
           Ticket received
         </h2>
+        {/*
+          * No confirmation email is sent -- the design says so explicitly,
+          * and nothing in the API queues one. Saying otherwise left every
+          * customer waiting for mail that was never coming, which is the
+          * same "looks like it worked" lie this form exists to remove.
+          * What is true is where the reply comes from and where it goes.
+          */}
         <p className="mt-1 text-[13px] leading-relaxed text-ink-500">
-          We have sent a confirmation to {email}. Replies to that thread land
-          straight back with the {workspaceName} team.
+          The {workspaceName} team has it, and will reply to {email}.
         </p>
         <Button variant="secondary" size="sm" className="mt-4" onClick={reset}>
           Submit another
@@ -151,49 +156,42 @@ export function SubmitTicketForm({ workspaceName }: { workspaceName: string }) {
         <input id="company" name="company" type="text" tabIndex={-1} autoComplete="off" />
       </div>
 
+      {/*
+       * Attaching a file from the portal is not built.
+       *
+       * The control that used to sit here pushed made-up filenames --
+       * `screenshot-1.png` and friends -- into React state. There was no
+       * file input behind it and no `files` part was ever sent, so a
+       * customer who "attached" a screenshot watched it appear in a list
+       * and then submitted a ticket without it. That is precisely the
+       * looks-like-it-worked lie this form exists to remove, so the
+       * affordance is disabled and says so instead -- the same shape
+       * SourceDialog and the "Source: Written here" control use for the
+       * things that have not shipped. The advertised limits went with it:
+       * they described video and PDF at 10MB each, while the API accepts
+       * four image types sharing a single 25MB budget.
+       *
+       * The API side is real and already tested; wiring a file input to it
+       * is a follow-up, not something to add here.
+       */}
       <div className="space-y-1.5">
-        <Label>Attachments</Label>
-        {attachments.length > 0 && (
-          <ul className="space-y-1">
-            {attachments.map((file) => (
-              <li
-                key={file}
-                className="flex items-center gap-2 rounded-md border border-ink-200 px-2.5 py-1.5 text-[13px] text-ink-700"
-              >
-                <Paperclip className="size-3.5 text-ink-400" />
-                {file}
-                <button
-                  type="button"
-                  aria-label={`Remove ${file}`}
-                  onClick={() =>
-                    setAttachments((current) =>
-                      current.filter((entry) => entry !== file),
-                    )
-                  }
-                  className="ml-auto rounded p-0.5 text-ink-400 transition-colors hover:text-ink-900"
-                >
-                  <X className="size-3.5" />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        <Button
-          type="button"
-          variant="secondary"
-          className="w-full"
-          onClick={() =>
-            setAttachments((current) => [
-              ...current,
-              `screenshot-${current.length + 1}.png`,
-            ])
-          }
-        >
+        <div className="flex items-center gap-2">
+          {/*
+           * No `htmlFor` here on purpose: a <label> pointing at the button
+           * below would become that button's accessible name, so it would
+           * announce as "Attachments" rather than "Add attachment".
+           */}
+          <Label>Attachments</Label>
+          <Badge variant="outline">Coming soon</Badge>
+        </div>
+        <Button type="button" variant="secondary" className="w-full" disabled>
           <Paperclip />
           Add attachment
         </Button>
         <p className="text-[12px] text-ink-500">
-          Images, video, and PDF. Up to 10MB each.
+          Attaching a file is not available yet. Describe what you are seeing in
+          the message above and the {workspaceName} team will ask if they need
+          more.
         </p>
       </div>
 

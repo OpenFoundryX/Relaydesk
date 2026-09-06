@@ -130,3 +130,64 @@ describe("SubmitTicketForm", () => {
     expect(submitTicketAction).not.toHaveBeenCalled();
   });
 });
+
+describe("SubmitTicketForm honesty", () => {
+  it("does not promise a confirmation email, because none is sent", async () => {
+    submitTicketAction.mockResolvedValue({ ok: true });
+    render(<SubmitTicketForm workspaceName="Chronon" />);
+
+    fillRequiredFields();
+    submit();
+
+    await screen.findByText("Ticket received");
+
+    // Nothing queues a confirmation and the design says there is none. The
+    // panel used to say "We have sent a confirmation to ...", which left
+    // every customer waiting for mail that was never coming.
+    expect(screen.queryByText(/we have sent a confirmation/i)).toBeNull();
+    expect(screen.queryByText(/confirmation/i)).toBeNull();
+    // What it does say is true: the team has it and will reply by email.
+    expect(screen.getByText(/will reply to ada@example\.dev/i)).toBeDefined();
+  });
+
+  it("offers no working attachment control, and claims none", () => {
+    render(<SubmitTicketForm workspaceName="Chronon" />);
+
+    // The control used to push fabricated filenames into React state with
+    // no file input behind it and no `files` part ever sent -- a customer
+    // watched "screenshot-1.png" appear in a list and then submitted a
+    // ticket without it. Disabled and labelled instead.
+    const button = screen.getByRole("button", {
+      name: /add attachment/i,
+    }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(screen.getByText("Coming soon")).toBeDefined();
+
+    fireEvent.click(button);
+    expect(screen.queryByText(/screenshot-1\.png/)).toBeNull();
+  });
+
+  it("does not advertise attachment limits the API does not have", () => {
+    render(<SubmitTicketForm workspaceName="Chronon" />);
+
+    // The old copy said "Images, video, and PDF. Up to 10MB each." The API
+    // accepts four image types sharing a single 25MB budget, so every part
+    // of that sentence was wrong.
+    expect(screen.queryByText(/10MB/i)).toBeNull();
+    expect(screen.queryByText(/video/i)).toBeNull();
+    expect(screen.queryByText(/PDF/i)).toBeNull();
+  });
+
+  it("sends no files part, matching what the form can actually collect", async () => {
+    submitTicketAction.mockResolvedValue({ ok: true });
+    render(<SubmitTicketForm workspaceName="Chronon" />);
+
+    fillRequiredFields();
+    submit();
+
+    await screen.findByText("Ticket received");
+
+    const form = submitTicketAction.mock.calls[0][0] as FormData;
+    expect(form.getAll("files")).toEqual([]);
+  });
+});
