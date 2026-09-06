@@ -7,8 +7,11 @@ import { ApiError } from "@/lib/api/client";
 import {
   createArticle,
   createCategory,
+  deleteArticle,
+  deleteCategory,
   setArticleStatus,
   updateArticle,
+  updateCategory,
   uploadArticleImage,
 } from "@/lib/api/kb";
 import type { ArticleStatus, KbScope } from "@/lib/types";
@@ -45,6 +48,58 @@ export async function createCategoryAction(
 ): Promise<KbActionResult> {
   try {
     await createCategory(name, scope);
+  } catch (error) {
+    return failure(error);
+  }
+  refresh();
+  return { ok: true };
+}
+
+/**
+ * Renaming a category is admin-only in the API, and the sidebar hides the
+ * menu item that gets here for anyone else. The 403 is still handled rather
+ * than assumed away, along with the duplicate-name 409.
+ */
+export async function renameCategoryAction(
+  id: string,
+  name: string,
+): Promise<KbActionResult> {
+  try {
+    await updateCategory(id, { name });
+  } catch (error) {
+    return failure(error);
+  }
+  refresh();
+  return { ok: true };
+}
+
+/**
+ * Also admin-only, and refused with a 409 while the category still holds
+ * articles. The sidebar does not offer the item in either case, so a message
+ * arriving here means the tree was drawn before someone else's change --
+ * worth showing rather than swallowing.
+ */
+export async function deleteCategoryAction(id: string): Promise<KbActionResult> {
+  try {
+    await deleteCategory(id);
+  } catch (error) {
+    return failure(error);
+  }
+  refresh();
+  return { ok: true };
+}
+
+/**
+ * Deleting an article is not admin-restricted -- writing articles is the
+ * job, and the API lets any member of the workspace do it.
+ *
+ * This does not redirect. The caller is the sidebar, which may be deleting
+ * an article other than the one on screen; it decides whether the editor
+ * pane it is sitting next to has just been emptied.
+ */
+export async function deleteArticleAction(id: string): Promise<KbActionResult> {
+  try {
+    await deleteArticle(id);
   } catch (error) {
     return failure(error);
   }

@@ -12,9 +12,9 @@ import { TableCell } from "@tiptap/extension-table-cell";
 import { TableHeader } from "@tiptap/extension-table-header";
 import { TableRow } from "@tiptap/extension-table-row";
 import {
-  ArrowLeft,
   Bold,
   Code,
+  ExternalLink,
   Eye,
   Heading1,
   Heading2,
@@ -36,6 +36,8 @@ import {
   setArticleStatusAction,
   uploadArticleImageAction,
 } from "@/app/(console)/knowledge-base/actions";
+import { useArticleGuard } from "@/components/knowledge-base/article-guard";
+import { STATUS_CONTROL } from "@/components/knowledge-base/article-status";
 import { DocRenderer } from "@/components/knowledge-base/doc-renderer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -49,6 +51,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import type { ArticleStatus, KbArticle, KbCategory } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -103,25 +106,6 @@ const ArticleImage = Image.extend({
     ];
   },
 });
-
-/**
- * The review workflow, mirroring `ALLOWED_TRANSITIONS` in the API's
- * `services/kb_articles.py`. The API is the authority: it refuses anything
- * outside its own table, so an entry added here that the API does not allow
- * would surface as a rejected transition rather than a new capability. Keep
- * the two in step.
- */
-const TRANSITIONS: Record<
-  ArticleStatus,
-  ReadonlyArray<{ to: ArticleStatus; label: string }>
-> = {
-  draft: [{ to: "ready", label: "Mark ready" }],
-  ready: [
-    { to: "published", label: "Publish" },
-    { to: "draft", label: "Back to draft" },
-  ],
-  published: [{ to: "draft", label: "Unpublish" }],
-};
 
 const STATUS_TONE: Record<ArticleStatus, "neutral" | "accent" | "positive"> = {
   draft: "neutral",
@@ -178,9 +162,16 @@ function editableDoc(doc: unknown): EditorInitialContent {
 export function ArticleEditor({
   article,
   category,
+  portalOrigin = null,
 }: {
   article: KbArticle;
   category: KbCategory | null;
+  /**
+   * The origin of this workspace's public help site, or null when it could
+   * not be resolved. See `lib/api/portal.ts`; Preview stays disabled
+   * without it rather than pointing somewhere that would 404.
+   */
+  portalOrigin?: string | null;
 }) {
   const [title, setTitle] = useState(article.title);
   const [excerpt, setExcerpt] = useState(article.excerpt);
@@ -192,9 +183,15 @@ export function ArticleEditor({
   const [error, setError] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [linkDraft, setLinkDraft] = useState<string | null>(null);
-  const [leaving, setLeaving] = useState(false);
+  /**
+   * What a confirmed "discard and leave" does; null while nothing is asked.
+   * Held as an object so `useState` stores the callback rather than calling
+   * it as a state updater.
+   */
+  const [leaving, setLeaving] = useState<{ proceed: () => void } | null>(null);
 
   const router = useRouter();
+  const guard = useArticleGuard();
 
   const fileInput = useRef<HTMLInputElement>(null);
   // ProseMirror's paste and drop handlers are registered once, when the
@@ -298,6 +295,20 @@ export function ArticleEditor({
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
 
+  // In the master-detail console the likeliest way out of an unsaved article
+  // is a click on a different one in the sidebar -- which lives in the
+  // layout and cannot see any of this. It asks; this answers, with the same
+  // dialog the breadcrumb puts up. See `ArticleGuardProvider`.
+  useEffect(
+    () =>
+      guard.register((proceed) => {
+        if (!dirty) return false;
+        setLeaving({ proceed });
+        return true;
+      }),
+    [guard, dirty],
+  );
+
   async function save() {
     if (!editor) return;
     setError(null);
@@ -349,36 +360,76 @@ export function ArticleEditor({
 
   const canSave = editor !== null && title.trim().length > 0 && !saving;
   const backHref = `/knowledge-base?tab=${category?.scope ?? "internal"}`;
+  const control = STATUS_CONTROL[status];
+  // Pulled out as a const so its `null` check narrows inside the click
+  // handler below, which runs long after the JSX guard.
+  const publish = control.publish;
 
   /**
-   * `beforeunload` covers a reload or a closed tab, but a click on the back
-   * link is a client-side route change the browser never hears about -- and
-   * it is the likeliest way out of this page. Ask first when there is
-   * unsaved work. A modified click (new tab, new window) is left alone: it
-   * leaves this tab, and its edits, exactly where they are.
+   * The article's public page, or null when it has none.
+   *
+   * The help site serves exactly one kind of article -- published, in an
+   * external category -- and 404s on everything else, so anything short of
+   * that leaves Preview disabled rather than offering a link into a dead
+   * end. `status` is the live one, so publishing lights this up without a
+   * reload. The slugs are the stored ones: neither a renamed category nor a
+   * retitled article gets a new slug, because that is the published address.
+   */
+  const previewHref =
+    portalOrigin && category?.scope === "external" && status === "published"
+      ? `${portalOrigin}/help/${category.slug}/${article.slug}`
+      : null;
+
+  const previewReason =
+    category?.scope !== "external"
+      ? "Only external articles have a public page."
+      : status !== "published"
+        ? "Publish this article to give it a public page."
+        : "This workspace's help site address could not be resolved.";
+
+  /**
+   * `beforeunload` covers a reload or a closed tab, but a click on the
+   * breadcrumb is a client-side route change the browser never hears about.
+   * Ask first when there is unsaved work. A modified click (new tab, new
+   * window) is left alone: it leaves this tab, and its edits, exactly where
+   * they are.
    */
   function handleBack(event: MouseEvent<HTMLAnchorElement>) {
     if (!dirty) return;
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
-    setLeaving(true);
+    setLeaving({ proceed: () => router.push(backHref) });
   }
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <Button asChild variant="ghost" size="sm">
-          <NextLink href={backHref} onClick={handleBack}>
-            <ArrowLeft />
-            Knowledge base
-          </NextLink>
-        </Button>
+      <nav
+        aria-label="Breadcrumb"
+        className="flex min-w-0 items-center gap-1.5 text-[13px] text-ink-500"
+      >
+        <NextLink
+          href={backHref}
+          onClick={handleBack}
+          className="shrink-0 transition-colors hover:text-ink-900"
+        >
+          Knowledge base
+        </NextLink>
         {category && (
-          <span className="text-[13px] text-ink-500">{category.name}</span>
+          <>
+            <span aria-hidden>/</span>
+            <span className="shrink-0">{category.name}</span>
+          </>
         )}
-      </div>
+        <span aria-hidden>/</span>
+        <span className="truncate font-medium text-ink-900">{title}</span>
+      </nav>
 
-      <Dialog open={leaving} onOpenChange={setLeaving}>
+      <Dialog
+        open={leaving !== null}
+        onOpenChange={(open) => {
+          if (!open) setLeaving(null);
+        }}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Leave without saving?</DialogTitle>
@@ -388,14 +439,15 @@ export function ArticleEditor({
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setLeaving(false)}>
+            <Button variant="ghost" onClick={() => setLeaving(null)}>
               Keep editing
             </Button>
             <Button
               variant="danger"
               onClick={() => {
-                setLeaving(false);
-                router.push(backHref);
+                const go = leaving?.proceed;
+                setLeaving(null);
+                go?.();
               }}
             >
               Discard and leave
@@ -406,17 +458,6 @@ export function ArticleEditor({
 
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-ink-200 bg-white px-3 py-2.5">
         <Badge variant={STATUS_TONE[status]}>{status}</Badge>
-        {TRANSITIONS[status].map((step) => (
-          <Button
-            key={step.to}
-            variant="secondary"
-            size="sm"
-            disabled={changingStatus}
-            onClick={() => void transition(step.to)}
-          >
-            {step.label}
-          </Button>
-        ))}
         {dirty && (
           // A transition moves the article as it was last saved. Worth
           // saying out loud, since nothing here saves on your behalf.
@@ -435,6 +476,47 @@ export function ArticleEditor({
         >
           {dirty ? "Unsaved changes" : "All changes saved"}
         </span>
+
+        {/* The status control. Both halves are driven by STATUS_CONTROL,
+            whose every target is an edge in the API's own transition table
+            -- so there is no state in which this offers a move the API
+            would refuse, and no published -> ready anywhere. */}
+        <span className="flex select-none items-center gap-2 text-[12px] text-ink-600">
+          <Switch
+            aria-label={control.toggleLabel}
+            checked={control.toggleOn}
+            disabled={changingStatus}
+            onCheckedChange={() => void transition(control.toggleTo)}
+          />
+          {control.toggleLabel}
+        </span>
+        {publish && (
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={changingStatus || !publish.enabled}
+            onClick={() => {
+              if (publish.enabled) void transition(publish.to);
+            }}
+          >
+            Publish
+          </Button>
+        )}
+
+        {previewHref ? (
+          <Button asChild variant="secondary" size="sm">
+            <a href={previewHref} target="_blank" rel="noreferrer">
+              <ExternalLink />
+              Preview live page
+            </a>
+          </Button>
+        ) : (
+          <Button variant="secondary" size="sm" disabled title={previewReason}>
+            <ExternalLink />
+            Preview live page
+          </Button>
+        )}
+
         <Button
           variant="secondary"
           size="sm"

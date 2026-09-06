@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, type ReactNode } from "react";
 import { FilePlus } from "lucide-react";
 
 import { createArticleAction } from "@/app/(console)/knowledge-base/actions";
+import { useArticleGuard } from "@/components/knowledge-base/article-guard";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -32,18 +33,39 @@ import type { KbCategory } from "@/lib/types";
  * into the new article and this dialog never sees a result -- an empty body
  * is where you start writing, not something to confirm.
  */
-export function NewArticleDialog({ categories }: { categories: KbCategory[] }) {
+export function NewArticleDialog({
+  categories,
+  defaultCategoryId,
+  trigger,
+}: {
+  categories: KbCategory[];
+  /**
+   * Which category the picker starts on. The sidebar's per-category "Add
+   * article" row sets it, so adding from under a category adds to that one
+   * -- while still leaving the picker there to change your mind.
+   */
+  defaultCategoryId?: string;
+  /** Replaces the standalone "New article" button when supplied. */
+  trigger?: ReactNode;
+}) {
+  const initialCategoryId = defaultCategoryId ?? categories[0]?.id ?? "";
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
-  const [categoryId, setCategoryId] = useState(categories[0]?.id ?? "");
+  const [categoryId, setCategoryId] = useState(initialCategoryId);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const guard = useArticleGuard();
 
   function handleOpenChange(next: boolean) {
+    // Creating an article redirects straight into it, so this is another way
+    // out of whatever is open in the pane next door. Let it ask first; it
+    // reopens this dialog if the reader is happy to lose the edits.
+    if (next && guard.askBefore(() => setOpen(true))) return;
     setOpen(next);
     if (!next) {
       setTitle("");
       setError(null);
+      setCategoryId(initialCategoryId);
     }
   }
 
@@ -59,10 +81,12 @@ export function NewArticleDialog({ categories }: { categories: KbCategory[] }) {
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
-        <Button variant="primary" size="sm">
-          <FilePlus />
-          New article
-        </Button>
+        {trigger ?? (
+          <Button variant="primary" size="sm">
+            <FilePlus />
+            New article
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent className="max-w-md">
         <DialogHeader>
