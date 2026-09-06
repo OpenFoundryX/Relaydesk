@@ -20,6 +20,13 @@ vi.mock("@/app/(console)/knowledge-base/actions", () => ({
 const { push } = vi.hoisted(() => ({ push: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 
+/**
+ * Where this workspace's public help site lives. The console always has one
+ * -- it comes from the workspace on the session -- so it is a plain required
+ * prop rather than something the editor has to cope with the absence of.
+ */
+const portalOrigin = "http://chronon.localhost:3000";
+
 const category: KbCategory = {
   id: "cat-1",
   name: "Billing",
@@ -63,7 +70,7 @@ function makeDirty() {
 
 describe("ArticleEditor", () => {
   it("mounts on a brand new article, whose stored document has no blocks", () => {
-    render(<ArticleEditor article={article()} category={category} />);
+    render(<ArticleEditor article={article()} category={category} portalOrigin={portalOrigin} />);
     expect(screen.getByRole("textbox", { name: "Title" })).toHaveProperty(
       "value",
       "Handling a refund request",
@@ -72,7 +79,7 @@ describe("ArticleEditor", () => {
 
   describe("leaving with unsaved changes", () => {
     it("does not intercept the back link while everything is saved", () => {
-      render(<ArticleEditor article={article()} category={category} />);
+      render(<ArticleEditor article={article()} category={category} portalOrigin={portalOrigin} />);
       const back = screen.getByRole("link", { name: "Knowledge base" });
 
       // `fireEvent` returns false when a handler called preventDefault. A
@@ -82,7 +89,7 @@ describe("ArticleEditor", () => {
     });
 
     it("stops the back link and asks first when there are unsaved changes", () => {
-      render(<ArticleEditor article={article()} category={category} />);
+      render(<ArticleEditor article={article()} category={category} portalOrigin={portalOrigin} />);
       makeDirty();
 
       expect(
@@ -93,7 +100,7 @@ describe("ArticleEditor", () => {
     });
 
     it("stays put when you keep editing", () => {
-      render(<ArticleEditor article={article()} category={category} />);
+      render(<ArticleEditor article={article()} category={category} portalOrigin={portalOrigin} />);
       makeDirty();
       fireEvent.click(screen.getByRole("link", { name: "Knowledge base" }));
 
@@ -104,7 +111,7 @@ describe("ArticleEditor", () => {
     });
 
     it("leaves for the right scope's tab once you confirm", () => {
-      render(<ArticleEditor article={article()} category={category} />);
+      render(<ArticleEditor article={article()} category={category} portalOrigin={portalOrigin} />);
       makeDirty();
       fireEvent.click(screen.getByRole("link", { name: "Knowledge base" }));
 
@@ -136,6 +143,7 @@ describe("ArticleEditor", () => {
             },
           })}
           category={category}
+          portalOrigin={portalOrigin}
         />,
       );
 
@@ -157,6 +165,7 @@ describe("ArticleEditor", () => {
           },
         })}
         category={category}
+        portalOrigin={portalOrigin}
       />,
     );
 
@@ -166,7 +175,7 @@ describe("ArticleEditor", () => {
   });
 
   it("offers every toolbar control the authoring surface promises", () => {
-    render(<ArticleEditor article={article()} category={category} />);
+    render(<ArticleEditor article={article()} category={category} portalOrigin={portalOrigin} />);
 
     for (const label of [
       "Heading 1",
@@ -193,7 +202,7 @@ describe("ArticleEditor", () => {
   // offers that the API would refuse is a dead end for whoever clicks it.
   describe("the status control", () => {
     it("reads off, with Publish disabled, on a draft", () => {
-      render(<ArticleEditor article={article()} category={category} />);
+      render(<ArticleEditor article={article()} category={category} portalOrigin={portalOrigin} />);
 
       const toggle = screen.getByRole("switch", { name: "Ready to publish" });
       expect(toggle.getAttribute("aria-checked")).toBe("false");
@@ -204,7 +213,7 @@ describe("ArticleEditor", () => {
 
     it("reads on, with Publish enabled, on a ready article", () => {
       render(
-        <ArticleEditor article={article({ status: "ready" })} category={category} />,
+        <ArticleEditor article={article({ status: "ready" })} category={category} portalOrigin={portalOrigin} />,
       );
 
       const toggle = screen.getByRole("switch", { name: "Ready to publish" });
@@ -219,6 +228,7 @@ describe("ArticleEditor", () => {
         <ArticleEditor
           article={article({ status: "published" })}
           category={category}
+          portalOrigin={portalOrigin}
         />,
       );
 
@@ -239,6 +249,7 @@ describe("ArticleEditor", () => {
         <ArticleEditor
           article={article({ status: "published" })}
           category={category}
+          portalOrigin={portalOrigin}
         />,
       );
 
@@ -254,14 +265,14 @@ describe("ArticleEditor", () => {
         status: "ready",
       });
       const { unmount } = render(
-        <ArticleEditor article={article()} category={category} />,
+        <ArticleEditor article={article()} category={category} portalOrigin={portalOrigin} />,
       );
       fireEvent.click(screen.getByRole("switch", { name: "Ready to publish" }));
       expect(setArticleStatusAction).toHaveBeenLastCalledWith("art-1", "ready");
       unmount();
 
       render(
-        <ArticleEditor article={article({ status: "ready" })} category={category} />,
+        <ArticleEditor article={article({ status: "ready" })} category={category} portalOrigin={portalOrigin} />,
       );
       fireEvent.click(screen.getByRole("switch", { name: "Ready to publish" }));
       expect(setArticleStatusAction).toHaveBeenLastCalledWith("art-1", "draft");
@@ -273,7 +284,7 @@ describe("ArticleEditor", () => {
         status: "published",
       });
       render(
-        <ArticleEditor article={article({ status: "ready" })} category={category} />,
+        <ArticleEditor article={article({ status: "ready" })} category={category} portalOrigin={portalOrigin} />,
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Publish" }));
@@ -297,7 +308,7 @@ describe("ArticleEditor", () => {
         <ArticleEditor
           article={article({ status: "published" })}
           category={external}
-          portalOrigin="http://chronon.localhost:3000"
+          portalOrigin={portalOrigin}
         />,
       );
 
@@ -308,20 +319,19 @@ describe("ArticleEditor", () => {
 
     // Every one of these would 404 on the help site, so the control says so
     // instead of leading there.
-    const noPage: Array<[string, ArticleStatus, KbCategory, string | null]> = [
-      ["a draft in an external category", "draft", external, "http://x.test"],
-      ["a ready article in an external category", "ready", external, "http://x.test"],
-      ["a published internal article", "published", category, "http://x.test"],
-      ["an unresolvable portal origin", "published", external, null],
+    const noPage: Array<[string, ArticleStatus, KbCategory]> = [
+      ["a draft in an external category", "draft", external],
+      ["a ready article in an external category", "ready", external],
+      ["a published internal article", "published", category],
     ];
 
-    for (const [label, status, own, origin] of noPage) {
+    for (const [label, status, own] of noPage) {
       it(`stays disabled for ${label}`, () => {
         render(
           <ArticleEditor
             article={article({ status })}
             category={own}
-            portalOrigin={origin}
+            portalOrigin={portalOrigin}
           />,
         );
 

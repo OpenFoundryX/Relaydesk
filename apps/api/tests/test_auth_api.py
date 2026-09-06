@@ -106,6 +106,10 @@ async def test_me_returns_user_workspace_and_membership(
     assert body["user"]["name"] == "Nilesh Pant"
     assert body["user"]["monogram"] == "NP"
     assert body["workspace"]["name"] == "Chronon"
+    # The subdomain the workspace's public help site is served at. The
+    # console builds the link to a published article out of it, and has no
+    # other way to learn it.
+    assert body["workspace"]["slug"] == "chronon"
     assert body["membership"]["role"] == "admin"
 
 

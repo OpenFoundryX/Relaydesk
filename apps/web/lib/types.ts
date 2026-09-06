@@ -280,6 +280,12 @@ export interface SavedView {
 export interface Workspace {
   id: string;
   name: string;
+  /**
+   * The subdomain label the workspace is reached at. Its public help site is
+   * served at `<slug>.<portal domain>`, and a rename never changes it --
+   * it is the address of everything already published there.
+   */
+  slug: string;
   monogram: string;
   plan: string;
   trialDaysLeft: number;

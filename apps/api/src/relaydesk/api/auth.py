@@ -87,6 +87,7 @@ async def me(scope: Scope, session: DbSession) -> MeResponse:
         workspace=WorkspaceOut(
             id=str(scope.workspace.id),
             name=scope.workspace.name,
+            slug=scope.workspace.slug,
             monogram=scope.workspace.monogram,
             plan=scope.workspace.plan,
             trial_days_left=scope.workspace.trial_days_left,

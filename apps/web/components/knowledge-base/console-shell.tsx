@@ -2,7 +2,7 @@
 
 import { Suspense, type MouseEvent, type ReactNode } from "react";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 
 import { PageHeader } from "@/components/console/page-header";
 import { useArticleGuard } from "@/components/knowledge-base/article-guard";
@@ -54,14 +54,15 @@ export function KnowledgeBaseConsole({
   isAdmin: boolean;
   children: ReactNode;
 }) {
-  const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
   const guard = useArticleGuard();
 
-  // ["", "knowledge-base"] on the list route, plus the id on an article.
-  const segments = pathname.split("/");
-  const activeArticleId = segments[2] || null;
+  // The `[id]` segment of the route below this layout, straight from the
+  // router rather than picked out of the path by position -- absent on
+  // /knowledge-base, and unaffected by where the console is mounted.
+  const { id } = useParams<{ id?: string }>();
+  const activeArticleId = id ?? null;
 
   const scope: KbScope = activeArticleId
     ? external.articles.some((article) => article.id === activeArticleId)

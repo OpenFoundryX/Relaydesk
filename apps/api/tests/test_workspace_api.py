@@ -62,6 +62,45 @@ async def test_a_traversal_style_timezone_is_rejected(
     assert response.status_code == 422
 
 
+async def test_the_workspace_carries_its_own_subdomain_slug(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The public help site lives at ``<slug>.<portal domain>``.
+
+    Without the slug on this response the console cannot link a member to
+    their own published article -- it knows the workspace by id and name and
+    neither is the subdomain. A rename never touches the slug, so this stays
+    the address even after one.
+    """
+    workspace = await make_workspace(db_session, slug="acme-support")
+    user = await make_member(db_session, workspace)
+    await db_session.commit()
+    headers = await sign_in(client, db_session, user.email)
+
+    response = await client.get("/api/workspace", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["slug"] == "acme-support"
+
+
+async def test_a_rename_leaves_the_slug_alone(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    workspace = await make_workspace(db_session, slug="acme-support")
+    user = await make_member(db_session, workspace)
+    await db_session.commit()
+    headers = await sign_in(client, db_session, user.email)
+
+    response = await client.patch(
+        "/api/workspace", headers=headers, json={"name": "Renamed"}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["name"] == "Renamed"
+    assert body["slug"] == "acme-support"
+
+
 async def test_an_agent_cannot_patch_the_workspace(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:

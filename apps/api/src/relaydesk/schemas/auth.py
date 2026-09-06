@@ -38,6 +38,10 @@ class UserOut(CamelModel):
 class WorkspaceOut(CamelModel):
     id: str
     name: str
+    #: The subdomain label the workspace is reached at. Not decoration: the
+    #: public help site lives at ``<slug>.<portal domain>``, so the console
+    #: cannot link a member to their own published article without it.
+    slug: str
     monogram: str
     plan: str
     trial_days_left: int

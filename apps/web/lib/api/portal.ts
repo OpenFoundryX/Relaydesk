@@ -1,8 +1,6 @@
 import "server-only";
 
-import { cache } from "react";
-
-import { getEmailChannels } from "./channels";
+import { getWorkspace } from "./workspace";
 
 /**
  * The domain every workspace's public help site hangs off, as a
@@ -29,42 +27,15 @@ function portalProtocol(): string {
 }
 
 /**
- * Recovers the workspace's own slug from an ingest address.
- *
- * The API builds these as `{slug}-{ingestToken}@{inbound domain}` -- see
- * `address_for` in `services/channel_accounts.py`. Splitting on the *last*
- * dash is the API's own rule for pulling the two apart (`token_from_address`
- * in the same module): a workspace slug may contain dashes, the token never
- * does.
- */
-function slugFromAddress(address: string): string | null {
-  const local = address.split("@", 1)[0]?.trim().toLowerCase() ?? "";
-  const cut = local.lastIndexOf("-");
-  if (cut <= 0) return null;
-  return local.slice(0, cut);
-}
-
-/**
  * The origin of this workspace's public help site, e.g.
- * `http://chronon.localhost:3000`, or `null` when it cannot be worked out.
+ * `http://chronon.localhost:3000`.
  *
- * Every workspace is reached at `<slug>.<portal domain>` (see README), so
- * building that URL needs the slug -- and the slug is the one thing about a
- * workspace the console is never told directly: `GET /auth/me` returns id,
- * name, monogram, plan and counters, and the API is fixed. It does reach the
- * console in exactly one place, an email channel's ingest address, and every
- * workspace has at least one: `create_workspace` opens a default "Support"
- * channel account in the same transaction, because a workspace with no way
- * to receive mail is not a workspace.
- *
- * `null` is a real answer rather than a failure -- the caller disables
- * Preview instead of offering a link into a 404.
+ * Every workspace is reached at `<slug>.<portal domain>` (see README), and
+ * the slug comes straight from the workspace the session belongs to. It is
+ * stable: renaming a workspace does not touch it, because it is the address
+ * of every article the workspace has already published.
  */
-export const getPortalOrigin = cache(async (): Promise<string | null> => {
-  const channels = await getEmailChannels();
-  for (const channel of channels) {
-    const slug = slugFromAddress(channel.address);
-    if (slug) return `${portalProtocol()}//${slug}.${PORTAL_DOMAIN}`;
-  }
-  return null;
-});
+export async function getPortalOrigin(): Promise<string> {
+  const { slug } = await getWorkspace();
+  return `${portalProtocol()}//${slug}.${PORTAL_DOMAIN}`;
+}

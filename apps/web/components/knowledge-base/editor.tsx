@@ -162,16 +162,12 @@ function editableDoc(doc: unknown): EditorInitialContent {
 export function ArticleEditor({
   article,
   category,
-  portalOrigin = null,
+  portalOrigin,
 }: {
   article: KbArticle;
   category: KbCategory | null;
-  /**
-   * The origin of this workspace's public help site, or null when it could
-   * not be resolved. See `lib/api/portal.ts`; Preview stays disabled
-   * without it rather than pointing somewhere that would 404.
-   */
-  portalOrigin?: string | null;
+  /** The origin of this workspace's public help site. See `lib/api/portal.ts`. */
+  portalOrigin: string;
 }) {
   const [title, setTitle] = useState(article.title);
   const [excerpt, setExcerpt] = useState(article.excerpt);
@@ -376,16 +372,14 @@ export function ArticleEditor({
    * retitled article gets a new slug, because that is the published address.
    */
   const previewHref =
-    portalOrigin && category?.scope === "external" && status === "published"
+    category?.scope === "external" && status === "published"
       ? `${portalOrigin}/help/${category.slug}/${article.slug}`
       : null;
 
   const previewReason =
     category?.scope !== "external"
       ? "Only external articles have a public page."
-      : status !== "published"
-        ? "Publish this article to give it a public page."
-        : "This workspace's help site address could not be resolved.";
+      : "Publish this article to give it a public page.";
 
   /**
    * `beforeunload` covers a reload or a closed tab, but a click on the

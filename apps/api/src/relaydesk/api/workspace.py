@@ -13,6 +13,7 @@ def _to_workspace_out(workspace: Workspace, seats: int) -> WorkspaceOut:
     return WorkspaceOut(
         id=str(workspace.id),
         name=workspace.name,
+        slug=workspace.slug,
         monogram=workspace.monogram,
         plan=workspace.plan,
         trial_days_left=workspace.trial_days_left,
