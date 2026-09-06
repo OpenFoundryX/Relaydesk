@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     attachment_max_bytes: int = 26214400
     kb_image_max_bytes: int = 5242880
 
+    # Comma-separated peer addresses whose X-Forwarded-For we believe. Empty
+    # means believe nobody, which is correct for a directly-exposed API: a
+    # forged header must never let a caller pick its own rate-limit bucket.
+    trusted_proxy_ips: str = ""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
