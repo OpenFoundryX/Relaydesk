@@ -49,7 +49,12 @@ export function PortalKbSidebar({
 
   return (
     <nav
-      aria-label="Help center"
+      // Named for what the surface is called after the rename -- the portal
+      // nav tab above it reads "Knowledge Base" too. The console's own tree
+      // (components/knowledge-base/sidebar-tree) is "Knowledge base"; the
+      // two are never on screen together, and each matches the label its own
+      // surface uses.
+      aria-label="Knowledge Base"
       className={cn("text-[13px] leading-normal", className)}
     >
       <ul className="space-y-0.5">

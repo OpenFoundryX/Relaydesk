@@ -225,6 +225,74 @@ describe("root path resolution", () => {
   });
 });
 
+/**
+ * The console's article preview, `/knowledge-base/{id}/preview`, is the one
+ * route in the console that deliberately renders *unpublished* content: a
+ * signed-in member reads a draft there through the authenticated API, which
+ * is the whole point of it. Nothing about /help changes, but that makes the
+ * gate in front of it worth pinning rather than re-deriving from "it starts
+ * with /knowledge-base, and /knowledge-base is in PROTECTED".
+ *
+ * These call the real exported `middleware` and read the real exported
+ * `config` -- nothing about the session check or the matcher is stubbed --
+ * so they fail if the PROTECTED list loses its entry, if the matcher is
+ * narrowed to /knowledge-base alone, or if the subdomain branch above starts
+ * swallowing console paths.
+ *
+ * They cover the *middleware* layer only. The second gate -- `apiFetch`
+ * sending a bearer and turning the API's 401 into a redirect to
+ * /signed-out -- cannot be reached from here, because it lives in a server
+ * component's data layer rather than in this function; see the report.
+ */
+describe("the console article preview is behind the session", () => {
+  const PREVIEW = "/knowledge-base/c71ef494-3264-4fe8-b79d-427d94b5fd6f/preview";
+
+  it("redirects an anonymous request to the sign-in page", () => {
+    const request = new NextRequest(`http://localhost:3000${PREVIEW}`, {
+      headers: { host: "localhost:3000" },
+    });
+
+    const response = middleware(request);
+
+    expect(response.status).toBe(307);
+    const location = response.headers.get("location");
+    expect(location).not.toBeNull();
+    expect(new URL(location!).pathname).toBe("/login");
+  });
+
+  // The control for the test above: without this, a middleware that
+  // redirected *everything* would pass it and prove nothing about the
+  // session being what makes the difference.
+  it("lets a request carrying a session cookie through", () => {
+    const request = new NextRequest(`http://localhost:3000${PREVIEW}`, {
+      headers: { host: "localhost:3000", cookie: "rd_session=a-real-token" },
+    });
+
+    const response = middleware(request);
+
+    expect(response.status).not.toBe(307);
+    expect(response.headers.get("location")).toBeNull();
+  });
+
+  // A portal subdomain never resolves console routes to anything a reader
+  // can use -- the request falls through to `apiFetch` with no bearer and
+  // comes back as a redirect to /signed-out. This asserts the one thing
+  // *this* function is responsible for on that host: it does not hand the
+  // route a workspace it could serve content for by itself.
+  it("does not render console content on a portal subdomain either", () => {
+    const request = new NextRequest(`http://acme.localhost:3000${PREVIEW}`, {
+      headers: { host: "acme.localhost:3000" },
+    });
+
+    const response = middleware(request);
+
+    // No session, no redirect to /login on this host -- see the report's
+    // note about the subdomain branch returning early. What stops it is the
+    // API refusing an unauthenticated read, one layer down.
+    expect(response.headers.get("location")).toBeNull();
+  });
+});
+
 describe("matcher coverage", () => {
   // Every other test in this file calls `middleware()` directly, which
   // bypasses `config.matcher` entirely -- so all of them would still pass
@@ -265,6 +333,16 @@ describe("matcher coverage", () => {
     expect(covered("/help/billing/refunds")).toBe(true);
     expect(covered("/conversations")).toBe(true);
     expect(covered("/settings/channels")).toBe(true);
+  });
+
+  // The other half of the guarantee in "the console article preview is
+  // behind the session" above. That block calls `middleware()` directly, so
+  // it would keep passing if the /knowledge-base entry were narrowed to the
+  // bare path and the middleware simply stopped running on routes beneath
+  // it -- at which point the one console route that renders drafts would be
+  // reachable with no session check at all.
+  it("runs it on the console's article preview route", () => {
+    expect(covered("/knowledge-base/an-article-id/preview")).toBe(true);
   });
 
   it("does not claim to cover a route that is deliberately unmatched", () => {

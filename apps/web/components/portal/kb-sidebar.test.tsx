@@ -25,6 +25,15 @@ const tree: PortalTreeCategory[] = [
 ];
 
 describe("PortalKbSidebar", () => {
+  // Pinned because it drifted once already: the tree kept the pre-rename
+  // "Help center" after the nav tab above it became "Knowledge Base", so
+  // the landmark and the link a reader had just followed disagreed.
+  it("names itself after the surface it belongs to", () => {
+    render(<PortalKbSidebar categories={tree} />);
+
+    expect(screen.getByRole("navigation", { name: "Knowledge Base" })).toBeDefined();
+  });
+
   it("nests every category's articles underneath it", () => {
     render(<PortalKbSidebar categories={tree} />);
 
