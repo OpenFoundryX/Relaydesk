@@ -35,7 +35,7 @@ export default async function HelpCategoryPage({ params }: { params: Params }) {
   if (!category) notFound();
 
   return (
-    <main className="mx-auto max-w-2xl px-6 py-12">
+    <main className="mx-auto max-w-5xl px-6 py-12">
       <Link href="/help" className="text-[13px] text-ink-500 hover:text-ink-900">
         ← Knowledge Base
       </Link>
@@ -44,22 +44,26 @@ export default async function HelpCategoryPage({ params }: { params: Params }) {
       </h1>
 
       {category.articles.length === 0 ? (
-        <p className="mt-8 text-[13px] text-ink-500">
+        <p className="mt-10 text-[13px] text-ink-500">
           There are no articles in this section yet.
         </p>
       ) : (
-        <ul className="mt-8 space-y-4">
+        // Two columns, matching the index. One column at this shell width
+        // would stretch every excerpt to a ~130-character line.
+        <ul className="mt-10 grid gap-4 sm:grid-cols-2">
           {category.articles.map((article) => (
             <li key={article.id}>
               <Link
                 href={`/help/${category.slug}/${article.slug}`}
-                className="text-[14px] font-medium text-accent-950 hover:underline"
+                className="group block h-full rounded-lg border border-ink-200 p-5 transition-colors hover:border-ink-300 hover:bg-ink-50"
               >
-                {article.title}
+                <span className="block text-[14px] font-medium text-accent-950 group-hover:underline">
+                  {article.title}
+                </span>
+                <span className="mt-1 block text-[13px] leading-relaxed text-ink-500">
+                  {article.excerpt}
+                </span>
               </Link>
-              <p className="mt-0.5 text-[13px] leading-relaxed text-ink-500">
-                {article.excerpt}
-              </p>
             </li>
           ))}
         </ul>

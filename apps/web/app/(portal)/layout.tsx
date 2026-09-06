@@ -24,7 +24,7 @@ export default async function PortalLayout({ children }: { children: ReactNode }
   if (!workspace) notFound();
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="flex min-h-screen flex-col bg-white">
       <header className="border-b border-ink-200">
         <div className="mx-auto flex min-h-14 max-w-5xl flex-wrap items-center gap-x-6 gap-y-2 px-6 py-2.5">
           <span className="flex items-center gap-2">
@@ -49,7 +49,7 @@ export default async function PortalLayout({ children }: { children: ReactNode }
           <PortalNav />
         </div>
       </header>
-      {children}
+      <div className="flex-1">{children}</div>
       <PortalFooter />
     </div>
   );
