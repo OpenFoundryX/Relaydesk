@@ -146,54 +146,20 @@ async def submit_ticket(
 ) -> TicketSubmittedOut:
     workspace = await resolve_workspace(session, slug)
 
-    # Rate-limit before the honeypot: a bot that always fills the honeypot
-    # would otherwise never spend its allowance and could hammer this route
-    # for free. Checked first, so every caller -- bot or human -- pays for
-    # each call it makes, and only then does the cheap check run.
-    within = await ratelimit.check(
-        session,
-        "tickets",
-        client_ip.resolve(request),
-        limit=get_settings().ticket_ip_hourly_cap,
-        window=timedelta(hours=1),
-    )
-    if not within:
-        raise TooManyRequests("We could not accept that just now.")
-
-    # Commit the charge immediately, before anything else in this request
-    # runs. `ratelimit.check` only flushes, and flushed-but-uncommitted
-    # work still lives inside an open transaction -- `get_session` closes
-    # (and so rolls back) that transaction at the end of any request that
-    # never explicitly committed. Without this line, a caller who trips
-    # the honeypot just below, or the per-email cap inside
-    # `tickets.submit`, pays nothing: the request ends in an early return
-    # or a raised error, the session closes uncommitted, and the hit just
-    # recorded disappears with it -- exactly the free-hammering the
-    # honeypot-after-rate-limit ordering above was meant to close off.
-    # This looks removable, since nothing here reads the row back; it is
-    # not, because closing the session is what would undo it.
-    await session.commit()
-
-    # The honeypot. `company` is hidden from humans by the form's
-    # stylesheet, so anything in it came from something filling fields
-    # blindly. Answered with the same 201 a real submission gets: telling a
-    # bot it was caught only teaches it which field to leave alone.
-    if company.strip():
-        return TicketSubmittedOut(received=True)
-
     uploads = files or []
     if len(uploads) > get_settings().ticket_attachment_max_count:
         raise Invalid("Too many attachments.")
 
-    # A cheap check on the declared size before pulling any body into
-    # memory -- `upload.size` is a client-supplied multipart header, so it
-    # is a hint to save memory on the common case, not the guard:
-    # `attachments.store`'s own byte-length check downstream remains
-    # authoritative.
-    cap = get_settings().attachment_max_bytes
-    for upload in uploads:
-        if upload.size is not None and upload.size > cap:
-            raise Invalid("That file is too large.")
+    # A cheap check on the declared sizes before pulling any body into
+    # memory. `upload.size` is a client-supplied multipart header, so this
+    # only saves work on the honest case and is not the guard;
+    # `tickets.validate` below re-checks the very same budget against the
+    # bytes actually read, and that check is the authoritative one. Both
+    # spend `attachment_max_bytes` the way `attachments.store` does -- as
+    # one total shared across the submission, not a per-file allowance.
+    declared = sum(upload.size for upload in uploads if upload.size is not None)
+    if declared > get_settings().attachment_max_bytes:
+        raise Invalid("Those files are too large.")
 
     parsed = [
         ParsedAttachment(
@@ -205,6 +171,47 @@ async def submit_ticket(
         )
         for upload in uploads
     ]
+
+    # Input validation first, every abuse control after it. Ordering is the
+    # whole point here: a control that fires ahead of validation answers
+    # 201 or 429 where validation would have answered 422, and a bot that
+    # posts one deliberately invalid payload twice -- once with a candidate
+    # field filled, once without -- reads the honeypot's identity straight
+    # off the two status codes. The same trick names the IP cap. With
+    # validation first, both callers have been refused for the same reasons
+    # in the same order before any control speaks.
+    tickets.validate(message, parsed)
+
+    # The IP cap. First control to run and the only one that charges, so a
+    # caller pays for every call that got this far -- honeypot or not,
+    # refused further down or not. `ratelimit.check` commits the charge
+    # itself; see its docstring for why that is not left to this call site.
+    within = await ratelimit.check(
+        session,
+        "tickets",
+        client_ip.resolve(request),
+        limit=get_settings().ticket_ip_hourly_cap,
+        window=timedelta(hours=1),
+    )
+    if not within:
+        raise TooManyRequests("We could not accept that just now.")
+
+    # The per-email cap, raised with the exact exception and message the IP
+    # cap uses above: a caller who can tell the two apart learns which one
+    # fired and how to route around it.
+    if await tickets.over_email_cap(session, workspace.id, str(email)):
+        raise TooManyRequests("We could not accept that just now.")
+
+    # The honeypot, last -- after everything above has run identically for
+    # this caller and a real one. `company` is hidden from humans by the
+    # form's stylesheet, so anything in it came from something filling
+    # fields blindly. Answered with the same 201 a real submission gets:
+    # telling a bot it was caught only teaches it which field to leave
+    # alone. Because every control that can fire has already fired, the
+    # only thing this decides is whether rows get written -- which is the
+    # one difference the caller cannot observe.
+    if company.strip():
+        return TicketSubmittedOut(received=True)
 
     await tickets.submit(
         session,

@@ -58,3 +58,63 @@ def test_a_missing_peer_yields_a_stable_placeholder(monkeypatch) -> None:
     request.client = None
     request.headers = {}
     assert client_ip.resolve(request) == "unknown"
+
+
+def test_an_ipv4_caller_keeps_its_whole_address(monkeypatch) -> None:
+    monkeypatch.setenv("TRUSTED_PROXY_IPS", "")
+    client_ip.get_settings.cache_clear()
+    assert client_ip.resolve(_request("203.0.113.9")) == "203.0.113.9"
+
+
+def test_an_ipv6_caller_is_bucketed_on_its_64_prefix(monkeypatch) -> None:
+    """A residential IPv6 subscriber is handed a /64, not an address.
+
+    Keying on the exact address would give one ordinary broadband line
+    2**64 buckets, each with a full allowance, at no cost to it -- which is
+    the same as having no limit at all. /64 is the routing boundary, so a
+    caller cannot get below it.
+    """
+    monkeypatch.setenv("TRUSTED_PROXY_IPS", "")
+    client_ip.get_settings.cache_clear()
+    assert (
+        client_ip.resolve(_request("2001:db8:1:2:3:4:5:6")) == "2001:db8:1:2::/64"
+    )
+
+
+def test_two_addresses_in_one_ipv6_64_share_a_bucket(monkeypatch) -> None:
+    monkeypatch.setenv("TRUSTED_PROXY_IPS", "")
+    client_ip.get_settings.cache_clear()
+    first = client_ip.resolve(_request("2001:db8:1:2::1"))
+    second = client_ip.resolve(_request("2001:db8:1:2:ffff:ffff:ffff:ffff"))
+    assert first == second
+
+
+def test_two_different_ipv6_64s_do_not_share_a_bucket(monkeypatch) -> None:
+    monkeypatch.setenv("TRUSTED_PROXY_IPS", "")
+    client_ip.get_settings.cache_clear()
+    first = client_ip.resolve(_request("2001:db8:1:2::1"))
+    second = client_ip.resolve(_request("2001:db8:1:3::1"))
+    assert first != second
+
+
+def test_a_forwarded_ipv6_address_is_bucketed_the_same_way(monkeypatch) -> None:
+    """The prefix rule has to hold on the path a real deployment uses --
+    the address arrives through a trusted proxy's header, not the socket."""
+    monkeypatch.setenv("TRUSTED_PROXY_IPS", "10.0.0.5")
+    client_ip.get_settings.cache_clear()
+    request = _request("10.0.0.5", forwarded="2001:db8:1:2:3:4:5:6")
+    assert client_ip.resolve(request) == "2001:db8:1:2::/64"
+
+
+def test_an_ipv6_bucket_fits_the_rate_limit_key_column() -> None:
+    """`rate_limit_hits.key` is 64 characters and `ratelimit.check`
+    truncates to it. A bucket longer than that would be silently cut, which
+    is how a key stops matching its own stored rows."""
+    longest = client_ip.bucket("2001:0db8:85a3:0000:ffff:ffff:ffff:ffff")
+    assert len(longest) <= 64
+
+
+def test_the_unknown_placeholder_is_left_alone(monkeypatch) -> None:
+    monkeypatch.setenv("TRUSTED_PROXY_IPS", "")
+    client_ip.get_settings.cache_clear()
+    assert client_ip.bucket(client_ip.UNKNOWN) == client_ip.UNKNOWN

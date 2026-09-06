@@ -2,6 +2,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from relaydesk.config import get_settings
 from relaydesk.email_parse.normalize import ParsedAttachment
 from relaydesk.errors import Invalid, TooManyRequests
 from relaydesk.models.conversation import Channel, Conversation
@@ -10,11 +11,15 @@ from relaydesk.services import tickets
 from tests.factories import make_workspace
 
 
-def _file(name: str = "shot.png", content_type: str = "image/png") -> ParsedAttachment:
+def _file(
+    name: str = "shot.png",
+    content_type: str = "image/png",
+    content: bytes | None = None,
+) -> ParsedAttachment:
     return ParsedAttachment(
         filename=name,
         content_type=content_type,
-        content=b"\x89PNG\r\n\x1a\n" + b"0" * 32,
+        content=b"\x89PNG\r\n\x1a\n" + (content if content is not None else b"0" * 32),
         inline=False,
         content_id=None,
     )
@@ -213,5 +218,46 @@ async def test_a_sender_over_the_hourly_cap_is_refused(
             name="Flood",
             subject="Hi",
             message="Hi",
+            attachments=[],
+        )
+
+
+def test_validate_refuses_attachments_that_together_exceed_the_budget(
+    monkeypatch,
+) -> None:
+    """`attachment_max_bytes` is one budget shared across the submission --
+    that is how `attachments.store` spends it, skipping whatever no longer
+    fits. Checking it per file instead is what let five files each under
+    the cap through the router, after which store kept some and silently
+    dropped the rest while the submitter was told the ticket was received.
+    """
+    monkeypatch.setattr(get_settings(), "attachment_max_bytes", 1000)
+
+    within = [_file(name="a.png", content=b"0" * 400)]
+    tickets.validate("Hello", within)
+
+    over = [_file(name=f"{i}.png", content=b"0" * 400) for i in range(3)]
+    with pytest.raises(Invalid):
+        tickets.validate("Hello", over)
+
+
+async def test_submit_re_runs_every_refusal_its_caller_already_ran(
+    db_session: AsyncSession,
+) -> None:
+    """The portal router calls `validate` and `over_email_cap` before its
+    own abuse controls, so the honeypot can run last. `submit` must still
+    run both itself: a second caller that skipped them would otherwise be
+    able to write a ticket that none of them ever saw.
+    """
+    workspace = await make_workspace(db_session)
+
+    with pytest.raises(Invalid):
+        await tickets.submit(
+            db_session,
+            workspace.id,
+            email="ada@example.dev",
+            name="Ada",
+            subject="",
+            message="   ",
             attachments=[],
         )

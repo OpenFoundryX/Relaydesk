@@ -4,6 +4,7 @@ Content-addressed by SHA-256, never by the sender's filename: that string is
 attacker-controlled, and the only safe thing to do with it is show it.
 """
 
+import logging
 import uuid
 from collections.abc import Sequence
 from pathlib import Path
@@ -17,6 +18,8 @@ from relaydesk.errors import NotFound
 from relaydesk.models.attachment import Attachment
 from relaydesk.models.message import Message
 from relaydesk.services import blobs
+
+logger = logging.getLogger(__name__)
 
 # Everything else is served as an opaque download. Note SVG is absent: it
 # executes script when rendered inline.
@@ -47,7 +50,26 @@ async def store(
     for item in parsed:
         if len(item.content) > budget:
             # Skip and keep going: a single huge part must not cost the
-            # message body or the parts after it.
+            # message body or the parts after it. This is the right answer
+            # for inbound mail, which has already been accepted by the time
+            # it reaches here and cannot be refused after the fact -- but it
+            # is a silent partial loss, so it is logged rather than dropped
+            # on the floor.
+            #
+            # A caller that can still refuse the whole submission must not
+            # rely on this: `tickets.validate` checks the same shared
+            # `attachment_max_bytes` budget up front and rejects the
+            # submission outright, so nothing reaching here from the portal
+            # can ever be skipped.
+            logger.warning(
+                "attachment %r (%d bytes) skipped for message %s: "
+                "%d of %d bytes of budget left",
+                item.filename,
+                len(item.content),
+                message.id,
+                budget,
+                cap,
+            )
             continue
         budget -= len(item.content)
 

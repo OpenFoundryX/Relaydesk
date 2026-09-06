@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from relaydesk.config import get_settings
 from relaydesk.db.session import get_session
 from relaydesk.main import app
+from relaydesk.models.attachment import Attachment
 from relaydesk.models.conversation import Conversation
 from relaydesk.models.rate_limit import RateLimitHit
 from tests.factories import make_workspace
@@ -212,3 +213,230 @@ async def test_the_rate_limit_charge_survives_the_session_closing(
         sa.select(sa.func.count()).select_from(RateLimitHit)
     )
     assert count == 1
+
+
+async def test_an_invalid_payload_answers_the_same_with_or_without_the_honeypot(
+    db_session: AsyncSession, client
+) -> None:
+    """The honeypot must not be identifiable by varying one field.
+
+    When the honeypot ran before input validation, a blank message with the
+    honeypot empty was a 422 and the same blank message with the honeypot
+    filled was a 201 -- so a bot posting one deliberately invalid payload
+    across each candidate field read the trap's identity straight off the
+    status codes, in about as many requests as the form has fields. With
+    validation first, both answers are the same 422.
+    """
+    await make_workspace(db_session, slug="chronon")
+    await db_session.commit()
+
+    clean = await client.post(
+        "/api/public/chronon/tickets", data=_form(message="   ")
+    )
+    trapped = await client.post(
+        "/api/public/chronon/tickets", data=_form(message="   ", company="Acme Inc")
+    )
+
+    assert clean.status_code == 422
+    assert trapped.status_code == clean.status_code
+    assert trapped.json() == clean.json()
+
+
+async def test_an_invalid_payload_answers_the_same_under_and_over_the_ip_cap(
+    db_session: AsyncSession, client
+) -> None:
+    """The same oracle, for the IP cap rather than the honeypot.
+
+    A limiter that ran before validation answered 429 for a payload
+    validation would have rejected with 422, which tells a caller exactly
+    when it crossed the cap -- and therefore what the cap is. Validation
+    first means an invalid payload reads identically either side of it.
+    """
+    await make_workspace(db_session, slug="chronon")
+    await db_session.commit()
+
+    under = await client.post(
+        "/api/public/chronon/tickets", data=_form(message="   ")
+    )
+    assert under.status_code == 422
+
+    for index in range(5):
+        ok = await client.post(
+            "/api/public/chronon/tickets",
+            data=_form(email=f"ada{index}@example.dev"),
+        )
+        assert ok.status_code == 201
+    assert (
+        await client.post("/api/public/chronon/tickets", data=_form())
+    ).status_code == 429
+
+    over = await client.post(
+        "/api/public/chronon/tickets", data=_form(message="   ")
+    )
+
+    assert over.status_code == under.status_code
+    assert over.json() == under.json()
+
+
+async def test_a_submission_cannot_reach_another_workspaces_inbox(
+    db_session: AsyncSession, client
+) -> None:
+    """Spec section 9: a cross-workspace attempt cannot reach another
+    tenant's inbox. The workspace comes only from the resolved slug in the
+    path -- never a header, never a form field -- so naming a second tenant
+    anywhere in the payload must change nothing about where the rows land.
+    """
+    target = await make_workspace(db_session, slug="chronon")
+    bystander = await make_workspace(db_session, slug="acme")
+    await db_session.commit()
+
+    response = await client.post(
+        "/api/public/chronon/tickets",
+        data=_form(subject="acme", name="acme", company=""),
+        headers={"x-relaydesk-workspace": "acme"},
+    )
+    assert response.status_code == 201
+
+    landed = (await db_session.scalars(sa.select(Conversation))).all()
+    assert [conversation.workspace_id for conversation in landed] == [target.id]
+
+    intruders = await db_session.scalar(
+        sa.select(sa.func.count())
+        .select_from(Conversation)
+        .where(Conversation.workspace_id == bystander.id)
+    )
+    assert intruders == 0
+
+
+async def test_a_client_supplied_forwarded_header_cannot_change_the_bucket(
+    db_session: AsyncSession, client, monkeypatch
+) -> None:
+    """Route-level, not a unit test of `client_ip.resolve`.
+
+    A client picking its own rate-limit bucket per request was one of this
+    slice's two Criticals, and until now the only thing proving it fixed
+    was a unit test on the resolver with a mocked request. That would still
+    pass if the route stopped consulting the resolver at all. This drives
+    the real endpoint: six calls, every one of them claiming a different
+    address, and the sixth must still be refused.
+    """
+    monkeypatch.setattr(get_settings(), "trusted_proxy_ips", "")
+    await make_workspace(db_session, slug="chronon")
+    await db_session.commit()
+
+    for index in range(5):
+        ok = await client.post(
+            "/api/public/chronon/tickets",
+            data=_form(email=f"ada{index}@example.dev"),
+            headers={"x-forwarded-for": f"198.51.100.{index}"},
+        )
+        assert ok.status_code == 201
+
+    refused = await client.post(
+        "/api/public/chronon/tickets",
+        data=_form(email="ada5@example.dev"),
+        headers={"x-forwarded-for": "198.51.100.99"},
+    )
+
+    assert refused.status_code == 429
+    keys = set(
+        (
+            await db_session.scalars(
+                sa.select(RateLimitHit.key).where(RateLimitHit.bucket == "tickets")
+            )
+        ).all()
+    )
+    assert len(keys) == 1, f"the caller minted its own buckets: {keys}"
+
+
+async def test_attachments_share_one_budget_and_nothing_is_dropped_silently(
+    db_session: AsyncSession, client, monkeypatch
+) -> None:
+    """The router and `attachments.store` must spend the cap the same way.
+
+    `store` treats `attachment_max_bytes` as one budget across all parts
+    and skips whatever no longer fits. While the router checked each file
+    against that same number individually, five files just under it all
+    passed the router, store kept the ones that fitted and dropped the
+    rest, and the submitter was told the ticket was received. The whole
+    submission is refused instead, so a dropped attachment is impossible.
+    """
+    monkeypatch.setattr(get_settings(), "attachment_max_bytes", 1000)
+    await make_workspace(db_session, slug="chronon")
+    await db_session.commit()
+
+    # Each part is comfortably under the cap on its own; together they are
+    # over it. This is the exact shape that used to half-succeed.
+    files = [
+        ("files", (f"shot{index}.png", b"\x89PNG\r\n\x1a\n" + b"0" * 400, "image/png"))
+        for index in range(3)
+    ]
+
+    response = await client.post(
+        "/api/public/chronon/tickets", data=_form(), files=files
+    )
+
+    assert response.status_code == 422
+    written = await db_session.scalar(
+        sa.select(sa.func.count()).select_from(Conversation)
+    )
+    assert written == 0
+
+
+async def test_attachments_inside_the_shared_budget_are_all_stored(
+    db_session: AsyncSession, client, monkeypatch
+) -> None:
+    """The other half of the same contract: within budget, nothing is lost."""
+    monkeypatch.setattr(get_settings(), "attachment_max_bytes", 10_000)
+    await make_workspace(db_session, slug="chronon")
+    await db_session.commit()
+
+    files = [
+        ("files", (f"shot{index}.png", b"\x89PNG\r\n\x1a\n" + b"0" * 400, "image/png"))
+        for index in range(3)
+    ]
+
+    response = await client.post(
+        "/api/public/chronon/tickets", data=_form(), files=files
+    )
+
+    assert response.status_code == 201
+    stored = await db_session.scalar(
+        sa.select(sa.func.count()).select_from(Attachment)
+    )
+    assert stored == 3
+
+
+async def test_an_oversized_body_is_refused_before_the_limiter_runs(
+    db_session: AsyncSession, client
+) -> None:
+    """Route-level proof of the ordering the body-size middleware exists for.
+
+    This route declares `Form`/`File` parameters, so Starlette parses and
+    spools the whole multipart body while resolving the route's
+    dependencies -- before the function body, and so before
+    `ratelimit.check` inside it, ever runs. An anonymous caller already
+    over its cap could still make the process read an unbounded body on
+    every attempt, and there is no ingress limit in front of this service.
+    The empty `rate_limit_hits` table is what shows the refusal landed
+    ahead of the limiter rather than merely instead of it.
+    """
+    await make_workspace(db_session, slug="chronon")
+    await db_session.commit()
+
+    response = await client.post(
+        "/api/public/chronon/tickets",
+        data=_form(),
+        headers={"content-length": str(get_settings().max_request_bytes + 1)},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "too_large"
+    charged = await db_session.scalar(
+        sa.select(sa.func.count()).select_from(RateLimitHit)
+    )
+    assert charged == 0
+    written = await db_session.scalar(
+        sa.select(sa.func.count()).select_from(Conversation)
+    )
+    assert written == 0

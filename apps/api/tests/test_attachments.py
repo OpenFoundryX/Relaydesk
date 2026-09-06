@@ -259,3 +259,33 @@ async def test_the_download_route_needs_a_session(db_session, client) -> None:
     response = await client.get(f"/api/attachments/{stored[0].id}")
 
     assert response.status_code == 401
+
+
+async def test_a_skipped_attachment_is_logged(
+    db_session: AsyncSession, monkeypatch, caplog
+) -> None:
+    """Skipping is right for inbound mail -- it has already been accepted by
+    the time it reaches here and cannot be refused after the fact -- but it
+    is a silent partial loss, and silent is the part that has to go. A
+    caller that can still refuse the whole submission does not rely on
+    this: `tickets.validate` checks the same shared budget up front, so
+    nothing from the portal ever reaches this branch.
+    """
+    import logging
+
+    monkeypatch.setattr(get_settings(), "attachment_max_bytes", 10)
+    # See tests/test_queue.py: migrations/env.py's fileConfig() disables
+    # every logger that existed at that point, this module's included.
+    monkeypatch.setattr(attachments.logger, "disabled", False)
+    workspace = await make_workspace(db_session)
+    message = await _message(db_session, workspace)
+
+    with caplog.at_level(logging.WARNING):
+        stored = await attachments.store(
+            db_session,
+            message,
+            [_parsed(name="huge.bin", content=b"x" * 50)],
+        )
+
+    assert stored == []
+    assert "huge.bin" in caplog.text
