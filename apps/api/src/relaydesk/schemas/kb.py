@@ -108,3 +108,10 @@ class PublicCategoryOut(CamelModel):
     name: str
     slug: str
     articles: list[PublicArticleSummary]
+
+
+class TicketSubmittedOut(CamelModel):
+    """Deliberately says nothing but "received". No id, no number: the
+    submitter is anonymous and must not be handed a handle to the inbox."""
+
+    received: bool

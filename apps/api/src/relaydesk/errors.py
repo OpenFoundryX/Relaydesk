@@ -37,3 +37,8 @@ class Conflict(AppError):
 class Unavailable(AppError):
     code = "unavailable"
     status_code = 503
+
+
+class TooManyRequests(AppError):
+    code = "too_many_requests"
+    status_code = 429
