@@ -131,6 +131,45 @@ describe("middleware header sanitisation", () => {
     );
     expect(response.headers.get(REQUEST_HEADER_PREFIX + WORKSPACE_HEADER)).toBeNull();
   });
+
+  // The submit-ticket form's server action forwards this header to the API
+  // as the submitter's address for the ticket rate limiter. Next only
+  // fills it in when it is *absent* (its own request handling does
+  // `req.headers['x-forwarded-for'] ??= socket.remoteAddress`), so a
+  // client-supplied value survives untouched unless something strips it
+  // first -- which would let a caller pick its own rate-limit bucket per
+  // request, defeating the limiter entirely. This asserts our half of that
+  // fix: the client's value must not reach the response Next.js carries
+  // downstream. (The other half -- that Next's own fallback then re-fills
+  // it from the real connection once it is absent -- is Next's internal
+  // behaviour, not something a unit test of this function can observe; it
+  // was confirmed by exercising the running dev server directly. See the
+  // Task 5 report.)
+  it("strips a client-supplied X-Forwarded-For header on a resolved workspace request", () => {
+    const request = new NextRequest("http://acme.localhost:3000/submit-ticket", {
+      headers: { host: "acme.localhost:3000", "x-forwarded-for": "6.6.6.6" },
+    });
+
+    const response = middleware(request);
+
+    expect(response.headers.get(OVERRIDE_HEADER)?.split(",") ?? []).not.toContain(
+      "x-forwarded-for",
+    );
+    expect(response.headers.get(REQUEST_HEADER_PREFIX + "x-forwarded-for")).toBeNull();
+  });
+
+  it("strips a client-supplied X-Forwarded-For header on every other route too", () => {
+    const request = new NextRequest("http://localhost:3000/login", {
+      headers: { host: "localhost:3000", "x-forwarded-for": "6.6.6.6" },
+    });
+
+    const response = middleware(request);
+
+    expect(response.headers.get(OVERRIDE_HEADER)?.split(",") ?? []).not.toContain(
+      "x-forwarded-for",
+    );
+    expect(response.headers.get(REQUEST_HEADER_PREFIX + "x-forwarded-for")).toBeNull();
+  });
 });
 
 describe("root path resolution", () => {

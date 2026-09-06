@@ -87,6 +87,27 @@ describe("SubmitTicketForm", () => {
     expect(screen.queryByText("That message is too long.")).toBeNull();
   });
 
+  // The action rethrows anything that isn't a recognized API error (a
+  // genuine network failure, a malformed response). Without a catch around
+  // the awaited call, that rejection would leave `status` pinned at
+  // "submitting" forever -- not the original looks-like-success bug, but
+  // still not one of the form's three real states, and this is the test
+  // that would catch a regression back to that.
+  it("reaches the failed state, not a stuck submitting state, if the action rejects", async () => {
+    submitTicketAction.mockRejectedValue(new Error("network down"));
+    render(<SubmitTicketForm workspaceName="Chronon" />);
+
+    fillRequiredFields();
+    submit();
+
+    await screen.findByText(/couldn't reach the server/i);
+
+    expect(screen.queryByText("Ticket received")).toBeNull();
+    expect(screen.queryByText("Submitting…")).toBeNull();
+    const button = screen.getByRole("button", { name: /submit ticket/i }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+  });
+
   it("keeps the honeypot empty, hidden from a keyboard, and out of the tab order", () => {
     render(<SubmitTicketForm workspaceName="Chronon" />);
 

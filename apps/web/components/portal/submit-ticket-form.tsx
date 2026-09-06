@@ -53,16 +53,27 @@ export function SubmitTicketForm({ workspaceName }: { workspaceName: string }) {
     setStatus("submitting");
     setError(null);
 
-    const result = await submitTicketAction(new FormData(event.currentTarget));
+    try {
+      const result = await submitTicketAction(new FormData(event.currentTarget));
 
-    if (result.ok) {
-      setStatus("submitted");
-    } else {
-      // A failed submission must never land on the success panel above --
-      // that silent-looking-like-success is the exact bug this form
-      // exists to not have. Stay on the form, with the reason on screen.
+      if (result.ok) {
+        setStatus("submitted");
+      } else {
+        // A failed submission must never land on the success panel above --
+        // that silent-looking-like-success is the exact bug this form
+        // exists to not have. Stay on the form, with the reason on screen.
+        setStatus("failed");
+        setError(result.message);
+      }
+    } catch {
+      // The action rethrows anything that isn't a recognized API error --
+      // a genuine network failure, or a malformed response. That must
+      // still land on "failed", not leave `status` pinned at "submitting"
+      // forever with the button stuck disabled: not the original
+      // looks-like-success bug, but still not one of this form's three
+      // real states.
       setStatus("failed");
-      setError(result.message);
+      setError("We couldn't reach the server. Please try again.");
     }
   }
 
