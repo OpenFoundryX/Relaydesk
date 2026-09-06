@@ -128,29 +128,52 @@ CSS (not `type="hidden"`, which a scraper checks for and skips), and filling
 it gets the same `201` a real submission gets, so a bot never learns it was
 caught.
 
-**`TRUSTED_PROXY_IPS` must name the address of the container in front of the
-API — the `web` service — or this degrades silently.** The browser posts to
-the Next server, which calls the API on the customer's behalf; without this
-setting the API sees the Next server's own address for every submission, so
-every portal visitor shares one rate-limit bucket instead of getting their
-own. Nothing errors when this is wrong — the limit still enforces, just not
-per-visitor — which is exactly why it belongs here and not only in code
-comments.
+### `TRUSTED_PROXY_IPS`
 
-In `docker-compose.yml`, `TRUSTED_PROXY_IPS` for the `api` service currently
-defaults to `172.20.0.8`, the `web` container's address on the Compose
-default bridge network at the time this was wired up (confirmed with
-`docker network inspect <project>_default` and by resolving `web` from
-inside the `api` container). That address is assigned by Docker's network
-allocator, not pinned by this file, so it is stable across restarting or
-recreating individual containers but **is not guaranteed to survive a full
-`docker compose down && up`**, which tears down and recreates the network
-from scratch. If portal rate limiting looks like it is sharing one bucket
-across visitors after a full recreate, re-check the `web` container's
-current address (`docker network inspect <project>_default`) against this
-value first. For a setup that cannot drift, give the network a fixed subnet
-and pin `web` to a static `ipv4_address` in `docker-compose.yml`, then point
-`TRUSTED_PROXY_IPS` at that fixed address instead.
+**If this does not name the address of the container in front of the API —
+the `web` service — the whole feature's abuse control is gone, silently.**
+
+The browser posts to the Next server, which calls the API on the customer's
+behalf, so every submission reaches the API from the same peer. The visitor's
+own address travels as `X-Forwarded-For`, and the API believes that header
+only from a peer listed here. Get it wrong and every visitor on earth resolves
+to the `web` container's address, which means the entire product accepts
+**five portal tickets per hour, total** — the next customer to try is refused
+because someone else already submitted. Nothing errors, nothing logs; the
+limiter looks like it is working, because it is, on one bucket.
+
+There is no email verification on this form: the submitter's address is free
+text and never attested, so the per-email cap is evaded by varying it. That
+makes the IP limit the only real abuse control there is, which is why this
+setting is worth this much of the README.
+
+In `docker-compose.yml` the `web` service is pinned to a static
+`ipv4_address` (`172.20.255.8`) on a network with a fixed subnet, and
+`TRUSTED_PROXY_IPS` for `api` defaults to that same address. Both halves are
+fixed by that file rather than handed out by Docker's allocator, so they
+cannot drift apart across `docker compose down && up`. If you change one,
+change the other. In a deployment that is not this Compose stack, set
+`TRUSTED_PROXY_IPS` to whatever address the API actually sees your proxy
+arrive from — `docker network inspect <project>_default`, or the peer address
+in your ingress logs — and verify it: submit two tickets from two different
+addresses and check that `rate_limit_hits` has two distinct `key` values.
+
+### A reverse proxy in front of Next
+
+`apps/web/middleware.ts` deletes the incoming `x-forwarded-for` header
+unconditionally, and relies on Next re-filling it from the socket address
+(Next does `req.headers['x-forwarded-for'] ??= socket.remoteAddress`, so it
+only fills the header in when it is absent). That is what stops a caller
+sending its own `X-Forwarded-For` and picking its own rate-limit bucket per
+request.
+
+**It also means that if you put a TLS terminator, load balancer, or CDN in
+front of the Next server, its genuine client chain is discarded** and
+replaced with that proxy's own address — so every visitor once again shares
+one bucket, in exactly the shape described above. Next is assumed here to be
+the outermost hop. If it is not, the strip in `middleware.ts` has to become
+selective: keep the forwarded chain when the connection came from a proxy you
+trust, and take the client from it, rather than deleting it outright.
 
 ## Development commands
 

@@ -50,11 +50,15 @@ services:
       # that header back off a peer listed here (see
       # relaydesk/services/client_ip.py) -- anyone else's copy of the
       # header is ignored, and the visitor's raw socket address is used
-      # instead. Empty (the default) means "trust nobody," which is safe
-      # but silently collapses every portal ticket's rate limit onto this
-      # one address (Docker's `web` container). See the README for how
-      # this value was found and why it can drift.
-      TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:-172.20.0.8}
+      # instead. Empty (the setting's own default) means "trust nobody,"
+      # which is safe against a forged header but collapses every portal
+      # visitor onto the `web` container's address: one shared bucket of
+      # five tickets an hour for the whole product, with nothing to signal
+      # it. So the value is pinned to the static address the `web` service
+      # is given on the network declared at the bottom of this file. Both
+      # halves are fixed here rather than handed out by Docker's allocator,
+      # so they cannot drift apart across `docker compose down && up`.
+      TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:-172.20.255.8}
     ports:
       - "8000:8000"
     volumes:
@@ -181,9 +185,28 @@ services:
       - ./apps/web:/app
       - web_node_modules:/app/node_modules
       - web_next:/app/.next
+    # Pinned, not allocated. The API's TRUSTED_PROXY_IPS above has to name
+    # this exact container: it is the only peer whose X-Forwarded-For the
+    # API believes, and that header is how a portal visitor's own address
+    # reaches the ticket rate limiter. Let Docker's allocator choose this
+    # and the two values drift apart on the next full recreate, at which
+    # point every visitor silently shares one bucket.
+    networks:
+      default:
+        ipv4_address: 172.20.255.8
     depends_on:
       api:
         condition: service_healthy
+
+# A fixed subnet so the address above is ours to assign rather than
+# Docker's to hand out. The static address sits high in the range on
+# purpose: Docker allocates dynamic addresses sequentially from .2, and
+# this stack has enough services to reach into the low addresses.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
 
 volumes:
   postgres_data:
