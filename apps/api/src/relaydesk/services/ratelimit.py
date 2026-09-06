@@ -20,6 +20,11 @@ async def check(
     runs several workers, and a per-process counter would hand each of them
     its own allowance, multiplying the real limit by the worker count.
     """
+    # Truncated once, up front, so the lookup and the insert always agree on
+    # the same value -- counting the raw key while storing the truncated one
+    # would let any key longer than the column width dodge the limit forever,
+    # since its stored rows could never match the untruncated lookup.
+    key = key[:64]
     since = datetime.now(UTC) - window
     used = await session.scalar(
         sa.select(sa.func.count())
@@ -33,6 +38,6 @@ async def check(
     if int(used or 0) >= limit:
         return False
 
-    session.add(RateLimitHit(bucket=bucket, key=key[:64]))
+    session.add(RateLimitHit(bucket=bucket, key=key))
     await session.flush()
     return True
