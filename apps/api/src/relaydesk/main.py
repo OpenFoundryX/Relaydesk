@@ -10,11 +10,18 @@ from relaydesk import __version__
 from relaydesk.api.router import api_router
 from relaydesk.config import get_settings
 from relaydesk.errors import AppError
+from relaydesk.middleware import MaxBodySizeMiddleware
 
 logger = logging.getLogger("relaydesk")
 settings = get_settings()
 
 app = FastAPI(title="Relaydesk API", version=__version__)
+# `add_middleware` inserts at the front of the stack, so this one is added
+# *before* CORS in order to end up *inside* it: nothing between here and the
+# router reads a request body, so this still answers before any parsing
+# happens, and sitting inside CORSMiddleware means the 413 it returns comes
+# back with the CORS headers a browser needs to read it.
+app.add_middleware(MaxBodySizeMiddleware, max_bytes=settings.max_request_bytes)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,

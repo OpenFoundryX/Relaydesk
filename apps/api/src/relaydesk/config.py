@@ -64,6 +64,21 @@ class Settings(BaseSettings):
     ticket_message_max_chars: int = 10000
     ticket_attachment_max_count: int = 5
 
+    # The largest request body this API will let a route read. Enforced from
+    # the declared Content-Length before anything is parsed, because
+    # `POST /api/public/{slug}/tickets` declares multipart Form/File
+    # parameters: Starlette parses and spools the whole body while resolving
+    # those dependencies, which is *before* the route body -- and so before
+    # the rate limiter -- ever runs. Without this, an anonymous caller
+    # already over its cap could still make the process read an unbounded
+    # body on every request.
+    #
+    # 32 MiB comfortably clears a legitimate submission: attachments share a
+    # single `attachment_max_bytes` (25 MiB) budget across at most
+    # `ticket_attachment_max_count` files, plus a 10,000-character message
+    # and multipart framing.
+    max_request_bytes: int = 33554432
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

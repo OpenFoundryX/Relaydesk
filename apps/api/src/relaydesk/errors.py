@@ -42,3 +42,17 @@ class Unavailable(AppError):
 class TooManyRequests(AppError):
     code = "too_many_requests"
     status_code = 429
+
+
+class PayloadTooLarge(AppError):
+    """The request body is bigger than this deployment will read.
+
+    Raised by nothing in the service layer: the only thing that can refuse a
+    body *before* it has been read is the ASGI middleware in
+    `relaydesk.middleware`, which builds this error's envelope itself
+    because middleware runs outside FastAPI's exception handlers. It lives
+    here so that envelope has exactly one definition.
+    """
+
+    code = "too_large"
+    status_code = 413
