@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     # Portal ticket submissions allowed from one address per hour. Low on
     # purpose: a genuine customer opens one ticket, not five.
     ticket_ip_hourly_cap: int = 5
+    ticket_message_max_chars: int = 10000
+    ticket_attachment_max_count: int = 5
 
     model_config = SettingsConfigDict(
         env_file=".env",
