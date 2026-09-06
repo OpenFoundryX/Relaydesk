@@ -29,6 +29,7 @@ from relaydesk.models.message import (
     MessageRole,
 )
 from relaydesk.models.poll_state import PollState
+from relaydesk.models.rate_limit import RateLimitHit
 from relaydesk.models.raw_message import RawMessage, RawMessageState
 from relaydesk.models.saved_view import SavedView
 from relaydesk.models.session import Session
@@ -64,6 +65,7 @@ __all__ = [
     "MessageRole",
     "PollState",
     "Priority",
+    "RateLimitHit",
     "RawMessage",
     "RawMessageState",
     "Role",

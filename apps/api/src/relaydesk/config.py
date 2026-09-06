@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     # forged header must never let a caller pick its own rate-limit bucket.
     trusted_proxy_ips: str = ""
 
+    # Portal ticket submissions allowed from one address per hour. Low on
+    # purpose: a genuine customer opens one ticket, not five.
+    ticket_ip_hourly_cap: int = 5
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
