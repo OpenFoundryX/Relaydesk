@@ -132,3 +132,55 @@ describe("middleware header sanitisation", () => {
     expect(response.headers.get(REQUEST_HEADER_PREFIX + WORKSPACE_HEADER)).toBeNull();
   });
 });
+
+describe("root path resolution", () => {
+  const WORKSPACE_HEADER = "x-relaydesk-workspace";
+
+  it("redirects a resolved subdomain's root to the help centre", () => {
+    const request = new NextRequest("http://acme.localhost:3000/", {
+      headers: { host: "acme.localhost:3000" },
+    });
+
+    const response = middleware(request);
+
+    expect(response.status).toBe(307);
+    const location = response.headers.get("location");
+    expect(location).not.toBeNull();
+    expect(new URL(location!).pathname).toBe("/help");
+  });
+
+  it("leaves the apex root alone -- no redirect, so the marketing site still renders", () => {
+    const request = new NextRequest("http://localhost:3000/", {
+      headers: { host: "localhost:3000" },
+    });
+
+    const response = middleware(request);
+
+    expect(response.status).not.toBe(307);
+    expect(response.headers.get("location")).toBeNull();
+  });
+
+  it("does not redirect a reserved label's root -- it never resolves to a workspace", () => {
+    const request = new NextRequest("http://www.localhost:3000/", {
+      headers: { host: "www.localhost:3000" },
+    });
+
+    const response = middleware(request);
+
+    expect(response.status).not.toBe(307);
+    expect(response.headers.get("location")).toBeNull();
+  });
+
+  it("still strips a client-supplied workspace header on the apex root", () => {
+    const request = new NextRequest("http://localhost:3000/", {
+      headers: { host: "localhost:3000", [WORKSPACE_HEADER]: "evil" },
+    });
+
+    const response = middleware(request);
+
+    const OVERRIDE_HEADER = "x-middleware-override-headers";
+    expect(response.headers.get(OVERRIDE_HEADER)?.split(",") ?? []).not.toContain(
+      WORKSPACE_HEADER,
+    );
+  });
+});

@@ -48,6 +48,17 @@ export function middleware(request: NextRequest) {
   const slug = workspaceSlug(request.headers.get("host"));
   if (slug) {
     headers.set(WORKSPACE_HEADER, slug);
+    // The bare root of a resolved workspace subdomain is the help centre,
+    // not a page of its own -- redirect rather than rewrite so the address
+    // bar always shows the real route. Every other portal link already
+    // points at /help explicitly (see the "← Help center" back-links and
+    // the portal nav), so a rewrite here would leave "/" and "/help"
+    // serving identical content at two different URLs. The follow-up
+    // request this redirect produces re-enters this same middleware and
+    // gets the workspace header set on it normally.
+    if (pathname === "/") {
+      return NextResponse.redirect(new URL("/help", request.url));
+    }
     return NextResponse.next({ request: { headers } });
   }
 
@@ -66,7 +77,7 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/conversations/:path*", "/analytics/:path*", "/knowledge-base/:path*",
+  matcher: ["/", "/conversations/:path*", "/analytics/:path*", "/knowledge-base/:path*",
             "/notifications/:path*", "/settings/:path*", "/user-portal/:path*", "/login",
             "/submit-ticket/:path*", "/help/:path*"],
 };

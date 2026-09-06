@@ -2,6 +2,8 @@ import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 
+import { PortalFooter } from "@/components/portal/portal-footer";
+import { PortalNav } from "@/components/portal/portal-nav";
 import { getPublicWorkspace } from "@/lib/api/public";
 
 /**
@@ -30,15 +32,11 @@ export default async function PortalLayout({ children }: { children: ReactNode }
           <span className="text-[15px] font-semibold tracking-tight text-ink-900">
             {workspace.name}
           </span>
-          <span className="ml-auto text-[13px] text-ink-500">Support</span>
+          <PortalNav />
         </div>
       </header>
       {children}
-      <footer className="mx-auto max-w-2xl px-6 py-8">
-        <p className="text-[12px] text-ink-400">
-          Powered by Relaydesk
-        </p>
-      </footer>
+      <PortalFooter />
     </div>
   );
 }

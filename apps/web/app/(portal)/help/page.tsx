@@ -22,11 +22,17 @@ export default async function HelpIndexPage() {
 
   return (
     <main className="mx-auto max-w-2xl px-6 py-12">
-      <h1 className="text-2xl font-semibold tracking-tight text-ink-900">
-        Help center
-      </h1>
+      {/*
+       * The portal nav in the shared layout already reads "Help center" and
+       * is highlighted as the active section here, so a second, visible
+       * "Help center" heading directly beneath it would just be the same
+       * words stacked twice. Kept as an sr-only h1 rather than dropped
+       * outright -- the nav link isn't a heading, so screen-reader users
+       * still need one page-level heading to land on.
+       */}
+      <h1 className="sr-only">Help center</h1>
 
-      <form action="/help/search" className="mt-6 flex gap-2">
+      <form action="/help/search" className="flex gap-2">
         <Input
           type="search"
           name="q"
