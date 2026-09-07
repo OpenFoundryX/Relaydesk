@@ -134,10 +134,12 @@ async def list_conversations(
     workspace_id: uuid.UUID,
     *,
     status: ConversationStatus | None = None,
+    priority: Priority | None = None,
     label_id: uuid.UUID | None = None,
     assignee_id: uuid.UUID | None = None,
     has_draft: bool | None = None,
     include_trash: bool = False,
+    updated_since: datetime | None = None,
     limit: int = DEFAULT_LIMIT,
     cursor: str | None = None,
 ) -> tuple[list[Conversation], str | None]:
@@ -163,6 +165,17 @@ async def list_conversations(
         ).where(ConversationLabel.label_id == label_id)
     if assignee_id is not None:
         query = query.where(Conversation.assignee_id == assignee_id)
+    if priority is not None:
+        query = query.where(Conversation.priority == priority)
+    if updated_since is not None:
+        # Filtered, not ordered by. The keyset stays on
+        # ``(last_message_at, id)``, so a conversation whose status changed
+        # without a new message keeps its old position in the page rather
+        # than jumping to the front. A poller asking "what changed since T"
+        # still sees all of them; it just does not see them in change order.
+        # Ordering by ``updated_at`` instead would need its own cursor and
+        # its own index, and is not worth it until something asks.
+        query = query.where(Conversation.updated_at >= updated_since)
     if has_draft:
         query = query.join(Draft, Draft.conversation_id == Conversation.id)
 

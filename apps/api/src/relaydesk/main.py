@@ -8,6 +8,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from relaydesk import __version__
 from relaydesk.api.router import api_router
+from relaydesk.api.v1.router import v1_router
 from relaydesk.config import get_settings
 from relaydesk.errors import AppError
 from relaydesk.middleware import MaxBodySizeMiddleware
@@ -30,6 +31,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(api_router, prefix="/api")
+app.include_router(v1_router, prefix="/v1")
 
 
 @app.exception_handler(AppError)
@@ -37,6 +39,7 @@ async def handle_app_error(_: Request, error: AppError) -> JSONResponse:
     return JSONResponse(
         status_code=error.status_code,
         content={"error": {"code": error.code, "message": error.message}},
+        headers=error.headers,
     )
 
 

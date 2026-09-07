@@ -4,9 +4,14 @@ class AppError(Exception):
     code = "error"
     status_code = 400
 
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: str, *, headers: dict[str, str] | None = None) -> None:
         super().__init__(message)
         self.message = message
+        # Only a 429 uses this today: ``Retry-After`` is part of what makes a
+        # rate-limit refusal actionable rather than just a status code, and
+        # the handler in ``relaydesk.main`` is the only thing that can attach
+        # it to the response.
+        self.headers = headers
 
 
 class Invalid(AppError):
