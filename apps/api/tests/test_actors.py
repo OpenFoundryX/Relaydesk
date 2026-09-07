@@ -1,3 +1,5 @@
+import uuid
+
 import sqlalchemy as sa
 
 from relaydesk.models import ActivityEvent, ApiKeyScope, ConversationStatus, Message
@@ -10,6 +12,10 @@ def test_an_actor_for_a_user_carries_the_users_name_and_id() -> None:
     from relaydesk.models import User
 
     user = User(email="sara@relaydesk.dev", name="Sara Ali", monogram="SA")
+    # `id` is a column default applied at flush, not construction, so an
+    # unflushed User's id is None. Assign one directly so this stays a pure
+    # unit test of Actor rather than needing a session round-trip.
+    user.id = uuid.uuid4()
     actor = Actor.for_user(user)
 
     assert actor.name == "Sara Ali"
