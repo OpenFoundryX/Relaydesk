@@ -73,6 +73,12 @@ async def test_a_key_without_the_scope_is_refused_and_told_which(
     body = response.json()["error"]
     assert body["code"] == "forbidden"
     assert "conversations:read" in body["message"]
+    # The key was resolved and charged before the scope check ran, so this
+    # refusal still has a budget to report -- unlike a 401, where no key
+    # ever resolved.
+    limit = get_settings().api_key_rate_limit_per_minute
+    assert response.headers["x-ratelimit-limit"] == str(limit)
+    assert int(response.headers["x-ratelimit-remaining"]) == limit - 1
 
 
 async def test_a_key_with_the_scope_is_allowed(client, db_session) -> None:
@@ -98,6 +104,12 @@ async def test_a_key_cannot_see_another_workspaces_conversation(
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "not_found"
+    # A charged, authenticated 404 must still report the budget it was
+    # charged against -- 403/404/422 are a polling integration's normal
+    # failure modes, not just its happy path.
+    limit = get_settings().api_key_rate_limit_per_minute
+    assert response.headers["x-ratelimit-limit"] == str(limit)
+    assert int(response.headers["x-ratelimit-remaining"]) == limit - 1
 
 
 async def test_every_response_carries_the_rate_limit_headers(

@@ -1,8 +1,8 @@
 import uuid
-from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import AwareDatetime
 
 from relaydesk.api.deps import DbSession
 from relaydesk.api.v1.deps import ApiPrincipal, requires
@@ -29,7 +29,12 @@ async def list_route(
     priority: Priority | None = None,
     assignee_id: uuid.UUID | None = None,
     label_id: uuid.UUID | None = None,
-    updated_since: datetime | None = None,
+    # Aware, not ``datetime | None``: a naive value would still parse, and
+    # asyncpg would then encode it by assuming the *server's* local
+    # timezone rather than UTC -- a silently wrong boundary for a sync
+    # cursor, which is exactly the bug this parameter exists to prevent.
+    # Refusing naive input with a 422 is safer than guessing at it.
+    updated_since: AwareDatetime | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     cursor: str | None = None,
 ) -> ConversationPage:

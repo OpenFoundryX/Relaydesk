@@ -3,7 +3,7 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import Annotated, Any
 
-from fastapi import Depends, Response
+from fastapi import Depends, Request, Response
 
 from relaydesk.api.deps import DbSession, bearer_token
 from relaydesk.config import get_settings
@@ -47,6 +47,7 @@ class ApiPrincipal:
 
 async def api_principal(
     session: DbSession,
+    request: Request,
     response: Response,
     token: Annotated[str, Depends(bearer_token)],
 ) -> ApiPrincipal:
@@ -65,6 +66,16 @@ async def api_principal(
     allowed, remaining = await api_usage.charge(session, key.id, limit=limit)
     response.headers["X-RateLimit-Limit"] = str(limit)
     response.headers["X-RateLimit-Remaining"] = str(remaining)
+    # FastAPI only merges a dependency's ``Response`` headers into the real
+    # response *after* the route handler returns successfully -- an
+    # exception raised anywhere downstream (a missing scope, a
+    # cross-workspace 404, a bad query param) unwinds straight to an
+    # exception handler in ``main.py`` that builds a fresh ``JSONResponse``
+    # and never sees this ``response`` object. Stashing the pair on
+    # ``request.state`` gives those handlers something to read regardless of
+    # which way the request ends, so a charged-but-refused call still tells
+    # the caller its budget.
+    request.state.rate_limit = (limit, remaining)
     if not allowed:
         # The headers set above belong to the *success* response object; an
         # exception bypasses it, so the refusal carries its own copy.

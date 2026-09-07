@@ -34,24 +34,55 @@ app.include_router(api_router, prefix="/api")
 app.include_router(v1_router, prefix="/v1")
 
 
+def _error_headers(
+    request: Request, own_headers: dict[str, str] | None = None
+) -> dict[str, str] | None:
+    """Rate-limit headers for a refusal that never reaches a route body.
+
+    FastAPI only copies a dependency's ``Response`` headers onto the real
+    response when the route handler returns normally; an exception raised by
+    a dependency (a missing scope, a cross-workspace 404 from the route, a
+    bad query param) unwinds straight here instead, so a v1 request that was
+    authenticated and charged still needs its budget reported.
+    ``api.v1.deps.api_principal`` stashes ``(limit, remaining)`` on
+    ``request.state.rate_limit`` for exactly this. Read defensively:
+    this handler also serves ``/api`` and the pre-authentication 401 path,
+    neither of which ever sets it.
+
+    ``own_headers`` -- an ``AppError``'s own headers, when it has any --
+    wins on conflict, so a 429's ``Retry-After`` and its zeroed
+    ``X-RateLimit-Remaining`` are never overwritten by the general case.
+    """
+    limit_remaining = getattr(request.state, "rate_limit", None)
+    headers: dict[str, str] = {}
+    if limit_remaining is not None:
+        limit, remaining = limit_remaining
+        headers["X-RateLimit-Limit"] = str(limit)
+        headers["X-RateLimit-Remaining"] = str(remaining)
+    if own_headers:
+        headers.update(own_headers)
+    return headers or None
+
+
 @app.exception_handler(AppError)
-async def handle_app_error(_: Request, error: AppError) -> JSONResponse:
+async def handle_app_error(request: Request, error: AppError) -> JSONResponse:
     return JSONResponse(
         status_code=error.status_code,
         content={"error": {"code": error.code, "message": error.message}},
-        headers=error.headers,
+        headers=_error_headers(request, error.headers),
     )
 
 
 @app.exception_handler(RequestValidationError)
 async def handle_validation_error(
-    _: Request, error: RequestValidationError
+    request: Request, error: RequestValidationError
 ) -> JSONResponse:
     return JSONResponse(
         status_code=422,
         content={
             "error": {"code": "invalid", "message": "Request payload is invalid."}
         },
+        headers=_error_headers(request),
     )
 
 

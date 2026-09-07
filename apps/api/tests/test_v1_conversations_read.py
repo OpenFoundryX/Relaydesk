@@ -115,6 +115,27 @@ async def test_list_filters_by_updated_since(client, db_session) -> None:
     assert [item["subject"] for item in response.json()["data"]] == ["Fresh"]
 
 
+async def test_list_rejects_a_naive_updated_since(client, db_session) -> None:
+    """A naive value must be refused, not silently read as server-local time.
+
+    ``Conversation.updated_at`` is timezone-aware; asyncpg encodes a naive
+    Python ``datetime`` by assuming the *server's* local timezone, not UTC.
+    A shifted boundary in a sync cursor silently skips records -- exactly
+    what this parameter exists to prevent -- so a naive ISO-8601 string
+    (what a third-party client sends by default) is a 422, not a guess.
+    """
+    workspace = await make_workspace(db_session)
+    headers = await setup_key(db_session, workspace)
+
+    response = await client.get(
+        "/v1/conversations",
+        params={"updated_since": "2026-01-01T00:00:00"},
+        headers=headers,
+    )
+
+    assert response.status_code == 422
+
+
 async def test_list_rejects_an_unknown_status(client, db_session) -> None:
     workspace = await make_workspace(db_session)
     headers = await setup_key(db_session, workspace)
