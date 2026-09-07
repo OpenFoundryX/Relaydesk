@@ -1,8 +1,10 @@
 "use client";
 
+import { useTransition } from "react";
 import Link from "next/link";
 import { ChevronDown, CircleUser, LogOut, Search, Settings } from "lucide-react";
 
+import { signOut } from "@/app/(auth)/login/actions";
 import { Logo } from "@/components/console/logo";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -20,6 +22,8 @@ interface TopBarProps {
 }
 
 export function TopBar({ workspaceName, userName, userMonogram }: TopBarProps) {
+  const [signingOut, startSignOut] = useTransition();
+
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b border-ink-200 bg-white px-4">
       <Link href="/conversations" className="rounded-md">
@@ -77,9 +81,23 @@ export function TopBar({ workspaceName, userName, userMonogram }: TopBarProps) {
             </Link>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem destructive>
+          <DropdownMenuItem
+            destructive
+            disabled={signingOut}
+            onSelect={(event) => {
+              // Radix closes the menu on select, which unmounts this item.
+              // Holding it open keeps the disabled state visible while the
+              // action runs, so a slow sign-out does not look like the
+              // click was ignored. `signOut` redirects on success, so
+              // nothing here needs to close the menu afterwards.
+              event.preventDefault();
+              startSignOut(async () => {
+                await signOut();
+              });
+            }}
+          >
             <LogOut />
-            Sign out
+            {signingOut ? "Signing out…" : "Sign out"}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
