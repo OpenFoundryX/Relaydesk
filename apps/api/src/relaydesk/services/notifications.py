@@ -1,17 +1,8 @@
 from relaydesk.config import get_settings
 from relaydesk.models.conversation import Conversation
 from relaydesk.models.user import User
-from relaydesk.services import queue
+from relaydesk.services import mail_templates, queue
 from relaydesk.services.team import INVITE_TTL
-
-ASSIGNMENT_TEXT = """\
-{actor} assigned a conversation to you.
-
-{subject}
-From {customer}
-
-Open it: {url}
-"""
 
 
 def notify_assignment(
@@ -24,26 +15,21 @@ def notify_assignment(
 
     customer = conversation.contact.name if conversation.contact else "a customer"
     url = f"{get_settings().web_url}/conversations/{conversation.id}"
+    text, html = mail_templates.render(
+        heading="Assigned to you",
+        paragraphs=[
+            f"{actor.name} assigned a conversation to you.",
+            f"{conversation.subject}\nFrom {customer}",
+        ],
+        action_label="Open it",
+        action_url=url,
+    )
     queue.enqueue_system_email(
         to=assignee.email,
         subject=f"Assigned to you: {conversation.subject}",
-        text_body=ASSIGNMENT_TEXT.format(
-            actor=actor.name,
-            subject=conversation.subject,
-            customer=customer,
-            url=url,
-        ),
+        text_body=text,
+        html_body=html,
     )
-
-
-INVITE_TEXT = """\
-{inviter} invited you to join {workspace} on Relaydesk.
-
-Accept the invitation: {url}
-
-This link expires in {ttl_days} days. If you weren't expecting it, ignore
-this message — no account is created until you accept.
-"""
 
 
 def notify_invite(
@@ -59,13 +45,20 @@ def notify_invite(
     the invite routes in ``relaydesk.api.team``.
     """
     url = f"{get_settings().web_url}/invites#{token}"
+    text, html = mail_templates.render(
+        heading=f"Join {workspace_name}",
+        paragraphs=[
+            f"{inviter_name} invited you to join {workspace_name} on Relaydesk.",
+            f"This link expires in {INVITE_TTL.days} days. If you weren't "
+            "expecting it, ignore this message — no account is created until "
+            "you accept.",
+        ],
+        action_label="Accept the invitation",
+        action_url=url,
+    )
     queue.enqueue_system_email(
         to=email,
         subject=f"Join {workspace_name} on Relaydesk",
-        text_body=INVITE_TEXT.format(
-            inviter=inviter_name,
-            workspace=workspace_name,
-            url=url,
-            ttl_days=INVITE_TTL.days,
-        ),
+        text_body=text,
+        html_body=html,
     )

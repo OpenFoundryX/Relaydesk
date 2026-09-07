@@ -110,7 +110,9 @@ def outbox(monkeypatch) -> list[dict]:
     sent: list[dict] = []
 
     def record(to: str, subject: str, text_body: str, html_body=None) -> None:
-        sent.append({"to": to, "subject": subject, "text": text_body})
+        sent.append(
+            {"to": to, "subject": subject, "text": text_body, "html": html_body}
+        )
 
     monkeypatch.setattr(queue, "enqueue_system_email", record)
     return sent
