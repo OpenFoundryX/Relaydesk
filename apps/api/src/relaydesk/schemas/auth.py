@@ -61,6 +61,7 @@ class MePatch(CamelModel):
     # reached the database and raised StringDataRightTruncation (a 500)
     # instead of a 422.
     name: Annotated[str, Field(min_length=1, max_length=120)] | None = None
+    time_zone: str | None = None
     notify_on_assignment: bool | None = None
 
 

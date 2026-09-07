@@ -21,6 +21,7 @@ from relaydesk.security.tokens import generate_token
 from relaydesk.services import auth, password_reset, workspaces
 from relaydesk.services import client_ip as ip_buckets
 from relaydesk.services.team import monogram_for
+from relaydesk.services.timezones import valid_timezone
 
 router = APIRouter()
 
@@ -149,6 +150,8 @@ async def update_me(payload: MePatch, scope: Scope, session: DbSession) -> MeRes
         # team.accept_invite and team.py's other name-setting paths already
         # derive it the same way.
         scope.user.monogram = monogram_for(scope.user.name)
+    if payload.time_zone is not None:
+        scope.user.timezone = valid_timezone(payload.time_zone)
     if payload.notify_on_assignment is not None:
         scope.user.notify_on_assignment = payload.notify_on_assignment
     await session.commit()

@@ -137,6 +137,51 @@ async def test_renaming_yourself_recomputes_the_monogram(
     assert body["user"]["monogram"] == "GW"
 
 
+async def test_saving_your_time_zone_persists_it(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """MePatch had no time_zone field, so the console's Save answered 200 and
+    discarded the value -- a success that changed nothing."""
+    await seed_member(db_session)
+    login = await client.post(
+        "/api/auth/login",
+        json={"email": "nilesh@relaydesk.dev", "password": "correct-horse"},
+    )
+    headers = {"Authorization": f"Bearer {login.json()['token']}"}
+
+    response = await client.patch(
+        "/api/auth/me", json={"timeZone": "Asia/Kolkata"}, headers=headers
+    )
+
+    assert response.status_code == 200
+    assert response.json()["user"]["timeZone"] == "Asia/Kolkata"
+    reread = await client.get("/api/auth/me", headers=headers)
+    assert reread.json()["user"]["timeZone"] == "Asia/Kolkata"
+
+
+async def test_an_unloadable_time_zone_is_refused(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Every message and activity serializer resolves the stored value with
+    ZoneInfo, so an unvalidated one would 500 this user's whole inbox until
+    someone corrected it in the database."""
+    await seed_member(db_session)
+    login = await client.post(
+        "/api/auth/login",
+        json={"email": "nilesh@relaydesk.dev", "password": "correct-horse"},
+    )
+    headers = {"Authorization": f"Bearer {login.json()['token']}"}
+
+    for bad in ("Mars/Olympus", "A" * 80):
+        response = await client.patch(
+            "/api/auth/me", json={"timeZone": bad}, headers=headers
+        )
+        assert response.status_code == 422, bad
+
+    unchanged = await client.get("/api/auth/me", headers=headers)
+    assert unchanged.json()["user"]["timeZone"] == "UTC"
+
+
 async def test_renaming_yourself_past_the_column_width_is_a_422_not_a_500(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:

@@ -3,7 +3,12 @@
 import { useState, useTransition } from "react";
 import { LogOut } from "lucide-react";
 
-import { setNotifyOnAssignmentAction } from "@/app/(console)/settings/account/actions";
+import { signOut } from "@/app/(auth)/login/actions";
+import {
+  setNameAction,
+  setNotifyOnAssignmentAction,
+  setTimeZoneAction,
+} from "@/app/(console)/settings/account/actions";
 import { SettingSection } from "@/components/console/setting-section";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,6 +40,27 @@ export function AccountSettings({ user, timeZones }: AccountSettingsProps) {
   // Not yet returned by the API; defaults to off until Slack ships.
   const [slackNotifications, setSlackNotifications] = useState(false);
   const [, startTransition] = useTransition();
+  const [savingName, startSaveName] = useTransition();
+  const [savingZone, startSaveZone] = useTransition();
+  const [signingOut, startSignOut] = useTransition();
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [zoneError, setZoneError] = useState<string | null>(null);
+
+  function saveName() {
+    setNameError(null);
+    startSaveName(async () => {
+      const result = await setNameAction(name);
+      if (!result.ok) setNameError(result.message);
+    });
+  }
+
+  function saveTimeZone() {
+    setZoneError(null);
+    startSaveZone(async () => {
+      const result = await setTimeZoneAction(timeZone);
+      if (!result.ok) setZoneError(result.message);
+    });
+  }
 
   function handleNotifyChange(next: boolean) {
     setNotifyOnAssignment(next);
@@ -50,9 +76,19 @@ export function AccountSettings({ user, timeZones }: AccountSettingsProps) {
       <SettingSection
         title="Profile"
         footer={
-          <Button variant="primary" size="sm" disabled={!nameChanged}>
-            Save
-          </Button>
+          <div className="flex items-center gap-3">
+            {nameError && (
+              <span className="text-[12px] text-danger-600">{nameError}</span>
+            )}
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={!nameChanged || savingName}
+              onClick={saveName}
+            >
+              {savingName ? "Saving…" : "Save"}
+            </Button>
+          </div>
         }
       >
         <div className="flex items-start gap-4">
@@ -80,9 +116,19 @@ export function AccountSettings({ user, timeZones }: AccountSettingsProps) {
         title="Time zone"
         description="Message timestamps are shown in this zone."
         footer={
-          <Button variant="primary" size="sm" disabled={timeZone === user.timeZone}>
-            Save
-          </Button>
+          <div className="flex items-center gap-3">
+            {zoneError && (
+              <span className="text-[12px] text-danger-600">{zoneError}</span>
+            )}
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={timeZone === user.timeZone || savingZone}
+              onClick={saveTimeZone}
+            >
+              {savingZone ? "Saving…" : "Save"}
+            </Button>
+          </div>
         }
       >
         <Select value={timeZone} onValueChange={setTimeZone}>
@@ -134,9 +180,14 @@ export function AccountSettings({ user, timeZones }: AccountSettingsProps) {
       />
 
       <SettingSection title="Sign out" description="End this session on this device.">
-        <Button variant="secondary" size="sm">
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={signingOut}
+          onClick={() => startSignOut(async () => void (await signOut()))}
+        >
           <LogOut />
-          Sign out
+          {signingOut ? "Signing out…" : "Sign out"}
         </Button>
       </SettingSection>
     </div>
