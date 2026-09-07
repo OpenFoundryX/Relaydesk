@@ -193,14 +193,6 @@ Enterprise customers → assign to @Sara
 Anything marked urgent → assign to @Nilesh`,
 };
 
-export const timeZones = [
-  "Asia/Calcutta  GMT+5:30",
-  "Europe/London  GMT+1:00",
-  "America/New_York  GMT-4:00",
-  "America/Los_Angeles  GMT-7:00",
-  "Australia/Sydney  GMT+10:00",
-];
-
 export async function getSnippets(): Promise<Snippet[]> {
   return snippets;
 }

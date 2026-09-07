@@ -1,7 +1,7 @@
 import { PageHeader } from "@/components/console/page-header";
 import { AccountSettings } from "@/components/settings/account-settings";
 import { getCurrentUser } from "@/lib/api/workspace";
-import { timeZones } from "@/lib/mock/settings";
+import { timeZoneOptions } from "@/lib/time-zones";
 
 export const metadata = { title: "Account" };
 
@@ -14,7 +14,10 @@ export default async function AccountPage() {
         title="Account"
         description="Your personal profile and notification preferences."
       />
-      <AccountSettings user={currentUser} timeZones={timeZones} />
+      <AccountSettings
+        user={currentUser}
+        timeZones={timeZoneOptions(currentUser.timeZone)}
+      />
     </>
   );
 }

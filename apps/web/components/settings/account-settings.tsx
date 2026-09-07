@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import type { TimeZoneOption } from "@/lib/time-zones";
 
 interface AccountSettingsProps {
   user: {
@@ -30,7 +31,7 @@ interface AccountSettingsProps {
     timeZone: string;
     notifyOnAssignment: boolean;
   };
-  timeZones: string[];
+  timeZones: TimeZoneOption[];
 }
 
 export function AccountSettings({ user, timeZones }: AccountSettingsProps) {
@@ -137,8 +138,8 @@ export function AccountSettings({ user, timeZones }: AccountSettingsProps) {
           </SelectTrigger>
           <SelectContent>
             {timeZones.map((zone) => (
-              <SelectItem key={zone} value={zone}>
-                {zone}
+              <SelectItem key={zone.id} value={zone.id}>
+                {zone.label}
               </SelectItem>
             ))}
           </SelectContent>
