@@ -62,3 +62,15 @@ class MePatch(CamelModel):
     # instead of a 422.
     name: Annotated[str, Field(min_length=1, max_length=120)] | None = None
     notify_on_assignment: bool | None = None
+
+
+class PasswordResetRequest(CamelModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(CamelModel):
+    token: str
+    # The same minimum as accepting an invite (`schemas.team`), which is the
+    # only other way a password is ever set. Stated by reference rather than
+    # by a second literal so the two cannot drift apart.
+    password: Annotated[str, Field(min_length=8)]

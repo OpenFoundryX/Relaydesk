@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Query, Response, status
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 
 from relaydesk.api.deps import DbSession, Scope, bearer_token, client_ip
 from relaydesk.schemas.auth import (
@@ -10,13 +10,16 @@ from relaydesk.schemas.auth import (
     MembershipOut,
     MePatch,
     MeResponse,
+    PasswordResetConfirm,
+    PasswordResetRequest,
     TokenResponse,
     UserOut,
     WorkspaceOut,
 )
 from relaydesk.security.oauth_google import authorization_url, exchange_code
 from relaydesk.security.tokens import generate_token
-from relaydesk.services import auth, workspaces
+from relaydesk.services import auth, password_reset, workspaces
+from relaydesk.services import client_ip as ip_buckets
 from relaydesk.services.team import monogram_for
 
 router = APIRouter()
@@ -42,6 +45,49 @@ async def logout(
     session: DbSession, token: Annotated[str, Depends(bearer_token)]
 ) -> Response:
     await auth.revoke_session(session, token)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/password-reset", status_code=status.HTTP_202_ACCEPTED)
+async def request_password_reset(
+    payload: PasswordResetRequest, request: Request, session: DbSession
+) -> Response:
+    """Always 202, with an empty body, for every input.
+
+    An unknown address, a Google-only account, a user with no membership
+    and a caller over the rate limit are all answered identically — a 429
+    would itself be a signal, and one an attacker can provoke deliberately
+    against a chosen address.
+
+    The rate-limit key comes from ``services.client_ip.resolve``, not the
+    ``api.deps.client_ip`` dependency this module already imports. They are
+    different values and only one of them is a limiter key: ``deps`` returns
+    the immediate peer, which is correct for the ``sessions.ip`` record it
+    fills in on login, but the browser reaches this API through the Next
+    server, so as a bucket it puts every user on earth in one. Five resets
+    per hour for the whole deployment, refusing the sixth real person
+    because five others already asked, with nothing logged and nothing
+    raised. ``resolve`` honours ``X-Forwarded-For`` only from a peer in
+    ``TRUSTED_PROXY_IPS`` and buckets IPv6 on its /64.
+    """
+    await password_reset.request(
+        session, str(payload.email), ip_buckets.resolve(request)
+    )
+    return Response(status_code=status.HTTP_202_ACCEPTED)
+
+
+@router.post("/password-reset/confirm", status_code=status.HTTP_204_NO_CONTENT)
+async def confirm_password_reset(
+    payload: PasswordResetConfirm, session: DbSession
+) -> Response:
+    """No session is minted here.
+
+    Unlike ``accept_invite``, which signs the new member in because their
+    token proved possession of an address that had no account yet, a reset
+    ends at the login page: the user has just chosen a password, and
+    signing in with it is what confirms it works.
+    """
+    await password_reset.confirm(session, payload.token, payload.password)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
