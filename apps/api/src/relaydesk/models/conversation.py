@@ -2,6 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
+import sqlalchemy as sa
 from sqlalchemy import (
     Boolean,
     DateTime,
@@ -13,6 +14,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -68,6 +70,18 @@ class Conversation(UUIDMixin, TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("workspace_id", "number"),
         Index("ix_conversations_inbox", "workspace_id", "status", "last_message_at"),
+        # Partial, for the same reason as ``uq_messages_channel_external``:
+        # Postgres treats NULLs as distinct, so a plain unique index would
+        # permit unlimited duplicate (workspace_id, NULL) rows -- which is
+        # every conversation that did not arrive through the API -- while
+        # appearing to enforce the constraint.
+        Index(
+            "uq_conversations_external_id",
+            "workspace_id",
+            "external_id",
+            unique=True,
+            postgresql_where=sa.text("external_id IS NOT NULL"),
+        ),
     )
 
     workspace_id: Mapped[uuid.UUID] = mapped_column(
@@ -134,6 +148,18 @@ class Conversation(UUIDMixin, TimestampMixin, Base):
         ),
         default=SummaryState.none,
         nullable=False,
+    )
+    # The caller's own identifier for this ticket. Unique per workspace, so
+    # a repeated POST returns the conversation it already created rather
+    # than a duplicate -- which is what makes an interrupted import safe to
+    # re-run.
+    external_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # The column is ``metadata``; the attribute cannot be, because
+    # Declarative owns that name on every model. Capped at the schema edge
+    # (8 KB, 50 keys) so it stays a place for an order id and does not
+    # become a blob store inside the hottest table in the product.
+    meta: Mapped[dict] = mapped_column(
+        "metadata", JSONB, nullable=False, server_default="{}", default=dict
     )
 
     contact = relationship("Contact", lazy="selectin")
