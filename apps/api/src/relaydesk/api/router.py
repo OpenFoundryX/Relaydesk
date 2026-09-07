@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from relaydesk.api.api_keys import router as api_keys_router
 from relaydesk.api.attachments import router as attachments_router
 from relaydesk.api.auth import router as auth_router
 from relaydesk.api.channels import router as channels_router
@@ -16,6 +17,7 @@ api_router = APIRouter()
 api_router.include_router(health_router, prefix="/health", tags=["health"])
 api_router.include_router(auth_router, prefix="/auth", tags=["auth"])
 api_router.include_router(workspace_router, prefix="/workspace", tags=["workspace"])
+api_router.include_router(api_keys_router, prefix="/api-keys", tags=["api-keys"])
 api_router.include_router(team_router, prefix="/team", tags=["team"])
 # Public: acceptance is gated on possession of a token that was mailed to
 # the invited address. See relaydesk.api.team.
