@@ -16,8 +16,11 @@ working channel: mail forwarded to a workspace's ingest address becomes a
 ticket, replies are delivered over SMTP with retry and bounce handling, and
 attachments are stored and served back safely. The knowledge base lets a
 workspace write and publish help articles, with a public help site anonymous
-customers can read and search. Discord, one-click import from another help
-desk, AI features, analytics, and billing are not yet implemented.
+customers can read and search. A public API is available too: a workspace
+can mint scoped API keys and drive its inbox — conversations, messages,
+labels, contacts — from outside the console. Discord, one-click import from
+another help desk, AI features, analytics, and billing are not yet
+implemented.
 
 Team invites are sent by email: accepting one lets you choose an account's
 password and sign in as it, so the invite link is only ever mailed to the
@@ -215,6 +218,64 @@ one bucket, in exactly the shape described above. Next is assumed here to be
 the outermost hop. If it is not, the strip in `middleware.ts` has to become
 selective: keep the forwarded chain when the connection came from a proxy you
 trust, and take the client from it, rather than deleting it outright.
+
+## The API
+
+A workspace drives its own inbox from outside the console with an API key.
+Create one under **Settings → API keys**; the secret is shown once, at
+creation, and only its hash is stored, so rotating means creating a new key
+and deleting the old one.
+
+The public API is at `/v1`, separate from `/api`, which is the console's own
+surface and changes with the UI. Everything under `/v1` is a stable
+contract:
+
+```sh
+curl -X POST http://localhost:8000/v1/conversations \
+  -H "Authorization: Bearer rd_your_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{"customer_email":"customer@example.com","message":"I need help."}'
+```
+
+Conversations, messages, labels and contacts are covered. The full route
+list with request and response shapes is at
+http://localhost:8000/docs under the `v1:` tags.
+
+### Scopes
+
+A key carries only the scopes it is given, and a write scope does not imply
+its read scope:
+
+| Scope | Grants |
+|---|---|
+| `conversations:read` | List and read conversations and their messages |
+| `conversations:write` | Create a conversation; change status, priority, assignee |
+| `messages:write` | Send a reply to the customer |
+| `contacts:read` | List and read contacts |
+| `labels:read` | List labels |
+| `labels:write` | Create a label; add and remove labels on a conversation |
+
+**`messages:write` is separate from `conversations:write` on purpose.**
+Changing a ticket's status is internal bookkeeping; sending a reply puts
+mail in a customer's inbox under your workspace's name. An integration that
+triages tickets should not hold the second grant, and the console's "Ticket
+bot" preset deliberately does not include it.
+
+### Retries and `external_id`
+
+`POST /v1/conversations` accepts your own `external_id`. It is unique per
+workspace, and a repeat returns the conversation it already created with a
+`200` instead of a duplicate with a `201` — so an interrupted import is safe
+to re-run in full.
+
+### Rate limit
+
+`API_KEY_RATE_LIMIT_PER_MINUTE` (default 120) bounds one key. Every response
+carries `X-RateLimit-Limit` and `X-RateLimit-Remaining`; a refusal is a `429`
+with `Retry-After`. The window is fixed rather than sliding, so a caller can
+see up to twice the limit across a boundary — this bound exists to stop a
+runaway integration, not to defeat an adversary, since a key holder is an
+authenticated tenant acting on their own data.
 
 ## Development commands
 
