@@ -46,8 +46,9 @@ export function middleware(request: NextRequest) {
   const headers = new Headers(request.headers);
   headers.delete(WORKSPACE_HEADER);
   // Same reasoning, for the address the public ticket form's server action
-  // (app/(portal)/submit-ticket/actions.ts) forwards to the API as the
-  // submitter's IP: a client can set X-Forwarded-For on any request --
+  // (app/(portal)/submit-ticket/actions.ts) and the forgot-password form's
+  // (app/(auth)/forgot-password/actions.ts) forward to the API as the
+  // caller's IP: a client can set X-Forwarded-For on any request --
   // curl, or a script in the page itself -- and Next only fills this
   // header in when it is *absent* (`req.headers['x-forwarded-for'] ??=
   // socket.remoteAddress`, in Next's own request handling), so a
@@ -94,5 +95,5 @@ export function middleware(request: NextRequest) {
 export const config = {
   matcher: ["/", "/conversations/:path*", "/analytics/:path*", "/knowledge-base/:path*",
             "/notifications/:path*", "/settings/:path*", "/user-portal/:path*", "/login",
-            "/submit-ticket/:path*", "/help/:path*"],
+            "/submit-ticket/:path*", "/help/:path*", "/forgot-password"],
 };

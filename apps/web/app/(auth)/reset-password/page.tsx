@@ -79,7 +79,14 @@ export default function ResetPasswordPage() {
   return (
     <form onSubmit={submit} className="w-full max-w-sm space-y-4">
       <h1 className="text-lg font-semibold text-ink-900">Choose a new password</h1>
-      {error ? <p className="text-sm text-rose-600">{error}</p> : null}
+      {error ? (
+        <p
+          role="alert"
+          className="rounded-md border border-danger-200 bg-danger-50 px-3 py-2 text-[13px] text-danger-700"
+        >
+          {error}
+        </p>
+      ) : null}
       <div className="space-y-2">
         <Label htmlFor="password" className="text-sm">
           New password

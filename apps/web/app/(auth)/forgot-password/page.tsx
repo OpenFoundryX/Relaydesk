@@ -12,14 +12,20 @@ import { requestPasswordResetAction } from "./actions";
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
+    setError(null);
     startTransition(async () => {
-      await requestPasswordResetAction(email.trim());
-      // Shown whatever the address was. See the action's comment.
-      setSent(true);
+      const result = await requestPasswordResetAction(email.trim());
+      if (result.ok) {
+        // Shown whatever the address was. See the action's comment.
+        setSent(true);
+        return;
+      }
+      setError(result.message);
     });
   }
 
@@ -49,6 +55,14 @@ export default function ForgotPasswordPage() {
           We will email you a link to choose a new one.
         </p>
       </div>
+      {error ? (
+        <p
+          role="alert"
+          className="rounded-md border border-danger-200 bg-danger-50 px-3 py-2 text-[13px] text-danger-700"
+        >
+          {error}
+        </p>
+      ) : null}
       <div className="space-y-2">
         <Label htmlFor="email" className="text-sm">
           Email

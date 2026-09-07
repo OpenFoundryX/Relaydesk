@@ -102,6 +102,52 @@ async def test_the_limiter_keys_on_the_forwarded_client_not_the_peer(
     assert set(keys) == {"203.0.113.9", "198.51.100.4"}
 
 
+async def test_a_trusted_peer_with_no_forwarded_header_degenerates_to_the_peer(
+    db_session, client, outbox, monkeypatch
+) -> None:
+    """This is the case the test above does not cover: it hand-injects
+    X-Forwarded-For, which is exactly what the web container never sent
+    before the web-side fix, so it kept passing against a web layer that
+    never forwarded the header at all.
+
+    A request that arrives at a trusted peer carrying no X-Forwarded-For at
+    all -- the shape every request from `web` had before that fix -- must
+    still resolve to a key, and `services.client_ip.resolve` falls back to
+    bucketing on the peer itself when the header is missing or empty. That
+    fallback is correct in isolation, but it means every caller behind that
+    peer degenerates onto one shared bucket -- the deployment-wide
+    single-bucket bug this pins. See lib/api/password-reset.ts and
+    middleware.ts on the web side for the other half of the fix."""
+    from relaydesk.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "trusted_proxy_ips", "127.0.0.1")
+
+    workspace = await make_workspace(db_session)
+    for index in range(2):
+        await make_member(db_session, workspace, email=f"peer{index}@example.com")
+    await db_session.commit()
+
+    await client.post(
+        "/api/auth/password-reset", json={"email": "peer0@example.com"}
+    )
+    await client.post(
+        "/api/auth/password-reset", json={"email": "peer1@example.com"}
+    )
+
+    keys = (
+        await db_session.scalars(
+            sa.select(RateLimitHit.key).where(
+                RateLimitHit.bucket == "password_reset_ip"
+            )
+        )
+    ).all()
+    # Both requests, for two different addresses, land on the same key: the
+    # trusted peer's own address. Without a forwarded header, there is
+    # nothing else to bucket on.
+    assert set(keys) == {"127.0.0.1"}
+
+
 async def test_confirming_through_the_api_changes_the_password(
     db_session, client, outbox
 ) -> None:

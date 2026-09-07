@@ -345,6 +345,16 @@ describe("matcher coverage", () => {
     expect(covered("/knowledge-base/an-article-id/preview")).toBe(true);
   });
 
+  // The forgot-password form's server action forwards X-Forwarded-For to
+  // the API's per-IP password-reset rate limiter the same way the ticket
+  // form does. A Server Action POSTs to its own page URL, so without this
+  // matcher entry the strip above never runs on that route, and a caller
+  // could set its own X-Forwarded-For to pick its own rate-limit bucket per
+  // request -- see lib/api/password-reset.ts and the final-branch report.
+  it("runs it on the forgot-password route", () => {
+    expect(covered("/forgot-password")).toBe(true);
+  });
+
   it("does not claim to cover a route that is deliberately unmatched", () => {
     // /invites is excluded on purpose -- see the comment at the top of
     // middleware.ts. If this ever starts passing, the helper above has
