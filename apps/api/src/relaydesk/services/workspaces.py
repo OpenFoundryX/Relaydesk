@@ -5,7 +5,13 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relaydesk.errors import Invalid, NotFound
-from relaydesk.models import Label, Membership, MembershipStatus, Workspace
+from relaydesk.models import (
+    ChannelAccount,
+    Label,
+    Membership,
+    MembershipStatus,
+    Workspace,
+)
 from relaydesk.services import channel_accounts
 from relaydesk.services.timezones import valid_timezone
 
@@ -79,7 +85,13 @@ async def setup_tasks(
     """The sidebar checklist, computed rather than stored.
 
     Tasks whose subsystem does not exist yet report ``done: False``; their
-    slices flip them by making the underlying count real.
+    slices flip them by making the underlying count real. ``channel`` was
+    one of those and is no longer: ``create_workspace`` gives every
+    workspace an active ``ChannelAccount``, so leaving it hardcoded left the
+    task permanently unticked for a workspace that already had a working
+    ingest address, with no action anyone could take to complete it -- which
+    also meant the checklist could never reach done and the card never went
+    away.
     """
     members = await session.scalar(
         sa.select(sa.func.count())
@@ -94,9 +106,22 @@ async def setup_tasks(
         .select_from(Label)
         .where(Label.workspace_id == workspace_id)
     )
+    channels = await session.scalar(
+        sa.select(sa.func.count())
+        .select_from(ChannelAccount)
+        .where(
+            ChannelAccount.workspace_id == workspace_id,
+            ChannelAccount.active.is_(True),
+        )
+    )
 
     return [
-        SetupTask("channel", "Connect a channel", "/settings/channels", False),
+        SetupTask(
+            "channel",
+            "Connect a channel",
+            "/settings/channels",
+            (channels or 0) > 0,
+        ),
         SetupTask("team", "Invite your team", "/settings/team", (members or 0) > 1),
         SetupTask(
             "integrations", "Connect an integration", "/settings/integrations", False

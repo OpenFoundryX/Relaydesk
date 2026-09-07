@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from relaydesk.errors import Conflict, NotFound
 from relaydesk.models import Membership, MembershipStatus, Role, User, Workspace
 from relaydesk.security.passwords import hash_password
-from relaydesk.services import team
+from relaydesk.services import channel_accounts, team, workspaces
 
 
 async def sign_in_full(
@@ -152,7 +152,47 @@ async def test_setup_tasks_reflect_real_state(
 
     by_id = {task["id"]: task for task in body}
     assert by_id["team"]["done"] is False  # only one member so far
-    assert by_id["channel"]["done"] is False  # no channels until slice 2
+    # This fixture builds `Workspace(...)` directly rather than going through
+    # `create_workspace`, so it has no channel account -- which is why the
+    # task is undone here. A workspace made the real way is covered below.
+    assert by_id["channel"]["done"] is False
+
+
+async def test_a_real_workspace_has_its_channel_task_already_done(
+    db_session: AsyncSession,
+) -> None:
+    """`channel` was hardcoded False, left over from before the email slice
+    landed. `create_workspace` gives every workspace an active
+    ChannelAccount, so the task sat unticked for a workspace that already had
+    a working ingest address, with nothing anyone could do to complete it --
+    which also meant the checklist never reached done and the "Finish setup"
+    card never went away."""
+    workspace = await workspaces.create_workspace(
+        db_session, name="Acme", slug="acme-setup-task", monogram="AC"
+    )
+    await db_session.commit()
+
+    tasks = {t.id: t for t in await workspaces.setup_tasks(db_session, workspace.id)}
+
+    assert tasks["channel"].done is True
+
+
+async def test_deactivating_every_channel_reopens_the_channel_task(
+    db_session: AsyncSession,
+) -> None:
+    """The count is of *active* accounts, so the task tracks whether mail can
+    actually be received rather than whether a row was ever created."""
+    workspace = await workspaces.create_workspace(
+        db_session, name="Acme", slug="acme-setup-task-2", monogram="AC"
+    )
+    await db_session.commit()
+    for account in await channel_accounts.list_for(db_session, workspace.id):
+        account.active = False
+    await db_session.commit()
+
+    tasks = {t.id: t for t in await workspaces.setup_tasks(db_session, workspace.id)}
+
+    assert tasks["channel"].done is False
 
 
 async def test_inviting_the_same_pending_address_twice_conflicts(

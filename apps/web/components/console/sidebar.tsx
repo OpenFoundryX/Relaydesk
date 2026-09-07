@@ -276,7 +276,9 @@ export function Sidebar({
         </div>
       </div>
 
-      <SetupProgress tasks={setupTasks} />
+      {/* Five of the six tasks lead to admin-only pages, so an agent
+          would get a checklist whose next step 404s. */}
+      {isAdmin && <SetupProgress tasks={setupTasks} />}
     </nav>
   );
 }

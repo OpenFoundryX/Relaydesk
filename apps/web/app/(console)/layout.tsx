@@ -34,7 +34,7 @@ export default async function ConsoleLayout({
 
   return (
     <TooltipProvider delayDuration={250}>
-      <OnboardingProvider>
+      <OnboardingProvider isAdmin={admin}>
         <div className="flex h-screen flex-col overflow-hidden">
           <TopBar
             workspaceName={workspace.name}
