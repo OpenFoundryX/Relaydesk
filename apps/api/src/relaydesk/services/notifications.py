@@ -62,3 +62,34 @@ def notify_invite(
         text_body=text,
         html_body=html,
     )
+
+
+def notify_password_reset(email: str, name: str, token: str) -> None:
+    """The reset token is delivered here and nowhere else.
+
+    Same fragment rule as ``notify_invite``, and for the same reason: a URL
+    fragment is never transmitted to any server, so the token cannot reach
+    uvicorn's access log, a proxy log, or a ``Referer`` header. Putting it
+    in a path segment or a query string is the mistake that rule exists to
+    prevent, and it is available again here.
+    """
+    settings = get_settings()
+    url = f"{settings.web_url}/reset-password#{token}"
+    text, html = mail_templates.render(
+        heading="Reset your password",
+        paragraphs=[
+            f"Hi {name},",
+            "Somebody asked to reset the password for this Relaydesk account.",
+            f"The link expires in {settings.password_reset_ttl_minutes} minutes "
+            "and can be used once. If it wasn't you, ignore this message — "
+            "your password has not changed.",
+        ],
+        action_label="Choose a new password",
+        action_url=url,
+    )
+    queue.enqueue_system_email(
+        to=email,
+        subject="Reset your Relaydesk password",
+        text_body=text,
+        html_body=html,
+    )
