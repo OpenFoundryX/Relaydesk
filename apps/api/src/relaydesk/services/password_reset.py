@@ -24,9 +24,12 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relaydesk.config import get_settings
+from relaydesk.errors import NotFound
 from relaydesk.models.membership import Membership, MembershipStatus
 from relaydesk.models.password_reset import PasswordReset
+from relaydesk.models.session import Session
 from relaydesk.models.user import User
+from relaydesk.security.passwords import hash_password
 from relaydesk.security.tokens import generate_token, hash_token
 from relaydesk.services import notifications, ratelimit
 
@@ -107,3 +110,49 @@ async def request(session: AsyncSession, email: str, ip_bucket: str) -> None:
     await session.commit()
 
     notifications.notify_password_reset(user.email, user.name, token)
+
+
+INVALID_LINK = "This reset link is not valid."
+
+
+async def confirm(session: AsyncSession, token: str, password: str) -> None:
+    """Spend a reset token.
+
+    A missing row and an expired one raise the same message, per decision
+    D3: a consumed row is deleted, so there is nothing left to distinguish
+    a replay from a token that never existed, and no reason to confirm to a
+    caller that a given token used to be valid.
+    """
+    row = await session.scalar(
+        sa.select(PasswordReset).where(PasswordReset.token_hash == hash_token(token))
+    )
+    if row is None or row.expires_at <= datetime.now(UTC):
+        raise NotFound(INVALID_LINK)
+
+    user = await session.get(User, row.user_id)
+    if user is None:
+        raise NotFound(INVALID_LINK)
+
+    user.password_hash = hash_password(password)
+
+    # Forgetting a password and guessing at one are the same activity from
+    # `authenticate`'s point of view, so the user most likely to arrive
+    # here is disproportionately likely to have tripped the five-attempt
+    # lockout on the way. Leaving it set produces the worst outcome
+    # available: a correct, just-chosen password refused with the same
+    # BAD_CREDENTIALS message for the next fifteen minutes.
+    user.failed_login_count = 0
+    user.locked_until = None
+
+    await session.delete(row)
+
+    # Decision D5. This logs the user out of devices they are using
+    # happily, which is a real cost on a flow reached through simple
+    # forgetfulness. It is paid because the server cannot tell that case
+    # from a compromise, and the two are asymmetric: forgetfulness costs a
+    # few sign-ins with a password the user just chose, whereas not
+    # revoking lets an attacker's session survive the exact action taken to
+    # evict them -- for up to `session_ttl_days`, which defaults to 30.
+    await session.execute(sa.delete(Session).where(Session.user_id == user.id))
+
+    await session.commit()

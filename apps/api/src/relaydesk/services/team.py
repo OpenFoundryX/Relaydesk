@@ -273,8 +273,8 @@ async def accept_invite(
       to. Adopt the row: overwrite ``name`` and ``password_hash`` from the
       accepter's input. A pre-existing row here is a released ex-member, or
       an address an earlier admin minted-and-abandoned; in both cases the
-      real invitee's typed password has to win, because there is no
-      password-reset flow to recover from it losing.
+      real invitee's typed password has to win: nobody else is relying on
+      the row, and the alternative silently discards what they typed.
     * **Claimed** — the user holds an active membership. Refuse with
       ``Conflict``. This is what protects a real account (the Google-only
       member of another workspace), and it is also what enforces the
@@ -282,6 +282,13 @@ async def accept_invite(
       written against: ``active_membership`` resolves a user's workspace
       with no tiebreak, so a second active membership would make login pick
       one arbitrarily.
+
+    Slice 5 added a password-reset flow (see
+    ``docs/superpowers/specs/2026-09-07-password-reset-design.md``). An
+    earlier version of this docstring justified the adoption above partly
+    on there being no way to recover from the wrong password winning. That
+    is no longer true, and it was never the load-bearing reason — the
+    squatting defense below is. The behaviour is unchanged.
 
     Distinguishing on *pre-existing* instead would leave the address
     squattable: mint an invite for an address with no account, accept it
