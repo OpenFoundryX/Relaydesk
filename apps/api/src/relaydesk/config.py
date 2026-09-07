@@ -13,6 +13,16 @@ class Settings(BaseSettings):
     session_ttl_days: int = 30
     login_max_attempts: int = 5
     login_lockout_minutes: int = 15
+    # A reset link is a password in transit. One hour is long enough to
+    # find the mail and short enough that a link left sitting in an inbox
+    # or a mail archive stops being useful quickly.
+    password_reset_ttl_minutes: int = 60
+    # Both caps are deliberately low. They are what bounds the residual
+    # timing channel documented in section 6.2 of the design: telling two
+    # addresses apart through a noisy timing difference needs repeated
+    # samples per address, and these deny the sample volume.
+    password_reset_ip_hourly_cap: int = 5
+    password_reset_email_hourly_cap: int = 3
     google_client_id: str = ""
     google_client_secret: str = ""
     web_url: str = "http://localhost:3000"

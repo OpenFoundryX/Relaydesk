@@ -28,6 +28,7 @@ from relaydesk.models.message import (
     MessageDirection,
     MessageRole,
 )
+from relaydesk.models.password_reset import PasswordReset
 from relaydesk.models.poll_state import PollState
 from relaydesk.models.rate_limit import RateLimitHit
 from relaydesk.models.raw_message import RawMessage, RawMessageState
@@ -63,6 +64,7 @@ __all__ = [
     "Message",
     "MessageDirection",
     "MessageRole",
+    "PasswordReset",
     "PollState",
     "Priority",
     "RateLimitHit",
