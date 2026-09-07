@@ -35,8 +35,12 @@ def notify_assignment(
 def notify_invite(
     email: str, token: str, workspace_name: str, inviter_name: str
 ) -> None:
-    """The token is delivered here and nowhere else — never in a response
-    body, never in a log line.
+    """The token reaches the user here and nowhere else — never in a response
+    body, never in a log line. (It also transits the Celery broker message
+    body between `queue.enqueue_system_email` and the worker that sends it —
+    that hop is trusted infrastructure, not something outside it, and is
+    called out here so "nowhere else" is read as "no user-facing surface
+    else", not literally.)
 
     The token goes in the URL *fragment* (``#token``), not a path segment or
     query string: a fragment is never sent to any server, including the web
@@ -65,7 +69,9 @@ def notify_invite(
 
 
 def notify_password_reset(email: str, name: str, token: str) -> None:
-    """The reset token is delivered here and nowhere else.
+    """The reset token reaches the user here and nowhere else. (Same caveat
+    as ``notify_invite``: it also transits the Celery broker message body on
+    the way to being sent, which is not a user-facing surface.)
 
     Same fragment rule as ``notify_invite``, and for the same reason: a URL
     fragment is never transmitted to any server, so the token cannot reach

@@ -41,6 +41,9 @@ This slice gives all three a shared HTML layout.
 - `services/password_reset.py`: request and confirm.
 - Two routes on `api/auth.py`, rate limited per IP and per address.
 - Session revocation and lockout clearing on a completed reset.
+- `accept_invite` revoking an adopted row's outstanding reset tokens, so an
+  ex-occupant's still-live token cannot be spent to take the row back after
+  the address is reassigned. See section 3, amendment A1.
 - `notify_password_reset` alongside the two existing system emails.
 - One shared HTML layout applied to all three system emails.
 - Web: `forgot-password`, `reset-password`, and the link from login.
@@ -64,17 +67,34 @@ This slice gives all three a shared HTML layout.
 
 ## 3. Amendments to slice 1's spec
 
-**A1 — the invite-adoption rationale.** `accept_invite`'s docstring gives
-two reasons for overwriting `name` and `password_hash` on an *unclaimed*
-user row: the squatting defense, and "there is no password-reset flow to
-recover from it losing."
+**A1 — the invite-adoption rationale, and a behaviour change it exposed.**
+`accept_invite`'s docstring gave two reasons for overwriting `name` and
+`password_hash` on an *unclaimed* user row: the squatting defense, and
+"there is no password-reset flow to recover from it losing."
 
-The second clause becomes false with this slice. **The behaviour does not
-change** — adopting unclaimed rows is still correct, and the squatting
-defense laid out in the same docstring is the real and sufficient reason
-for it. Only the stated rationale is wrong, and leaving it would leave a
-future reader believing a recovery path is missing when it is not. The
-docstring is corrected as part of this slice's work, not left to drift.
+The second clause becomes false with this slice, and the docstring is
+corrected as part of this slice's work, not left to drift. The squatting
+defense laid out in the same docstring remains the real and sufficient
+reason adoption itself is correct.
+
+Correcting the rationale surfaced a real gap the old wording had been
+quietly justifying: a reset token can only be minted for a user with an
+active membership (`password_reset.request` refuses one for anyone
+without), so any live token still sitting on an *unclaimed* row was minted
+while that row's *previous* occupant held the membership that has since
+lapsed. Before this slice existed, that was harmless — there was no way to
+spend the token at all. Once `password_reset.confirm` exists, that same
+token becomes spendable, and it authenticates as the address, not the
+person: an ex-member's reset link, requested before they left and never
+used, would still work after their address is reassigned to someone new —
+letting the former occupant take the row back out from under its new
+owner. Ordinary address reuse (an employee leaves, the address is
+reassigned), not an exotic attack.
+
+`accept_invite` now closes this: adopting an unclaimed row also deletes
+that user's outstanding `password_resets` rows, the same way accepting
+already deletes the spent invite. See `services/team.py` and its test
+coverage for the shipped implementation.
 
 ## 4. Decisions
 
@@ -312,10 +332,22 @@ pair:
 
 ```python
 def render(
-    *, heading: str, body: str, action_label: str | None = None,
-    action_url: str | None = None, footer: str | None = None,
+    *, heading: str, paragraphs: Sequence[str], action_label: str | None = None,
+    action_url: str | None = None,
 ) -> tuple[str, str]:
 ```
+
+`paragraphs` rather than a single `body` string: callers build up multiple
+distinct lines (`notify_password_reset`'s greeting, explanation, and
+expiry notice are three separate paragraphs, not one blob), and generating
+both the HTML `<p>` tags and the plain-text join from the same sequence is
+what keeps the two parts from drifting apart -- see the module docstring.
+
+There is no `footer` parameter. The footer (`Relaydesk`) is hard-coded in
+`render` itself rather than threaded through from every caller: D2 already
+rules out per-workspace branding, so there is nothing a caller could
+meaningfully vary it to, and a parameter with one value everywhere just
+adds a way for a future caller to accidentally say something else there.
 
 Constraints, all of them chosen for deliverability and for not looking like
 a phishing attempt: inline CSS only, no `<style>` block, no remote images,
@@ -380,6 +412,11 @@ next slice and are recorded here so they are not rediscovered:
   section 6.1.
 - No mail to an account with no password (D1) and none to an account that
   cannot sign in.
+- Adopting an unclaimed user row on invite acceptance revokes that row's
+  outstanding reset tokens, closing the takeover where an ex-member's
+  token — minted before their membership lapsed, never used — would
+  otherwise still be spendable once the address is reassigned to a new
+  invitee. See section 3, amendment A1.
 
 ## 13. Testing
 
