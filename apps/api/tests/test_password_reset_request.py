@@ -154,3 +154,67 @@ async def test_two_ip_buckets_do_not_share_an_allowance(db_session, outbox) -> N
         )
 
     assert len(outbox) == 10
+
+
+async def test_ip_refusal_does_not_charge_the_victims_address_bucket(
+    db_session, outbox
+) -> None:
+    """Regression test for the IP-first ordering in ``request``. The two
+    ``ratelimit.check`` calls must stay separate and sequential: folding
+    them into one ``all(...)`` (or any form that evaluates both regardless
+    of the first result) would charge the address bucket even when the IP
+    check alone refuses the call, letting a caller who has exhausted their
+    own IP allowance keep burning down a chosen victim's address allowance
+    instead -- a denial of service against that victim.
+
+    The three other rate-limit tests in this file pass identically whether
+    the two checks are ordered this way or swapped; only this test tells
+    the two apart.
+    """
+    workspace = await make_workspace(db_session)
+    for index in range(5):
+        await make_member(db_session, workspace, email=f"user{index}@example.com")
+    victim = await make_member(db_session, workspace, email="victim@example.com")
+    await db_session.commit()
+
+    # Charge the IP bucket to its cap of 5 with five other users.
+    for index in range(5):
+        await password_reset.request(db_session, f"user{index}@example.com", IP)
+
+    # The 6th call from this IP names the victim and must be refused by the
+    # IP check before the address bucket is ever touched.
+    await password_reset.request(db_session, victim.email, IP)
+
+    sent_before_the_fresh_ip = len(outbox)
+
+    # A different IP, far under its own cap, isolates what the address
+    # bucket actually saw: three requests succeed here only if the refused
+    # call above left the victim's address allowance at zero.
+    for _ in range(3):
+        await password_reset.request(db_session, victim.email, "198.51.100.4")
+
+    assert len(outbox) - sent_before_the_fresh_ip == 3
+
+
+async def test_the_address_cap_treats_case_variants_as_one_bucket(
+    db_session, outbox
+) -> None:
+    """``User.email`` is CITEXT, so ``Nilesh@Example.com`` and
+    ``nilesh@example.com`` resolve to the same account -- all four
+    spellings below name it. The rate-limit key has to agree, via
+    ``request``'s ``.lower()`` normalization, or an attacker could multiply
+    the per-address cap by the number of case variants they bother to
+    type.
+    """
+    await _member(db_session, email="nilesh@example.com")
+    await db_session.commit()
+
+    for address in (
+        "nilesh@example.com",
+        "Nilesh@Example.com",
+        "NILESH@EXAMPLE.COM",
+        "nilesh@example.com",
+    ):
+        await password_reset.request(db_session, address, IP)
+
+    assert len(outbox) == 3
