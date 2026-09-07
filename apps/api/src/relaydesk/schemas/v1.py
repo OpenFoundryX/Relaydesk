@@ -17,9 +17,9 @@ import json
 from datetime import datetime
 from typing import Annotated, Any
 
-from pydantic import AfterValidator, BaseModel, ConfigDict
+from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field
 
-from relaydesk.models import Contact, Conversation, Message
+from relaydesk.models import Contact, Conversation, Message, Priority
 
 METADATA_MAX_BYTES = 8192
 METADATA_MAX_KEYS = 50
@@ -86,6 +86,22 @@ class MessageOut(V1Model):
     author_name: str
     body: str
     sent_at: datetime
+
+
+class ConversationCreate(V1Model):
+    """The body ``components/settings/code-sample.tsx`` publishes.
+
+    ``customer_email`` and ``message`` are required; everything else is
+    optional, exactly as the sample's own description says.
+    """
+
+    customer_email: EmailStr
+    message: str = Field(min_length=1)
+    customer_name: str = ""
+    subject: str = ""
+    priority: Priority = Priority.medium
+    external_id: str | None = Field(default=None, max_length=200)
+    metadata: Metadata = Field(default_factory=dict)
 
 
 def contact_out(contact: Contact) -> ContactOut:

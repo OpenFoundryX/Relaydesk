@@ -1,24 +1,26 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response, status
 from pydantic import AwareDatetime
 
 from relaydesk.api.deps import DbSession
 from relaydesk.api.v1.deps import ApiPrincipal, requires
 from relaydesk.models import ApiKeyScope, ConversationStatus, Priority
 from relaydesk.schemas.v1 import (
+    ConversationCreate,
     ConversationOut,
     ConversationPage,
     MessageOut,
     conversation_out,
     message_out,
 )
-from relaydesk.services import conversations
+from relaydesk.services import conversations, tickets
 
 router = APIRouter()
 
 Reader = Annotated[ApiPrincipal, Depends(requires(ApiKeyScope.conversations_read))]
+Writer = Annotated[ApiPrincipal, Depends(requires(ApiKeyScope.conversations_write))]
 
 
 @router.get("", response_model=ConversationPage)
@@ -52,6 +54,36 @@ async def list_route(
     return ConversationPage(
         data=[conversation_out(row) for row in rows], next_cursor=next_cursor
     )
+
+
+@router.post("", response_model=ConversationOut, status_code=status.HTTP_201_CREATED)
+async def create_route(
+    payload: ConversationCreate,
+    principal: Writer,
+    session: DbSession,
+    response: Response,
+) -> ConversationOut:
+    """Open a ticket.
+
+    Answers 201 for a new conversation and 200 when ``external_id`` matched
+    one this workspace already has -- so a caller retrying a batch can tell
+    what it actually created without the retry costing anything.
+    """
+    conversation, created = await tickets.create_from_api(
+        session,
+        principal.workspace_id,
+        email=payload.customer_email,
+        name=payload.customer_name,
+        subject=payload.subject,
+        message=payload.message,
+        priority=payload.priority,
+        external_id=payload.external_id,
+        metadata=payload.metadata,
+        actor=principal.actor,
+    )
+    if not created:
+        response.status_code = status.HTTP_200_OK
+    return conversation_out(conversation)
 
 
 @router.get("/{conversation_id}", response_model=ConversationOut)
