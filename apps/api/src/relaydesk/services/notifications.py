@@ -2,15 +2,21 @@ from relaydesk.config import get_settings
 from relaydesk.models.conversation import Conversation
 from relaydesk.models.user import User
 from relaydesk.services import mail_templates, queue
+from relaydesk.services.actors import Actor
 from relaydesk.services.team import INVITE_TTL
 
 
 def notify_assignment(
-    conversation: Conversation, assignee: User, actor: User
+    conversation: Conversation, assignee: User, actor: Actor
 ) -> None:
     """Fire-and-forget. Never raises into the caller's request: an email that
-    fails to enqueue must not fail the assignment itself."""
-    if assignee.id == actor.id or not assignee.notify_on_assignment:
+    fails to enqueue must not fail the assignment itself.
+
+    ``actor.user_id`` is ``None`` when an API key made the assignment, so the
+    self-assignment suppression below correctly does not fire: nobody
+    assigned it to themselves, and the assignee genuinely wants to know.
+    """
+    if assignee.id == actor.user_id or not assignee.notify_on_assignment:
         return
 
     customer = conversation.contact.name if conversation.contact else "a customer"

@@ -1,4 +1,5 @@
 from relaydesk.services import mail_templates, notifications
+from relaydesk.services.actors import Actor
 from tests.factories import make_conversation, make_member, make_workspace
 
 
@@ -98,7 +99,7 @@ async def test_an_assignment_email_has_both_parts(db_session, outbox) -> None:
     conversation = await make_conversation(db_session, workspace)
     await db_session.refresh(conversation, ["contact"])
 
-    notifications.notify_assignment(conversation, assignee, actor)
+    notifications.notify_assignment(conversation, assignee, Actor.for_user(actor))
 
     assert len(outbox) == 1
     assert outbox[0]["to"] == "sara@example.com"

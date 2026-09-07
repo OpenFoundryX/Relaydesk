@@ -36,6 +36,11 @@ class ActivityEvent(UUIDMixin, TimestampMixin, Base):
     actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    actor_api_key_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("api_keys.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     actor_name: Mapped[str] = mapped_column(String(160), nullable=False)
     kind: Mapped[ActivityKind] = mapped_column(
         Enum(

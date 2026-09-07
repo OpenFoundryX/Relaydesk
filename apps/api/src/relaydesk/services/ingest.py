@@ -25,6 +25,7 @@ from relaydesk.models.conversation import Channel, Conversation, ConversationSta
 from relaydesk.models.message import Message, MessageDirection, MessageRole
 from relaydesk.models.raw_message import RawMessage, RawMessageState
 from relaydesk.services import attachments, channel_accounts, contacts, conversations
+from relaydesk.services.actors import Actor
 
 logger = logging.getLogger(__name__)
 
@@ -260,11 +261,10 @@ async def _handle_bounce(
     conversations.record(
         session,
         conversation,
-        None,
+        Actor(name="Mail delivery"),
         ActivityKind.status,
         "reported",
         "a delivery failure",
-        actor_name="Mail delivery",
     )
     return RawMessageState.ingested
 
@@ -426,11 +426,10 @@ async def _ingest_routed(session: AsyncSession, row: RawMessage) -> RawMessageSt
         conversations.record(
             session,
             conversation,
-            None,
+            Actor(name=contact.name),
             ActivityKind.created,
             "opened this",
             contact.name,
-            actor_name=contact.name,
         )
     elif conversation.status in REOPENING_STATUSES:
         conversation.status = ConversationStatus.open

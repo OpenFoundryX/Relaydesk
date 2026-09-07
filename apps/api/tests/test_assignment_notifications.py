@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relaydesk.services import conversations
+from relaydesk.services.actors import Actor
 from tests.factories import make_conversation, make_member, make_workspace
 
 
@@ -13,7 +14,7 @@ async def test_assigning_to_someone_else_emails_them(
     conversation = await make_conversation(db_session, workspace, subject="Refund")
 
     await conversations.set_assignee(
-        db_session, workspace.id, conversation.id, other.id, actor
+        db_session, workspace.id, conversation.id, other.id, Actor.for_user(actor)
     )
 
     assert len(outbox) == 1
@@ -31,7 +32,7 @@ async def test_assigning_to_yourself_emails_nobody(
     conversation = await make_conversation(db_session, workspace)
 
     await conversations.set_assignee(
-        db_session, workspace.id, conversation.id, actor.id, actor
+        db_session, workspace.id, conversation.id, actor.id, Actor.for_user(actor)
     )
 
     assert outbox == []
@@ -48,7 +49,7 @@ async def test_the_preference_is_honoured(
     conversation = await make_conversation(db_session, workspace)
 
     await conversations.set_assignee(
-        db_session, workspace.id, conversation.id, other.id, actor
+        db_session, workspace.id, conversation.id, other.id, Actor.for_user(actor)
     )
 
     assert outbox == []
@@ -62,12 +63,12 @@ async def test_unassigning_emails_nobody(
     other = await make_member(db_session, workspace, email="sara@example.com")
     conversation = await make_conversation(db_session, workspace)
     await conversations.set_assignee(
-        db_session, workspace.id, conversation.id, other.id, actor
+        db_session, workspace.id, conversation.id, other.id, Actor.for_user(actor)
     )
     outbox.clear()
 
     await conversations.set_assignee(
-        db_session, workspace.id, conversation.id, None, actor
+        db_session, workspace.id, conversation.id, None, Actor.for_user(actor)
     )
 
     assert outbox == []

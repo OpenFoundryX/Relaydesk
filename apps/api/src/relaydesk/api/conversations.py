@@ -22,6 +22,7 @@ from relaydesk.schemas.conversation import (
     message_out,
 )
 from relaydesk.services import conversations
+from relaydesk.services.actors import Actor
 
 router = APIRouter()
 
@@ -96,7 +97,11 @@ async def bulk_status_route(
 ) -> None:
     new_status = _parsed_status(payload.status)
     await conversations.bulk_set_status(
-        session, scope.workspace_id, payload.ids, new_status, scope.user
+        session,
+        scope.workspace_id,
+        payload.ids,
+        new_status,
+        Actor.for_user(scope.user),
     )
 
 
@@ -128,11 +133,19 @@ async def patch_conversation(
     conversation = None
     if new_status is not None:
         conversation = await conversations.set_status(
-            session, scope.workspace_id, conversation_id, new_status, scope.user
+            session,
+            scope.workspace_id,
+            conversation_id,
+            new_status,
+            Actor.for_user(scope.user),
         )
     if new_priority is not None:
         conversation = await conversations.set_priority(
-            session, scope.workspace_id, conversation_id, new_priority, scope.user
+            session,
+            scope.workspace_id,
+            conversation_id,
+            new_priority,
+            Actor.for_user(scope.user),
         )
     if "assignee_id" in payload.model_fields_set:
         conversation = await conversations.set_assignee(
@@ -140,7 +153,7 @@ async def patch_conversation(
             scope.workspace_id,
             conversation_id,
             payload.assignee_id,
-            scope.user,
+            Actor.for_user(scope.user),
         )
     if conversation is None:
         conversation = await conversations.get_conversation(
@@ -186,7 +199,11 @@ async def add_reply_route(
     conversation_id: uuid.UUID, payload: ReplyRequest, scope: Scope, session: DbSession
 ) -> ConversationOut:
     conversation = await conversations.add_reply(
-        session, scope.workspace_id, conversation_id, payload.body, scope.user
+        session,
+        scope.workspace_id,
+        conversation_id,
+        payload.body,
+        Actor.for_user(scope.user),
     )
     if payload.resolve:
         conversation = await conversations.set_status(
@@ -194,7 +211,7 @@ async def add_reply_route(
             scope.workspace_id,
             conversation_id,
             ConversationStatus.resolved,
-            scope.user,
+            Actor.for_user(scope.user),
         )
     return conversation_out(conversation, scope.workspace.timezone)
 
@@ -211,7 +228,11 @@ async def add_label_route(
     conversation_id: uuid.UUID, label_id: uuid.UUID, scope: Scope, session: DbSession
 ) -> ConversationOut:
     conversation = await conversations.add_label(
-        session, scope.workspace_id, conversation_id, label_id, scope.user
+        session,
+        scope.workspace_id,
+        conversation_id,
+        label_id,
+        Actor.for_user(scope.user),
     )
     return conversation_out(conversation, scope.workspace.timezone)
 
@@ -221,6 +242,10 @@ async def remove_label_route(
     conversation_id: uuid.UUID, label_id: uuid.UUID, scope: Scope, session: DbSession
 ) -> ConversationOut:
     conversation = await conversations.remove_label(
-        session, scope.workspace_id, conversation_id, label_id, scope.user
+        session,
+        scope.workspace_id,
+        conversation_id,
+        label_id,
+        Actor.for_user(scope.user),
     )
     return conversation_out(conversation, scope.workspace.timezone)

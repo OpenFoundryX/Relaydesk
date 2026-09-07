@@ -15,6 +15,7 @@ from relaydesk.models.message import (
 )
 from relaydesk.models.workspace import Workspace
 from relaydesk.services import channel_accounts, conversations, mailer, outbound, queue
+from relaydesk.services.actors import Actor
 from relaydesk.worker.tasks.mail import send_conversation_message
 from tests.factories import make_conversation, make_member, make_workspace
 
@@ -38,7 +39,7 @@ async def _reply(session, subject="Refund please"):
     # router applies that separately — and returns the Conversation, so the
     # message is read back here.
     await conversations.add_reply(
-        session, workspace.id, conversation.id, "On its way.", member
+        session, workspace.id, conversation.id, "On its way.", Actor.for_user(member)
     )
     message = await session.scalar(
         sa.select(Message)
@@ -161,7 +162,11 @@ async def test_a_broker_failure_during_add_reply_does_not_propagate(
 
     with caplog.at_level(logging.WARNING):
         await conversations.add_reply(
-            db_session, workspace.id, conversation.id, "On its way.", member
+            db_session,
+            workspace.id,
+            conversation.id,
+            "On its way.",
+            Actor.for_user(member),
         )
 
     assert "relaydesk.send_conversation_message" in caplog.text
@@ -203,7 +208,7 @@ async def test_a_reply_without_a_channel_account_omits_the_c_tag_and_logs(
         external_id="<customer@example.com>",
     )
     await conversations.add_reply(
-        db_session, workspace.id, conversation.id, "On its way.", member
+        db_session, workspace.id, conversation.id, "On its way.", Actor.for_user(member)
     )
     message = await db_session.scalar(
         sa.select(Message).where(
@@ -252,7 +257,7 @@ async def test_a_reply_uses_the_address_the_customer_actually_wrote_to(
     )
 
     await conversations.add_reply(
-        db_session, workspace.id, conversation.id, "On its way.", member
+        db_session, workspace.id, conversation.id, "On its way.", Actor.for_user(member)
     )
     message = await db_session.scalar(
         sa.select(Message).where(
@@ -286,7 +291,11 @@ async def test_a_reply_falls_back_to_the_oldest_active_account_with_no_inbound(
     )
 
     await conversations.add_reply(
-        db_session, workspace.id, conversation.id, "Just checking in.", member
+        db_session,
+        workspace.id,
+        conversation.id,
+        "Just checking in.",
+        Actor.for_user(member),
     )
     message = await db_session.scalar(
         sa.select(Message).where(
