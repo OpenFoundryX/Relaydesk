@@ -4,10 +4,10 @@ import pytest
 import sqlalchemy as sa
 
 from relaydesk.errors import NotFound, Unauthorized
-from relaydesk.models import PasswordReset
+from relaydesk.models import Membership, PasswordReset, Role
 from relaydesk.models import Session as SessionRow
 from relaydesk.security.passwords import verify_password
-from relaydesk.services import auth, password_reset
+from relaydesk.services import auth, password_reset, team
 from tests.factories import make_member, make_workspace
 
 IP = "203.0.113.9"
@@ -63,8 +63,14 @@ async def test_an_expired_token_is_refused(db_session, outbox) -> None:
     row.expires_at = datetime.now(UTC) - timedelta(seconds=1)
     await db_session.commit()
 
-    with pytest.raises(NotFound):
+    with pytest.raises(NotFound) as expired:
         await password_reset.confirm(db_session, token, "a-brand-new-password")
+
+    # Pinned to the exact message, not just any NotFound: a distinct
+    # EXPIRED_LINK message on this branch would still satisfy the replay
+    # test above (that one compares two never-existed rows), so the
+    # missing/expired identity has to be checked here directly.
+    assert str(expired.value) == password_reset.INVALID_LINK
 
 
 async def test_confirming_clears_the_login_lockout(db_session, outbox) -> None:
@@ -120,7 +126,7 @@ async def test_confirming_revokes_every_session(db_session, outbox) -> None:
 
 async def test_one_users_reset_does_not_touch_another(db_session, outbox) -> None:
     workspace = await make_workspace(db_session)
-    nilesh = await make_member(db_session, workspace, email="nilesh@example.com")
+    await make_member(db_session, workspace, email="nilesh@example.com")
     sara = await make_member(
         db_session, workspace, email="sara@example.com", name="Sara Vidal"
     )
@@ -129,6 +135,11 @@ async def test_one_users_reset_does_not_touch_another(db_session, outbox) -> Non
     sara_membership = await auth.active_membership(db_session, sara, workspace.id)
     await auth.create_session(db_session, sara, sara_membership)
     sara_hash = sara.password_hash
+
+    # An unscoped `sa.delete(PasswordReset)` on confirm would still pass
+    # every other test in this file, since none of them mints a second
+    # user's token. Minting one here is what would catch it.
+    await _issue(db_session, outbox, email="sara@example.com")
 
     token = await _issue(db_session, outbox)
     await password_reset.confirm(db_session, token, "a-brand-new-password")
@@ -141,4 +152,51 @@ async def test_one_users_reset_does_not_touch_another(db_session, outbox) -> Non
         .where(SessionRow.user_id == sara.id)
     )
     assert remaining == 1
-    assert nilesh.id != sara.id
+    sara_resets = await db_session.scalar(
+        sa.select(sa.func.count())
+        .select_from(PasswordReset)
+        .where(PasswordReset.user_id == sara.id)
+    )
+    assert sara_resets == 1
+
+
+async def test_accepting_an_invite_revokes_a_live_reset_on_the_adopted_row(
+    db_session, outbox
+) -> None:
+    """Finding 1: an unclaimed row can carry a reset token that is still
+    live -- it was minted while the row's previous occupant held a
+    membership, and `request()` never re-checks that once the token
+    exists. If accepting an invite adopted the row without revoking that
+    token, the previous occupant could spend it after the fact and take
+    the row right back from whoever just accepted the invite for it. This
+    is ordinary address reuse (an employee leaves, their address is
+    reassigned), not an exotic attack."""
+    workspace = await make_workspace(db_session)
+    admin = await make_member(
+        db_session, workspace, email="admin@example.com", role=Role.admin
+    )
+    nilesh = await make_member(db_session, workspace, email="nilesh@example.com")
+    await db_session.commit()
+
+    token = await _issue(db_session, outbox)
+
+    # Release nilesh's membership, leaving the row unclaimed -- the same
+    # state `accept_invite` treats as adoptable.
+    await db_session.execute(
+        sa.delete(Membership).where(Membership.user_id == nilesh.id)
+    )
+    await db_session.commit()
+
+    _invite, invite_token = await team.create_invite(
+        db_session, workspace.id, "nilesh@example.com", Role.agent, admin.id
+    )
+    accepted, _membership = await team.accept_invite(
+        db_session, invite_token, "New Nilesh", "accepter-chosen-password"
+    )
+    assert accepted.id == nilesh.id
+
+    with pytest.raises(NotFound):
+        await password_reset.confirm(db_session, token, "attacker-chosen-password")
+
+    await db_session.refresh(accepted)
+    assert verify_password("accepter-chosen-password", accepted.password_hash)

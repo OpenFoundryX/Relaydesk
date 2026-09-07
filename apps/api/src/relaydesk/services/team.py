@@ -7,7 +7,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relaydesk.errors import Conflict, NotFound
-from relaydesk.models import Invite, Membership, MembershipStatus, Role, User
+from relaydesk.models import (
+    Invite,
+    Membership,
+    MembershipStatus,
+    PasswordReset,
+    Role,
+    User,
+)
 from relaydesk.security.passwords import hash_password
 from relaydesk.security.tokens import generate_token, hash_token
 
@@ -288,7 +295,11 @@ async def accept_invite(
     earlier version of this docstring justified the adoption above partly
     on there being no way to recover from the wrong password winning. That
     is no longer true, and it was never the load-bearing reason — the
-    squatting defense below is. The behaviour is unchanged.
+    squatting defense below is. The adoption rule itself is unchanged, but
+    adoption now also revokes any outstanding reset token on the row: a
+    token can only have been minted while the row still had an active
+    membership, so it belongs to whoever held that membership, not to
+    whoever adopts the row after it lapses.
 
     Distinguishing on *pre-existing* instead would leave the address
     squattable: mint an invite for an address with no account, accept it
@@ -330,6 +341,16 @@ async def accept_invite(
             user.name = name
             user.monogram = monogram_for(name)
             user.password_hash = hash_password(password)
+            # A row is only unclaimed here because it has no active
+            # membership, and `password_reset.request` refuses to mint a
+            # token for a user with none. So any reset row still on this
+            # user was minted while the *previous* occupant held the
+            # membership, and must not survive into the new occupant's
+            # account -- otherwise the previous occupant could later spend
+            # it to take over the row this accepter just adopted.
+            await session.execute(
+                sa.delete(PasswordReset).where(PasswordReset.user_id == user.id)
+            )
 
         membership = Membership(
             workspace_id=invite.workspace_id,
