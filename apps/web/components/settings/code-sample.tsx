@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const samples: Record<string, string> = {
   cURL: `curl -X POST https://api.relaydesk.dev/v1/conversations \\
-  -H "Authorization: Bearer rd_live_your_key_here" \\
+  -H "Authorization: Bearer rd_your_key_here" \\
   -H "Content-Type: application/json" \\
   -d '{
     "customer_email": "customer@example.com",
@@ -22,7 +22,7 @@ const samples: Record<string, string> = {
 
 httpx.post(
     "https://api.relaydesk.dev/v1/conversations",
-    headers={"Authorization": "Bearer rd_live_your_key_here"},
+    headers={"Authorization": "Bearer rd_your_key_here"},
     json={
         "customer_email": "customer@example.com",
         "customer_name": "Priya Raman",
@@ -36,7 +36,7 @@ httpx.post(
   "Node.js": `await fetch("https://api.relaydesk.dev/v1/conversations", {
   method: "POST",
   headers: {
-    Authorization: "Bearer rd_live_your_key_here",
+    Authorization: "Bearer rd_your_key_here",
     "Content-Type": "application/json",
   },
   body: JSON.stringify({
@@ -64,7 +64,7 @@ Net::HTTP.post(
     external_id: "ticket-123",
     metadata: { order_id: "ord_456", plan: "growth" }
   }.to_json,
-  "Authorization" => "Bearer rd_live_your_key_here",
+  "Authorization" => "Bearer rd_your_key_here",
   "Content-Type" => "application/json"
 )`,
 };

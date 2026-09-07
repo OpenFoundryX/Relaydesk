@@ -1,5 +1,4 @@
 import type {
-  ApiKey,
   DiscordAccount,
   ImportSource,
   Integration,
@@ -47,23 +46,6 @@ const snippetVariables = [
   "{{ticket.subject}}",
   "{{agent.name}}",
   "{{workspace.name}}",
-];
-
-const apiKeys: ApiKey[] = [
-  {
-    id: "key_live_1",
-    name: "Production ingest",
-    prefix: "rd_live_7f2a",
-    createdAt: "2026-07-14",
-    lastUsedAt: "2026-08-30",
-  },
-  {
-    id: "key_test_1",
-    name: "Staging",
-    prefix: "rd_test_be91",
-    createdAt: "2026-08-02",
-    lastUsedAt: null,
-  },
 ];
 
 const webhooks: Webhook[] = [
@@ -198,9 +180,6 @@ export async function getSnippets(): Promise<Snippet[]> {
 }
 export async function getSnippetVariables(): Promise<string[]> {
   return snippetVariables;
-}
-export async function getApiKeys(): Promise<ApiKey[]> {
-  return apiKeys;
 }
 export async function getWebhooks(): Promise<Webhook[]> {
   return webhooks;

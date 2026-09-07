@@ -156,12 +156,26 @@ export interface Snippet {
   content: string;
 }
 
+export type ApiKeyScope =
+  | "conversations:read"
+  | "conversations:write"
+  | "messages:write"
+  | "contacts:read"
+  | "labels:read"
+  | "labels:write";
+
 export interface ApiKey {
   id: string;
   name: string;
   prefix: string;
+  scopes: ApiKeyScope[];
   createdAt: string;
   lastUsedAt: string | null;
+}
+
+export interface ApiKeyCreated {
+  token: string;
+  key: ApiKey;
 }
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";

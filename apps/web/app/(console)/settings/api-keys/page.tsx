@@ -2,9 +2,10 @@ import { KeyRound } from "lucide-react";
 
 import { PageHeader } from "@/components/console/page-header";
 import { SectionEmpty, SettingSection } from "@/components/console/setting-section";
+import { ApiKeyActions } from "@/components/settings/api-key-actions";
 import { ApiKeyDialog } from "@/components/settings/api-key-dialog";
 import { CodeSample } from "@/components/settings/code-sample";
-import { getApiKeys } from "@/lib/mock/settings";
+import { getApiKeys } from "@/lib/api/api-keys";
 import { requireAdmin } from "@/lib/api/workspace";
 
 export const metadata = { title: "API keys" };
@@ -37,12 +38,16 @@ export default async function ApiKeysPage() {
                     <p className="font-mono text-[11px] text-ink-400">
                       {key.prefix}···
                     </p>
+                    <p className="text-[11px] text-ink-500">
+                      {key.scopes.join(" · ")}
+                    </p>
                   </div>
                   <span className="tabular ml-auto shrink-0 text-[12px] text-ink-500">
                     {key.lastUsedAt
-                      ? `Last used ${key.lastUsedAt}`
+                      ? `Last used ${new Date(key.lastUsedAt).toLocaleDateString()}`
                       : "Never used"}
                   </span>
+                  <ApiKeyActions apiKey={key} />
                 </li>
               ))}
             </ul>
