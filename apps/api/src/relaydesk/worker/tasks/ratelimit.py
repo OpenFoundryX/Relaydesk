@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from relaydesk.services import ratelimit
+from relaydesk.services import api_usage, ratelimit
 from relaydesk.worker import bridge
 from relaydesk.worker.app import app
 
@@ -27,3 +27,25 @@ def sweep_rate_limits() -> int:
     table grows forever and its lookup index with it.
     """
     return bridge.run(_sweep())
+
+
+# One minute is the only window ``api_usage.charge`` uses. A day is a
+# deliberately generous multiple: a window this old cannot affect any count,
+# and the margin means a longer window added later does not silently start
+# deleting rows that still matter.
+API_USAGE_RETENTION = timedelta(days=1)
+
+
+async def _sweep_api_usage() -> int:
+    async with bridge.session_scope() as session:
+        return await api_usage.sweep(session, API_USAGE_RETENTION)
+
+
+@app.task(name="relaydesk.sweep_api_usage")
+def sweep_api_usage() -> int:
+    """Drop rate-limit windows too old to count against any limit.
+
+    One row per key per minute is small, but nothing else deletes it, and
+    over a year an active key leaves half a million rows behind.
+    """
+    return bridge.run(_sweep_api_usage())

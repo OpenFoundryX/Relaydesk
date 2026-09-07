@@ -7,6 +7,7 @@ Alembic autogenerates a migration.
 from relaydesk.db.base import Base
 from relaydesk.models.activity import ActivityEvent, ActivityKind
 from relaydesk.models.api_key import ApiKey, ApiKeyScope
+from relaydesk.models.api_usage import ApiKeyUsage
 from relaydesk.models.attachment import Attachment
 from relaydesk.models.channel_account import ChannelAccount, ChannelAccountKind
 from relaydesk.models.contact import Contact
@@ -42,6 +43,7 @@ __all__ = [
     "ActivityKind",
     "ApiKey",
     "ApiKeyScope",
+    "ApiKeyUsage",
     "ArticleStatus",
     "Attachment",
     "Base",

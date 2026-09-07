@@ -40,6 +40,10 @@ app.conf.update(
             "task": "relaydesk.sweep_rate_limits",
             "schedule": 3600.0,
         },
+        "sweep-api-usage": {
+            "task": "relaydesk.sweep_api_usage",
+            "schedule": 3600.0,
+        },
     },
 )
 

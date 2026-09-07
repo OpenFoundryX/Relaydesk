@@ -89,6 +89,12 @@ class Settings(BaseSettings):
     # and multipart framing.
     max_request_bytes: int = 33554432
 
+    # Calls one API key may make per minute. Generous for an integration
+    # syncing tickets, and low enough that a runaway loop is bounded before
+    # it becomes the database's problem. A fixed window, so a caller can see
+    # up to twice this across a boundary -- see the note in migration 0017.
+    api_key_rate_limit_per_minute: int = 120
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
