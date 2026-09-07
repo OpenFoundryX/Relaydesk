@@ -11,6 +11,8 @@ from relaydesk.schemas.v1 import (
     ConversationCreate,
     ConversationOut,
     ConversationPage,
+    ConversationUpdate,
+    MessageCreate,
     MessageOut,
     conversation_out,
     message_out,
@@ -104,3 +106,94 @@ async def list_messages_route(
         session, principal.workspace_id, conversation_id
     )
     return [message_out(row) for row in rows]
+
+
+Replier = Annotated[ApiPrincipal, Depends(requires(ApiKeyScope.messages_write))]
+
+
+@router.patch("/{conversation_id}", response_model=ConversationOut)
+async def update_route(
+    conversation_id: uuid.UUID,
+    payload: ConversationUpdate,
+    principal: Writer,
+    session: DbSession,
+) -> ConversationOut:
+    """Change status, priority or assignee.
+
+    Reads the conversation first so an id belonging to another workspace
+    answers 404 before any field is considered -- including for an empty
+    body, which must not become a way to probe for ids that exist.
+    """
+    conversation = await conversations.get_conversation(
+        session, principal.workspace_id, conversation_id
+    )
+    actor = principal.actor
+    mutated = False
+
+    if payload.status is not None:
+        conversation = await conversations.set_status(
+            session, principal.workspace_id, conversation_id, payload.status, actor
+        )
+        mutated = True
+    if payload.priority is not None:
+        conversation = await conversations.set_priority(
+            session, principal.workspace_id, conversation_id, payload.priority, actor
+        )
+        mutated = True
+    # Checked by presence, not by ``is not None``: ``assignee_id`` is
+    # ``uuid.UUID | None``, so an explicit ``{"assignee_id": null}`` and an
+    # omitted field both parse to ``None``. Only ``model_fields_set``
+    # distinguishes "unassign this" from "leave it alone" -- the same
+    # reasoning the console's ``patch_conversation`` already applies.
+    if "assignee_id" in payload.model_fields_set:
+        conversation = await conversations.set_assignee(
+            session,
+            principal.workspace_id,
+            conversation_id,
+            payload.assignee_id,
+            actor,
+        )
+        mutated = True
+
+    if mutated:
+        # Each ``set_*`` call above commits, and ``updated_at`` carries
+        # ``onupdate=func.now()`` -- a server-computed value that Postgres
+        # does not hand back inline, so SQLAlchemy leaves it (and
+        # ``assignee_id``) expired on the instance. ``conversation_out``
+        # reads both directly, not through a relationship, so touching
+        # either without a refresh first raises ``MissingGreenlet``. See
+        # the identical note in ``services.tickets.create_from_api``.
+        await session.refresh(
+            conversation, ["labels", "assignee", "updated_at", "assignee_id"]
+        )
+    return conversation_out(conversation)
+
+
+@router.post(
+    "/{conversation_id}/messages",
+    response_model=MessageOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_message_route(
+    conversation_id: uuid.UUID,
+    payload: MessageCreate,
+    principal: Replier,
+    session: DbSession,
+) -> MessageOut:
+    """Send a reply to the customer.
+
+    Requires ``messages:write``, which ``conversations:write`` does not
+    imply: this one puts mail in a customer's inbox under the workspace's
+    name, and the delivery is queued the moment it returns.
+    """
+    await conversations.add_reply(
+        session,
+        principal.workspace_id,
+        conversation_id,
+        payload.body,
+        principal.actor,
+    )
+    messages = await conversations.list_messages(
+        session, principal.workspace_id, conversation_id
+    )
+    return message_out(messages[-1])

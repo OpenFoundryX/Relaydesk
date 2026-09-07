@@ -14,12 +14,19 @@ and that fact is confined to ``conversation_out``.
 """
 
 import json
+import uuid
 from datetime import datetime
 from typing import Annotated, Any
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field
 
-from relaydesk.models import Contact, Conversation, Message, Priority
+from relaydesk.models import (
+    Contact,
+    Conversation,
+    ConversationStatus,
+    Message,
+    Priority,
+)
 
 METADATA_MAX_BYTES = 8192
 METADATA_MAX_KEYS = 50
@@ -102,6 +109,20 @@ class ConversationCreate(V1Model):
     priority: Priority = Priority.medium
     external_id: str | None = Field(default=None, max_length=200)
     metadata: Metadata = Field(default_factory=dict)
+
+
+class ConversationUpdate(V1Model):
+    """Every field optional. An omitted field is left alone, which is what
+    makes it safe for two integrations to update different fields of the
+    same conversation without either clobbering the other."""
+
+    status: ConversationStatus | None = None
+    priority: Priority | None = None
+    assignee_id: uuid.UUID | None = None
+
+
+class MessageCreate(V1Model):
+    body: str = Field(min_length=1)
 
 
 def contact_out(contact: Contact) -> ContactOut:
