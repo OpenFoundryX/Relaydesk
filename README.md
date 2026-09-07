@@ -119,6 +119,11 @@ every ticket, with no error.
 Find a workspace's address under **Settings → Channels**, then forward your
 own support address to it. Anything that arrives there becomes a ticket.
 
+[docs/deployment/email-channel.md](docs/deployment/email-channel.md) is a
+worked production setup for this — Migadu for the inbound catch-all, Amazon
+SES for outbound — with the DNS records, the verification steps, and the
+operational rules the design depends on.
+
 ### Password reset
 
 `PASSWORD_RESET_TTL_MINUTES` (default 60), `PASSWORD_RESET_IP_HOURLY_CAP`
