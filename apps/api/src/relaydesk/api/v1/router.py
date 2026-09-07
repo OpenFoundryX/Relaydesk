@@ -10,9 +10,13 @@ rewriting.
 
 from fastapi import APIRouter
 
+from relaydesk.api.v1.contacts import router as contacts_router
 from relaydesk.api.v1.conversations import router as conversations_router
+from relaydesk.api.v1.labels import router as labels_router
 
 v1_router = APIRouter()
 v1_router.include_router(
     conversations_router, prefix="/conversations", tags=["v1: conversations"]
 )
+v1_router.include_router(labels_router, prefix="/labels", tags=["v1: labels"])
+v1_router.include_router(contacts_router, prefix="/contacts", tags=["v1: contacts"])

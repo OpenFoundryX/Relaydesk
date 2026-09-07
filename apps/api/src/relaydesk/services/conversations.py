@@ -1,4 +1,3 @@
-import base64
 import uuid
 from datetime import UTC, datetime
 
@@ -26,21 +25,18 @@ from relaydesk.models import (
     User,
     Workspace,
 )
-from relaydesk.services import notifications, outbound, queue
+from relaydesk.services import notifications, outbound, pagination, queue
 from relaydesk.services.actors import Actor
 
 DEFAULT_LIMIT = 50
 
 
 def encode_cursor(conversation: Conversation) -> str:
-    raw = f"{conversation.last_message_at.isoformat()}|{conversation.id}"
-    return base64.urlsafe_b64encode(raw.encode()).decode()
+    return pagination.encode(conversation.last_message_at, conversation.id)
 
 
 def decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
-    raw = base64.urlsafe_b64decode(cursor.encode()).decode()
-    moment, identifier = raw.split("|", 1)
-    return datetime.fromisoformat(moment), uuid.UUID(identifier)
+    return pagination.decode(cursor)
 
 
 async def allocate_number(session: AsyncSession, workspace_id: uuid.UUID) -> int:

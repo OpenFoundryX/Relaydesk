@@ -208,3 +208,32 @@ async def create_message_route(
         session, principal.workspace_id, conversation_id
     )
     return message_out(messages[-1])
+
+
+Labeller = Annotated[ApiPrincipal, Depends(requires(ApiKeyScope.labels_write))]
+
+
+@router.put("/{conversation_id}/labels/{label_id}", response_model=ConversationOut)
+async def add_label_route(
+    conversation_id: uuid.UUID,
+    label_id: uuid.UUID,
+    principal: Labeller,
+    session: DbSession,
+) -> ConversationOut:
+    conversation = await conversations.add_label(
+        session, principal.workspace_id, conversation_id, label_id, principal.actor
+    )
+    return conversation_out(conversation)
+
+
+@router.delete("/{conversation_id}/labels/{label_id}", response_model=ConversationOut)
+async def remove_label_route(
+    conversation_id: uuid.UUID,
+    label_id: uuid.UUID,
+    principal: Labeller,
+    session: DbSession,
+) -> ConversationOut:
+    conversation = await conversations.remove_label(
+        session, principal.workspace_id, conversation_id, label_id, principal.actor
+    )
+    return conversation_out(conversation)

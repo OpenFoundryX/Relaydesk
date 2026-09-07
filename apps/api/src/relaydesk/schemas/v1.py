@@ -24,6 +24,7 @@ from relaydesk.models import (
     Contact,
     Conversation,
     ConversationStatus,
+    Label,
     Message,
     Priority,
 )
@@ -123,6 +124,25 @@ class ConversationUpdate(V1Model):
 
 class MessageCreate(V1Model):
     body: str = Field(min_length=1)
+
+
+class LabelOut(V1Model):
+    id: str
+    name: str
+    color: str
+
+
+class LabelCreate(V1Model):
+    name: str = Field(min_length=1, max_length=80)
+
+
+class ContactPage(V1Model):
+    data: list[ContactOut]
+    next_cursor: str | None = None
+
+
+def label_out(label: Label) -> LabelOut:
+    return LabelOut(id=str(label.id), name=label.name, color=label.color.value)
 
 
 def contact_out(contact: Contact) -> ContactOut:
