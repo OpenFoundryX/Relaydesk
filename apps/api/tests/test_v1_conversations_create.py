@@ -144,6 +144,54 @@ async def test_a_creation_without_an_external_id_is_never_deduplicated(
     assert first.json()["id"] != second.json()["id"]
 
 
+async def test_a_blank_external_id_is_never_deduplicated(client, db_session) -> None:
+    """``""`` means "no external id", the same as omitting the field.
+
+    Before normalisation, ``''`` is a real, non-NULL value covered by the
+    partial unique index -- a first create would silently store it, and a
+    second would hit the index and 500 through the ``IntegrityError``
+    handler's ``if not external_id: raise``. Asserting the stored value is
+    ``None`` (not ``''``) is what proves normalisation happened rather than
+    the dedup lookup merely missing an empty string by luck.
+    """
+    workspace = await make_workspace(db_session)
+    headers, _ = await writer(db_session, workspace)
+    body = {**BODY, "external_id": ""}
+
+    first = await client.post("/v1/conversations", json=body, headers=headers)
+    second = await client.post("/v1/conversations", json=body, headers=headers)
+
+    assert (first.status_code, second.status_code) == (201, 201)
+    assert first.json()["id"] != second.json()["id"]
+    assert first.json()["external_id"] is None
+    assert second.json()["external_id"] is None
+
+    stored = list(
+        await db_session.scalars(
+            sa.select(Conversation.external_id).where(
+                Conversation.workspace_id == workspace.id
+            )
+        )
+    )
+    assert stored == [None, None]
+
+
+async def test_a_whitespace_only_external_id_is_never_deduplicated(
+    client, db_session
+) -> None:
+    workspace = await make_workspace(db_session)
+    headers, _ = await writer(db_session, workspace)
+    body = {**BODY, "external_id": "   "}
+
+    first = await client.post("/v1/conversations", json=body, headers=headers)
+    second = await client.post("/v1/conversations", json=body, headers=headers)
+
+    assert (first.status_code, second.status_code) == (201, 201)
+    assert first.json()["id"] != second.json()["id"]
+    assert first.json()["external_id"] is None
+    assert second.json()["external_id"] is None
+
+
 async def test_a_repeat_reuses_the_contact(client, db_session) -> None:
     workspace = await make_workspace(db_session)
     headers, _ = await writer(db_session, workspace)

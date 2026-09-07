@@ -175,6 +175,16 @@ async def create_from_api(
     if len(body) > get_settings().ticket_message_max_chars:
         raise Invalid("That message is too long.")
 
+    # A blank or whitespace-only ``external_id`` is normalised to ``None``,
+    # not refused: a client emitting ``""`` for an absent id (a templating
+    # layer, a dataframe column, a JSON serialiser that prefers ``""`` over
+    # ``null``) means "I have no external id", and the spec's own rule for
+    # that case is that the create is never deduplicated. Doing this here
+    # rather than only at the schema edge keeps every caller of this
+    # service -- HTTP or not -- agreeing with the partial unique index,
+    # which treats ``''`` as a real, non-NULL value distinct from absence.
+    external_id = (external_id or "").strip() or None
+
     if external_id:
         existing = await session.scalar(
             sa.select(Conversation).where(
