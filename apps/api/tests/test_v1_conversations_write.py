@@ -1,3 +1,5 @@
+import uuid
+
 import sqlalchemy as sa
 
 from relaydesk.models import (
@@ -7,7 +9,7 @@ from relaydesk.models import (
     MessageRole,
     Priority,
 )
-from relaydesk.services import api_keys
+from relaydesk.services import api_keys, conversations
 from tests.factories import make_conversation, make_member, make_workspace
 
 
@@ -98,6 +100,40 @@ async def test_patch_unassigns_with_an_explicit_null(client, db_session) -> None
 
     assert response.status_code == 200
     assert response.json()["assignee_id"] is None
+
+
+async def test_a_bad_assignee_in_a_combined_patch_commits_nothing(
+    client, db_session
+) -> None:
+    """The whole point of applying assignee before status/priority.
+
+    ``status``/``priority`` are Pydantic-validated enums that cannot fail
+    against the database once ``get_conversation`` has already succeeded;
+    ``assignee_id`` is the one field whose validity is a database lookup
+    (``set_assignee`` 404s on a stranger). If the route applied status
+    first, this request would commit the status change and *then* 404 --
+    a failed request that nevertheless mutated the resource. Re-reading
+    the conversation is the load-bearing assertion: it would still pass
+    with the broken ordering if it only checked the response code.
+    """
+    workspace = await make_workspace(db_session)
+    conversation = await make_conversation(db_session, workspace)
+    headers, _ = await key_for(db_session, workspace, [ApiKeyScope.conversations_write])
+    stranger_id = uuid.uuid4()
+
+    response = await client.patch(
+        f"/v1/conversations/{conversation.id}",
+        json={"status": "resolved", "assignee_id": str(stranger_id)},
+        headers=headers,
+    )
+
+    assert response.status_code == 404
+
+    reloaded = await conversations.get_conversation(
+        db_session, workspace.id, conversation.id
+    )
+    assert reloaded.status.value == "open"
+    assert reloaded.assignee_id is None
 
 
 async def test_an_empty_patch_changes_nothing(client, db_session) -> None:

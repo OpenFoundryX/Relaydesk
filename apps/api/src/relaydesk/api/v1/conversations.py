@@ -123,6 +123,17 @@ async def update_route(
     Reads the conversation first so an id belonging to another workspace
     answers 404 before any field is considered -- including for an empty
     body, which must not become a way to probe for ids that exist.
+
+    The assignee is applied *before* status and priority, deliberately.
+    ``status``/``priority`` arrive as Pydantic-validated enums, so by the
+    time this body runs they cannot fail against the database --
+    ``set_status``/``set_priority`` can only raise from
+    ``get_conversation``, which has already succeeded above.
+    ``assignee_id`` is the one field whose validity is a database lookup:
+    ``set_assignee`` 404s when the id does not name an active member. Doing
+    it first means that the sole realistic failure happens before anything
+    else in this request has committed, so a caller never sees a 404 that
+    was itself the result of a partial write.
     """
     conversation = await conversations.get_conversation(
         session, principal.workspace_id, conversation_id
@@ -130,16 +141,6 @@ async def update_route(
     actor = principal.actor
     mutated = False
 
-    if payload.status is not None:
-        conversation = await conversations.set_status(
-            session, principal.workspace_id, conversation_id, payload.status, actor
-        )
-        mutated = True
-    if payload.priority is not None:
-        conversation = await conversations.set_priority(
-            session, principal.workspace_id, conversation_id, payload.priority, actor
-        )
-        mutated = True
     # Checked by presence, not by ``is not None``: ``assignee_id`` is
     # ``uuid.UUID | None``, so an explicit ``{"assignee_id": null}`` and an
     # omitted field both parse to ``None``. Only ``model_fields_set``
@@ -152,6 +153,16 @@ async def update_route(
             conversation_id,
             payload.assignee_id,
             actor,
+        )
+        mutated = True
+    if payload.status is not None:
+        conversation = await conversations.set_status(
+            session, principal.workspace_id, conversation_id, payload.status, actor
+        )
+        mutated = True
+    if payload.priority is not None:
+        conversation = await conversations.set_priority(
+            session, principal.workspace_id, conversation_id, payload.priority, actor
         )
         mutated = True
 
