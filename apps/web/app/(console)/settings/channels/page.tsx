@@ -9,12 +9,14 @@ import { EmailChannelActions } from "@/components/settings/email-channel-actions
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getEmailChannels } from "@/lib/api/channels";
-import { getMe } from "@/lib/api/workspace";
+import { getMe, requireAdmin } from "@/lib/api/workspace";
 import { getDiscordAccounts, getImportSources } from "@/lib/mock/settings";
 
 export const metadata = { title: "Channels" };
 
 export default async function ChannelsPage() {
+  await requireAdmin();
+
   const [emailChannels, discordAccounts, importSources, me] = await Promise.all([
     getEmailChannels(),
     getDiscordAccounts(),

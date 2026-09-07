@@ -1,10 +1,13 @@
 import { PageHeader } from "@/components/console/page-header";
 import { TriageSettings } from "@/components/settings/triage-settings";
 import { triageDefaults } from "@/lib/mock/settings";
+import { requireAdmin } from "@/lib/api/workspace";
 
 export const metadata = { title: "AI triage" };
 
-export default function AiTriagePage() {
+export default async function AiTriagePage() {
+  await requireAdmin();
+
   return (
     <>
       <PageHeader

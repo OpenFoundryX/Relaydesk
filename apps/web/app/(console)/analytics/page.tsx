@@ -3,10 +3,13 @@ import { MetricCard } from "@/components/analytics/metric-card";
 import { PageHeader } from "@/components/console/page-header";
 import { PageShell } from "@/components/console/page-shell";
 import { getMetrics } from "@/lib/mock/analytics";
+import { requireAdmin } from "@/lib/api/workspace";
 
 export const metadata = { title: "Analytics" };
 
 export default async function AnalyticsPage() {
+  await requireAdmin();
+
   const metrics = await getMetrics();
 
   return (

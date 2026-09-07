@@ -5,10 +5,13 @@ import { SectionEmpty, SettingSection } from "@/components/console/setting-secti
 import { ApiKeyDialog } from "@/components/settings/api-key-dialog";
 import { CodeSample } from "@/components/settings/code-sample";
 import { getApiKeys } from "@/lib/mock/settings";
+import { requireAdmin } from "@/lib/api/workspace";
 
 export const metadata = { title: "API keys" };
 
 export default async function ApiKeysPage() {
+  await requireAdmin();
+
   const keys = await getApiKeys();
 
   return (

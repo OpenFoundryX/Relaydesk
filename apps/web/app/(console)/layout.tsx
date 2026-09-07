@@ -8,7 +8,7 @@ import { getDraftCount, getStatusCounts } from "@/lib/api/conversations";
 import { getLabels } from "@/lib/api/labels";
 import { getSetupTasks } from "@/lib/api/team";
 import { getViews } from "@/lib/api/views";
-import { getCurrentUser, getWorkspace } from "@/lib/api/workspace";
+import { getCurrentUser, getWorkspace, isAdmin } from "@/lib/api/workspace";
 
 export default async function ConsoleLayout({
   children,
@@ -23,6 +23,7 @@ export default async function ConsoleLayout({
     currentUser,
     setupTasks,
     savedViews,
+    admin,
   ] = await Promise.all([
     getStatusCounts(),
     getDraftCount(),
@@ -31,6 +32,7 @@ export default async function ConsoleLayout({
     getCurrentUser(),
     getSetupTasks(),
     getViews(),
+    isAdmin(),
   ]);
 
   return (
@@ -41,6 +43,7 @@ export default async function ConsoleLayout({
             workspaceName={workspace.name}
             userName={currentUser.name}
             userMonogram={currentUser.monogram}
+            isAdmin={admin}
           />
           <div className="flex min-h-0 flex-1">
             <Suspense
@@ -54,6 +57,7 @@ export default async function ConsoleLayout({
                 setupTasks={setupTasks}
                 labels={labels}
                 savedViews={savedViews}
+                isAdmin={admin}
               />
             </Suspense>
             <main className="min-w-0 flex-1 overflow-y-auto">{children}</main>

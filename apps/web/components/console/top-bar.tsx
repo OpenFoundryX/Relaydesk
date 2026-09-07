@@ -19,9 +19,15 @@ interface TopBarProps {
   workspaceName: string;
   userName: string;
   userMonogram: string;
+  isAdmin: boolean;
 }
 
-export function TopBar({ workspaceName, userName, userMonogram }: TopBarProps) {
+export function TopBar({
+  workspaceName,
+  userName,
+  userMonogram,
+  isAdmin,
+}: TopBarProps) {
   const [signingOut, startSignOut] = useTransition();
 
   return (
@@ -74,12 +80,14 @@ export function TopBar({ workspaceName, userName, userMonogram }: TopBarProps) {
               Account
             </Link>
           </DropdownMenuItem>
-          <DropdownMenuItem asChild>
-            <Link href="/settings/channels">
-              <Settings />
-              Workspace settings
-            </Link>
-          </DropdownMenuItem>
+          {isAdmin && (
+            <DropdownMenuItem asChild>
+              <Link href="/settings/channels">
+                <Settings />
+                Workspace settings
+              </Link>
+            </DropdownMenuItem>
+          )}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             destructive

@@ -4,10 +4,13 @@ import { PageHeader } from "@/components/console/page-header";
 import { SettingSection } from "@/components/console/setting-section";
 import { SnippetDialog } from "@/components/settings/snippet-dialog";
 import { getSnippets, getSnippetVariables } from "@/lib/mock/settings";
+import { requireAdmin } from "@/lib/api/workspace";
 
 export const metadata = { title: "Templates" };
 
 export default async function TemplatesPage() {
+  await requireAdmin();
+
   const [snippets, variables] = await Promise.all([
     getSnippets(),
     getSnippetVariables(),

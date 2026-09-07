@@ -3,10 +3,13 @@ import { SectionEmpty, SettingSection } from "@/components/console/setting-secti
 import { Badge } from "@/components/ui/badge";
 import { WebhookDialog } from "@/components/settings/webhook-dialog";
 import { getWebhooks } from "@/lib/mock/settings";
+import { requireAdmin } from "@/lib/api/workspace";
 
 export const metadata = { title: "Custom webhooks" };
 
 export default async function CustomWebhooksPage() {
+  await requireAdmin();
+
   const webhooks = await getWebhooks();
 
   return (

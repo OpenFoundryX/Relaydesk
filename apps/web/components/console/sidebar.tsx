@@ -35,6 +35,12 @@ interface NavItem {
   count?: number;
   /** Matches the `status` query param on /conversations. */
   status?: string;
+  /**
+   * Hidden from an agent. Set on the pages that exist only to configure the
+   * workspace, which `requireAdmin` 404s for a non-admin -- without this an
+   * agent sees nav entries that lead nowhere.
+   */
+  adminOnly?: boolean;
 }
 
 interface NavGroup {
@@ -48,26 +54,67 @@ interface SidebarProps {
   setupTasks: SetupTask[];
   labels: Label[];
   savedViews: SavedView[];
+  isAdmin: boolean;
 }
 
 const settingsItems: NavItem[] = [
-  { label: "Channels", href: "/settings/channels", icon: Inbox },
-  { label: "Automations", href: "/settings/automations", icon: CircleDashed },
-  { label: "Integrations", href: "/settings/integrations", icon: Globe },
-  { label: "Custom webhooks", href: "/settings/custom-webhooks", icon: CircleDot },
-  { label: "MCP servers", href: "/settings/mcp-servers", icon: CircleDot },
-  { label: "AI triage", href: "/settings/ai-triage", icon: CircleDot },
-  { label: "Templates", href: "/settings/templates", icon: FileText },
-  { label: "API keys", href: "/settings/api-keys", icon: CircleDot },
-  { label: "Team", href: "/settings/team", icon: CircleDot },
+  { label: "Channels", href: "/settings/channels", icon: Inbox, adminOnly: true },
+  {
+    label: "Automations",
+    href: "/settings/automations",
+    icon: CircleDashed,
+    adminOnly: true,
+  },
+  {
+    label: "Integrations",
+    href: "/settings/integrations",
+    icon: Globe,
+    adminOnly: true,
+  },
+  {
+    label: "Custom webhooks",
+    href: "/settings/custom-webhooks",
+    icon: CircleDot,
+    adminOnly: true,
+  },
+  {
+    label: "MCP servers",
+    href: "/settings/mcp-servers",
+    icon: CircleDot,
+    adminOnly: true,
+  },
+  { label: "AI triage", href: "/settings/ai-triage", icon: CircleDot, adminOnly: true },
+  {
+    label: "Templates",
+    href: "/settings/templates",
+    icon: FileText,
+    adminOnly: true,
+  },
+  { label: "API keys", href: "/settings/api-keys", icon: CircleDot, adminOnly: true },
+  { label: "Team", href: "/settings/team", icon: CircleDot, adminOnly: true },
   { label: "Account", href: "/settings/account", icon: CircleDot },
 ];
 
 const portalItems: NavItem[] = [
-  { label: "General", href: "/user-portal/general", icon: CircleDot },
-  { label: "Appearance", href: "/user-portal/appearance", icon: CircleDot },
-  { label: "Ticket form", href: "/user-portal/ticket-form", icon: CircleDot },
-  { label: "Knowledge base", href: "/user-portal/knowledge-base", icon: CircleDot },
+  { label: "General", href: "/user-portal/general", icon: CircleDot, adminOnly: true },
+  {
+    label: "Appearance",
+    href: "/user-portal/appearance",
+    icon: CircleDot,
+    adminOnly: true,
+  },
+  {
+    label: "Ticket form",
+    href: "/user-portal/ticket-form",
+    icon: CircleDot,
+    adminOnly: true,
+  },
+  {
+    label: "Knowledge base",
+    href: "/user-portal/knowledge-base",
+    icon: CircleDot,
+    adminOnly: true,
+  },
 ];
 
 export function Sidebar({
@@ -76,23 +123,38 @@ export function Sidebar({
   setupTasks,
   labels,
   savedViews,
+  isAdmin,
 }: SidebarProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const activeStatus = searchParams.get("status") ?? "open";
+
+  // One filter, applied to every nav list -- the section sidebars and the main
+  // groups alike. A `notFound()` page still renders inside the console layout,
+  // so an unfiltered list stays on screen even where the guard did its job.
+  const visible = (items: NavItem[]) =>
+    items.filter((item) => isAdmin || !item.adminOnly);
 
   const countFor = (status: string) =>
     statusCounts.find((entry) => entry.status === status)?.count ?? 0;
 
   if (pathname.startsWith("/settings")) {
     return (
-      <SectionSidebar title="Settings" items={settingsItems} pathname={pathname} />
+      <SectionSidebar
+        title="Settings"
+        items={visible(settingsItems)}
+        pathname={pathname}
+      />
     );
   }
 
   if (pathname.startsWith("/user-portal")) {
     return (
-      <SectionSidebar title="User portal" items={portalItems} pathname={pathname} />
+      <SectionSidebar
+        title="User portal"
+        items={visible(portalItems)}
+        pathname={pathname}
+      />
     );
   }
 
@@ -160,11 +222,21 @@ export function Sidebar({
     {
       label: "Workspace",
       items: [
-        { label: "Analytics", href: "/analytics", icon: ChartLine },
+        {
+          label: "Analytics",
+          href: "/analytics",
+          icon: ChartLine,
+          adminOnly: true,
+        },
         { label: "Knowledge base", href: "/knowledge-base", icon: BookOpen },
-        { label: "User portal", href: "/user-portal/general", icon: Globe },
+        {
+          label: "User portal",
+          href: "/user-portal/general",
+          icon: Globe,
+          adminOnly: true,
+        },
         { label: "Notifications", href: "/notifications", icon: Bell },
-        { label: "Settings", href: "/settings/channels", icon: Settings },
+        { label: "Settings", href: "/settings", icon: Settings },
       ],
     },
   ];
@@ -175,7 +247,7 @@ export function Sidebar({
         {groups.map((group) => (
           <div key={group.label} className="mb-1">
             <GroupLabel>{group.label}</GroupLabel>
-            {group.items.map((item) => {
+            {visible(group.items).map((item) => {
               const active = item.status
                 ? pathname === "/conversations" && activeStatus === item.status
                 : pathname.startsWith(item.href.split("?")[0]);

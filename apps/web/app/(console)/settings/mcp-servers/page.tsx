@@ -5,10 +5,13 @@ import { SectionEmpty, SettingSection } from "@/components/console/setting-secti
 import { McpServerDialog } from "@/components/settings/mcp-server-dialog";
 import { Badge } from "@/components/ui/badge";
 import { getMcpServers } from "@/lib/mock/settings";
+import { requireAdmin } from "@/lib/api/workspace";
 
 export const metadata = { title: "MCP servers" };
 
 export default async function McpServersPage() {
+  await requireAdmin();
+
   const servers = await getMcpServers();
 
   return (

@@ -5,11 +5,14 @@ import { SettingSection } from "@/components/console/setting-section";
 import { InviteDialog } from "@/components/settings/invite-dialog";
 import { Badge } from "@/components/ui/badge";
 import { getTeam } from "@/lib/api/team";
+import { isAdmin, requireAdmin } from "@/lib/api/workspace";
 
 export const metadata = { title: "Team" };
 
 export default async function TeamPage() {
-  const team = await getTeam();
+  await requireAdmin();
+
+  const [team, admin] = await Promise.all([getTeam(), isAdmin()]);
 
   return (
     <>
@@ -21,7 +24,7 @@ export default async function TeamPage() {
       <SettingSection
         title="Members"
         description="Admins can change settings. Agents work the queue."
-        action={<InviteDialog />}
+        action={admin ? <InviteDialog /> : undefined}
       >
         <ul className="divide-y divide-ink-200 rounded-md border border-ink-200">
           {team.map((member) => (
@@ -43,13 +46,15 @@ export default async function TeamPage() {
                 <Badge variant={member.role === "Admin" ? "accent" : "neutral"}>
                   {member.role}
                 </Badge>
-                <button
-                  type="button"
-                  aria-label={`Options for ${member.name}`}
-                  className="rounded p-1 text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-900"
-                >
-                  <Ellipsis className="size-4" />
-                </button>
+                {admin && (
+                  <button
+                    type="button"
+                    aria-label={`Options for ${member.name}`}
+                    className="rounded p-1 text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-900"
+                  >
+                    <Ellipsis className="size-4" />
+                  </button>
+                )}
               </div>
             </li>
           ))}
