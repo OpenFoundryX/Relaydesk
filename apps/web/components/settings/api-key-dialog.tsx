@@ -78,6 +78,21 @@ export function ApiKeyDialog() {
     setCopied(false);
   }
 
+  /**
+   * The one place that knows what closing means.
+   *
+   * The dialog's `open` prop and `onOpenChange` cover Escape, an overlay
+   * click and the built-in close button, but not a parent-initiated close —
+   * so a bare `setOpen(false)` from Cancel/Done would leave `token` (and
+   * `name`/`error`/`preset`) sitting in this component's state, since
+   * ApiKeyDialog itself never unmounts. Route every close through here so a
+   * plaintext token can never survive to the next open.
+   */
+  function close() {
+    setOpen(false);
+    reset();
+  }
+
   function create() {
     setError(null);
     const scopes = PRESETS.find((entry) => entry.id === preset)!.scopes;
@@ -103,8 +118,8 @@ export function ApiKeyDialog() {
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        setOpen(next);
-        if (!next) reset();
+        if (!next) close();
+        else setOpen(next);
       }}
     >
       <DialogTrigger asChild>
@@ -187,12 +202,12 @@ export function ApiKeyDialog() {
         </DialogBody>
         <DialogFooter>
           {token ? (
-            <Button variant="primary" onClick={() => setOpen(false)}>
+            <Button variant="primary" onClick={close}>
               Done
             </Button>
           ) : (
             <>
-              <Button variant="ghost" onClick={() => setOpen(false)}>
+              <Button variant="ghost" onClick={close}>
                 Cancel
               </Button>
               <Button
