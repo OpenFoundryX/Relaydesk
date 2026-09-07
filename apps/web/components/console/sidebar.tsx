@@ -23,7 +23,6 @@ import type { LucideIcon } from "lucide-react";
 
 import { CreateLabelButton } from "@/components/inbox/create-label-button";
 import type { Label, SetupTask, StatusCount } from "@/lib/mock/types";
-import type { SavedView } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 import { SetupProgress } from "./setup-progress";
@@ -37,7 +36,7 @@ interface NavItem {
   status?: string;
   /**
    * Hidden from an agent. Set on the pages that exist only to configure the
-   * workspace, which `requireAdmin` 404s for a non-admin -- without this an
+   * workspace, which `requireAdmin` 404s for a non-admin — without this an
    * agent sees nav entries that lead nowhere.
    */
   adminOnly?: boolean;
@@ -53,7 +52,6 @@ interface SidebarProps {
   draftCount: number;
   setupTasks: SetupTask[];
   labels: Label[];
-  savedViews: SavedView[];
   isAdmin: boolean;
 }
 
@@ -122,16 +120,12 @@ export function Sidebar({
   draftCount,
   setupTasks,
   labels,
-  savedViews,
   isAdmin,
 }: SidebarProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const activeStatus = searchParams.get("status") ?? "open";
 
-  // One filter, applied to every nav list -- the section sidebars and the main
-  // groups alike. A `notFound()` page still renders inside the console layout,
-  // so an unfiltered list stays on screen even where the guard did its job.
   const visible = (items: NavItem[]) =>
     items.filter((item) => isAdmin || !item.adminOnly);
 
@@ -257,23 +251,6 @@ export function Sidebar({
             })}
           </div>
         ))}
-
-        <div className="mb-1">
-          <GroupLabel action="Create view">Views</GroupLabel>
-          {savedViews.map((view) => (
-            <Link
-              key={view.id}
-              href={`/conversations?view=${view.id}`}
-              className="group relative flex h-8 items-center rounded-md pl-2.5 pr-2 text-[13px] text-ink-600 transition-colors hover:bg-ink-100 hover:text-ink-900"
-            >
-              <span className="mr-2 size-1.5 shrink-0 rounded-full bg-ink-300" />
-              <span className="truncate">{view.name}</span>
-              <span className="ml-auto tabular text-[11px] text-ink-400">
-                {view.count}
-              </span>
-            </Link>
-          ))}
-        </div>
 
         <div>
           <GroupLabel action={<CreateLabelButton />}>Labels</GroupLabel>

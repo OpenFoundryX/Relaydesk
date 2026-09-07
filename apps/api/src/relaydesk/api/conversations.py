@@ -21,7 +21,7 @@ from relaydesk.schemas.conversation import (
     conversation_out,
     message_out,
 )
-from relaydesk.services import conversations, views
+from relaydesk.services import conversations
 
 router = APIRouter()
 
@@ -47,7 +47,6 @@ async def list_route(
     status: str | None = None,
     label_id: Annotated[uuid.UUID | None, Query(alias="labelId")] = None,
     assignee_id: Annotated[uuid.UUID | None, Query(alias="assigneeId")] = None,
-    view_id: Annotated[uuid.UUID | None, Query(alias="viewId")] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     cursor: str | None = None,
 ) -> ConversationPage:
@@ -62,12 +61,6 @@ async def list_route(
         except ValueError:
             raise Invalid(f"Unknown status {status!r}.") from None
 
-    view = None
-    if view_id is not None:
-        # Raises NotFound for a foreign id, so an unowned viewId 404s
-        # instead of silently returning an unfiltered list.
-        view = await views.get_view(session, scope.workspace_id, view_id)
-
     rows, next_cursor = await conversations.list_conversations(
         session,
         scope.workspace_id,
@@ -75,8 +68,6 @@ async def list_route(
         label_id=label_id,
         assignee_id=assignee_id,
         has_draft=has_draft,
-        view=view,
-        viewer=scope.user,
         limit=limit,
         cursor=cursor,
     )

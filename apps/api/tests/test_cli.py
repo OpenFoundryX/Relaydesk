@@ -21,7 +21,6 @@ from relaydesk.models import (
     Message,
     RawMessage,
     RawMessageState,
-    SavedView,
     User,
     Workspace,
 )
@@ -38,12 +37,10 @@ async def test_seed_creates_a_demo_workspace(db_session: AsyncSession) -> None:
     )
     conversations = (await db_session.scalars(sa.select(Conversation))).all()
     labels = (await db_session.scalars(sa.select(Label))).all()
-    views = (await db_session.scalars(sa.select(SavedView))).all()
 
     assert workspace is not None
     assert len(conversations) == 11
     assert len(labels) == 4
-    assert len(views) == 3
     assert workspace.conversation_seq == 11
 
 

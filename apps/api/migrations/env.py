@@ -56,9 +56,22 @@ ENUM_CHECK_CONSTRAINTS = frozenset(
 )
 
 
+# Tables that exist in the database on purpose but have no model behind
+# them. Without this, autogenerate sees a table the metadata does not
+# describe and proposes dropping it -- so the next routine `make revision`
+# would quietly carry a `drop_table` nobody asked for.
+#
+# ``saved_views`` is here because the saved-views feature was removed from
+# the code while its table was deliberately kept, rows and all. Delete the
+# entry only alongside a migration that actually drops the table.
+ORPHANED_TABLES = frozenset({"saved_views"})
+
+
 def include_name(name: str | None, type_: str, parent_names: dict) -> bool:
     if type_ == "check_constraint":
         return name not in ENUM_CHECK_CONSTRAINTS
+    if type_ == "table":
+        return name not in ORPHANED_TABLES
     return True
 
 

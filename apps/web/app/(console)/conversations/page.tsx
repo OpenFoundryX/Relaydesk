@@ -1,15 +1,12 @@
 import { Inbox } from "lucide-react";
-import { redirect } from "next/navigation";
 
 import { EmptyState } from "@/components/console/empty-state";
 import { InboxList } from "@/components/inbox/inbox-list";
 import { ListToolbar } from "@/components/inbox/list-toolbar";
 import { StatusIcon, statusMeta } from "@/components/inbox/status-meta";
-import { ApiError } from "@/lib/api/client";
 import { getConversations } from "@/lib/api/conversations";
 import { getLabels } from "@/lib/api/labels";
 import { getTeam } from "@/lib/api/team";
-import { getViews } from "@/lib/api/views";
 import { statuses } from "@/lib/types";
 import type { Conversation, ConversationStatus } from "@/lib/types";
 
@@ -27,38 +24,17 @@ function isStatus(value: string): value is ConversationStatus {
 export default async function ConversationsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; view?: string; label?: string }>;
+  searchParams: Promise<{ status?: string; label?: string }>;
 }) {
-  const { status = "open", view, label } = await searchParams;
+  const { status = "open", label } = await searchParams;
 
-  const [labels, team, views] = await Promise.all([getLabels(), getTeam(), getViews()]);
+  const [labels, team] = await Promise.all([getLabels(), getTeam()]);
 
   let conversations: Conversation[];
   let title: string;
   let icon: React.ReactNode = null;
 
-  if (view) {
-    // A bookmarked or stale view id (its row was deleted) 404s from the
-    // API. Bounce to the inbox rather than letting the console error
-    // boundary catch it: that boundary's "Try again" would just re-issue
-    // the same failing request. Any other failure (422, 500, a revoked
-    // session) still propagates — only a missing view redirects.
-    let viewNotFound = false;
-    try {
-      conversations = await getConversations({ viewId: view });
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 404) {
-        conversations = [];
-        viewNotFound = true;
-      } else {
-        throw error;
-      }
-    }
-    if (viewNotFound) {
-      redirect("/conversations?status=open");
-    }
-    title = views.find((entry) => entry.id === view)?.name ?? "View";
-  } else if (label) {
+  if (label) {
     conversations = await getConversations({ labelId: label });
     title = labels.find((entry) => entry.id === label)?.name ?? "Label";
   } else if (isStatus(status)) {

@@ -35,7 +35,6 @@ from relaydesk.models import (
     RawMessage,
     RawMessageState,
     Role,
-    SavedView,
     User,
     Workspace,
 )
@@ -260,33 +259,6 @@ async def seed(session: AsyncSession) -> None:
     }
     session.add_all(labels.values())
 
-    session.add_all(
-        [
-            SavedView(
-                workspace_id=workspace.id,
-                name="Urgent & unassigned",
-                position=0,
-                filters={
-                    "priority": "urgent",
-                    "assignee": "unassigned",
-                    "status": "open",
-                },
-            ),
-            SavedView(
-                workspace_id=workspace.id,
-                name="Assigned to me",
-                position=1,
-                filters={"assignee": "me"},
-            ),
-            SavedView(
-                workspace_id=workspace.id,
-                name="Waiting on customer",
-                position=2,
-                filters={"status": "pending"},
-            ),
-        ]
-    )
-    await session.flush()
 
     people = {"admin": admin, "agent": agent, None: None}
     now = datetime.now(UTC)

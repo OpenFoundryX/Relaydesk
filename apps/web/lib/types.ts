@@ -271,12 +271,6 @@ export interface ImportSource {
   comingSoon: boolean;
 }
 
-export interface SavedView {
-  id: string;
-  name: string;
-  count: number;
-}
-
 export interface Workspace {
   id: string;
   name: string;

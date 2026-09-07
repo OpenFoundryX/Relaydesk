@@ -25,7 +25,6 @@ export interface ConversationFilters {
   status?: ConversationStatus | "all" | "drafts";
   labelId?: string;
   assigneeId?: string;
-  viewId?: string;
 }
 
 export async function getConversations(
