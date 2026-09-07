@@ -25,6 +25,28 @@ invited address, never returned to whoever created the invite. This means
 invites require SMTP to be configured — the development stack provides
 this out of the box via GreenMail.
 
+A user who forgets their password can recover it themselves: **Forgot
+password?** on the sign-in page mails a single-use link that expires in an
+hour. Like invites, the link is only ever mailed to the address it belongs
+to, so this also requires SMTP to be configured — the development stack
+provides it through GreenMail.
+
+Two behaviours are deliberate and will look like bugs otherwise:
+
+- **The page says the same thing whatever you type.** A different answer
+  for an address that has no account would turn the form into a way to
+  discover who has one.
+- **An account that only signs in with Google gets no reset mail**, and is
+  told no differently. Such an account has never had a password and its
+  root of trust is Google; minting one from mailbox control alone would
+  convert it into a password account without its owner doing anything. A
+  Google-only user who loses Google access needs an operator — see
+  `relaydesk bootstrap`.
+
+Completing a reset signs the user out everywhere. If the reset was the
+answer to a compromise, leaving the other sessions alive would let the
+attacker outlast the eviction by up to `SESSION_TTL_DAYS`.
+
 ## Requirements
 
 - Docker
@@ -91,6 +113,15 @@ every ticket, with no error.
 
 Find a workspace's address under **Settings → Channels**, then forward your
 own support address to it. Anything that arrives there becomes a ticket.
+
+### Password reset
+
+`PASSWORD_RESET_TTL_MINUTES` (default 60), `PASSWORD_RESET_IP_HOURLY_CAP`
+(default 5) and `PASSWORD_RESET_EMAIL_HOURLY_CAP` (default 3) bound the
+flow. The caps are low on purpose: they are what makes the timing
+difference between "this address has an account" and "it does not"
+impractical to measure, since the uniform response does not by itself
+erase it.
 
 ## Knowledge base
 
