@@ -40,8 +40,13 @@ Two behaviours are deliberate and will look like bugs otherwise:
   told no differently. Such an account has never had a password and its
   root of trust is Google; minting one from mailbox control alone would
   convert it into a password account without its owner doing anything. A
-  Google-only user who loses Google access needs an operator — see
-  `relaydesk bootstrap`.
+  Google-only user who loses Google access can still be recovered: an
+  admin removes them from the workspace, which leaves their account
+  unclaimed, and inviting the same address again lets them adopt it and
+  choose a password when they accept. The exception is a sole admin — the
+  workspace refuses to remove its last remaining admin, so a Google-only
+  admin with no co-admin who loses Google access needs direct database
+  access instead.
 
 Completing a reset signs the user out everywhere. If the reset was the
 answer to a compromise, leaving the other sessions alive would let the
