@@ -81,7 +81,7 @@ export default async function LoginPage({
                 Password
               </Label>
               <Link
-                href="/contact"
+                href="/forgot-password"
                 className="text-[13px] text-ink-500 underline-offset-4 hover:text-ink-900 hover:underline"
               >
                 Forgot password?
