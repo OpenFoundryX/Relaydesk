@@ -362,3 +362,95 @@ async def duration_mean(
         .where(moment >= start, moment < end, *_assignee_clause(filters))
     )
     return None if value is None else float(value)
+
+
+async def backlog(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    window: Window,
+    filters: Filters,
+) -> dict[datetime, int]:
+    """How many conversations were in the backlog at the end of each bucket.
+
+    Anchored on today and walked backwards. Replaying forwards from zero
+    would put every accumulated error at the right-hand edge -- the point
+    the reader actually looks at -- and any status change older than the
+    window would be missing from the sum entirely.
+    """
+    where = _assignee_clause(filters)
+
+    current = await session.scalar(
+        sa.select(sa.func.count())
+        .select_from(Conversation)
+        .where(
+            Conversation.workspace_id == workspace_id,
+            Conversation.status.in_(BACKLOG_STATUSES),
+            *where,
+        )
+    )
+
+    # Every status event for the workspace, with the status it moved *from*.
+    # Deliberately unbounded by the window: an event's predecessor may be
+    # older than the range being drawn, and without it the first transition
+    # in view would be read against the wrong starting status.
+    previous = sa.func.lag(ActivityEvent.status).over(
+        partition_by=ActivityEvent.conversation_id, order_by=ActivityEvent.at
+    )
+    timeline = (
+        sa.select(
+            ActivityEvent.at.label("at"),
+            # A conversation is created open, so the first recorded change
+            # is always a move away from `open`.
+            sa.func.coalesce(previous, "open").label("from_status"),
+            ActivityEvent.status.label("to_status"),
+        )
+        .join(Conversation, Conversation.id == ActivityEvent.conversation_id)
+        .where(
+            ActivityEvent.workspace_id == workspace_id,
+            ActivityEvent.kind == "status",
+            ActivityEvent.status.is_not(None),
+            *where,
+        )
+        .subquery()
+    )
+
+    entered = timeline.c.to_status.in_(BACKLOG_STATUSES)
+    left = timeline.c.from_status.in_(BACKLOG_STATUSES)
+    # `_bucket` is built once and reused in the select list and the GROUP
+    # BY -- see the comment on `counts` for why calling it twice would
+    # compile to two distinct bound parameters that Postgres refuses to
+    # fold together.
+    move_bucket = _bucket(timeline.c.at, window)
+    moves = await session.execute(
+        sa.select(
+            move_bucket,
+            sa.func.count().filter(entered & ~left),
+            sa.func.count().filter(left & ~entered),
+        )
+        .where(timeline.c.at >= window.start, timeline.c.at < window.end)
+        .group_by(move_bucket)
+    )
+    deltas = {
+        at.replace(tzinfo=UTC): (int(into), int(out)) for at, into, out in moves.all()
+    }
+
+    created_bucket = _bucket(Conversation.created_at, window)
+    created = await session.execute(
+        sa.select(created_bucket, sa.func.count())
+        .where(
+            Conversation.workspace_id == workspace_id,
+            Conversation.created_at >= window.start,
+            Conversation.created_at < window.end,
+            *where,
+        )
+        .group_by(created_bucket)
+    )
+    opened = {at.replace(tzinfo=UTC): int(count) for at, count in created.all()}
+
+    series: dict[datetime, int] = {}
+    running = int(current or 0)
+    for start in reversed(bucket_starts(window)):
+        series[start] = running
+        entries, exits = deltas.get(start, (0, 0))
+        running = running - (entries + opened.get(start, 0)) + exits
+    return series
