@@ -35,6 +35,7 @@ from relaydesk.models.poll_state import PollState
 from relaydesk.models.rate_limit import RateLimitHit
 from relaydesk.models.raw_message import RawMessage, RawMessageState
 from relaydesk.models.session import Session
+from relaydesk.models.snippet import Snippet
 from relaydesk.models.user import User, UserIdentity
 from relaydesk.models.workspace import Workspace
 
@@ -76,6 +77,7 @@ __all__ = [
     "RawMessageState",
     "Role",
     "Session",
+    "Snippet",
     "SummaryState",
     "User",
     "UserIdentity",

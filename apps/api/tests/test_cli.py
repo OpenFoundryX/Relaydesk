@@ -16,6 +16,7 @@ from relaydesk.models import (
     ActivityEvent,
     ActivityKind,
     Conversation,
+    ConversationStatus,
     Label,
     Membership,
     Message,
@@ -25,7 +26,8 @@ from relaydesk.models import (
     Workspace,
 )
 from relaydesk.models.channel_account import ChannelAccount
-from relaydesk.services import channel_accounts, ingest
+from relaydesk.services import analytics, channel_accounts, ingest
+from relaydesk.services.analytics import resolve_window
 from tests.factories import make_workspace
 
 
@@ -115,7 +117,11 @@ async def test_seed_writes_an_opening_activity_event_per_conversation(
     await seed(db_session)
 
     conversations = (await db_session.scalars(sa.select(Conversation))).all()
-    events = (await db_session.scalars(sa.select(ActivityEvent))).all()
+    events = (
+        await db_session.scalars(
+            sa.select(ActivityEvent).where(ActivityEvent.kind == ActivityKind.created)
+        )
+    ).all()
     admin = await db_session.scalar(
         sa.select(User).where(User.email == "nilesh@relaydesk.dev")
     )
@@ -124,12 +130,74 @@ async def test_seed_writes_an_opening_activity_event_per_conversation(
     assert {event.conversation_id for event in events} == {
         conversation.id for conversation in conversations
     }
-    assert all(event.kind is ActivityKind.created for event in events)
     assert all(event.actor_user_id == admin.id for event in events)
 
     by_conversation = {event.conversation_id: event for event in events}
     for conversation in conversations:
         assert by_conversation[conversation.id].at == conversation.last_message_at
+        # The row's own `created_at` agrees with the demo timeline rather
+        # than with the wall clock, so analytics sees eleven threads spread
+        # over eight days instead of eleven opened this second.
+        assert conversation.created_at == conversation.last_message_at
+
+
+async def test_seed_records_a_status_event_for_every_non_open_thread(
+    db_session: AsyncSession,
+) -> None:
+    """Without these the seeded backlog series walks negative: every demo
+    thread counts as an entry on the day it was created, while only the
+    open/pending/on_hold ones count in today's anchor, and the difference
+    has nowhere to come out. They are also what gives the seeded
+    `tickets-resolved` and `resolution-time` cards anything to report."""
+    await seed(db_session)
+
+    conversations = (await db_session.scalars(sa.select(Conversation))).all()
+    events = (
+        await db_session.scalars(
+            sa.select(ActivityEvent).where(ActivityEvent.kind == ActivityKind.status)
+        )
+    ).all()
+
+    non_open = [
+        conversation
+        for conversation in conversations
+        if conversation.status is not ConversationStatus.open
+    ]
+    assert non_open, "the demo data is meant to show a mix of statuses"
+    by_conversation = {event.conversation_id: event for event in events}
+    assert set(by_conversation) == {conversation.id for conversation in non_open}
+    for conversation in non_open:
+        event = by_conversation[conversation.id]
+        assert event.status == conversation.status.value
+        # Inside the seeded timeline: after the thread arrived, before now.
+        assert conversation.created_at < event.at <= datetime.now(UTC)
+
+
+async def test_the_seeded_backlog_series_never_goes_negative(
+    db_session: AsyncSession,
+) -> None:
+    """The end-to-end shape of the bug: a fresh `seed` plus the default
+    30-day report. Before the status events and the floor, every bucket
+    before today read -4 and the card rendered a -250% delta."""
+    await seed(db_session)
+    workspace = await db_session.scalar(
+        sa.select(Workspace).where(Workspace.slug == "chronon")
+    )
+
+    series = await analytics.backlog(
+        db_session,
+        workspace.id,
+        resolve_window(analytics.Range.d30, datetime.now(UTC)),
+        analytics.Filters(assignee_id=None, unassigned=False),
+    )
+
+    assert min(series.values()) >= 0, series
+    in_backlog = sum(
+        1
+        for conversation in (await db_session.scalars(sa.select(Conversation))).all()
+        if conversation.status.value in analytics.BACKLOG_STATUSES
+    )
+    assert series[max(series)] == in_backlog
 
 
 async def test_seed_gives_the_workspace_a_channel_account(

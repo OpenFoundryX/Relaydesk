@@ -109,6 +109,20 @@ export interface MetricSeries {
   points: MetricPoint[];
 }
 
+export interface AgentRow {
+  userId: string;
+  name: string;
+  handled: number;
+  /** Null when this member never opened a thread; the table shows an em dash. */
+  firstResponseSeconds: number | null;
+  resolved: number;
+}
+
+export interface AnalyticsResponse {
+  series: MetricSeries[];
+  agents: AgentRow[];
+}
+
 export type ArticleStatus = "draft" | "ready" | "published";
 
 /** Internal articles are procedures for the AI agent; external ones are the customer-facing help site. */

@@ -12,8 +12,9 @@ import {
   getMessages,
 } from "@/lib/api/conversations";
 import { getLabels } from "@/lib/api/labels";
+import { getSnippets } from "@/lib/api/snippets";
 import { getTeam } from "@/lib/api/team";
-import { getWorkspace } from "@/lib/api/workspace";
+import { getCurrentUser, getWorkspace } from "@/lib/api/workspace";
 
 export default async function ConversationPage({
   params,
@@ -24,15 +25,18 @@ export default async function ConversationPage({
   const conversation = await getConversation(id);
   if (!conversation) notFound();
 
-  const [messages, draft, activity, labels, team, siblings, workspace] = await Promise.all([
-    getMessages(id),
-    getDraft(id),
-    getActivity(id),
-    getLabels(),
-    getTeam(),
-    getConversations({ status: conversation.status }),
-    getWorkspace(),
-  ]);
+  const [messages, draft, activity, labels, team, siblings, workspace, user, snippets] =
+    await Promise.all([
+      getMessages(id),
+      getDraft(id),
+      getActivity(id),
+      getLabels(),
+      getTeam(),
+      getConversations({ status: conversation.status }),
+      getWorkspace(),
+      getCurrentUser(),
+      getSnippets(),
+    ]);
 
   const index = siblings.findIndex((entry) => entry.id === id);
   const prevId = index > 0 ? siblings[index - 1].id : null;
@@ -52,6 +56,19 @@ export default async function ConversationPage({
             customerEmail={conversation.customerEmail}
             from="support@chronon.co"
             draft={draft}
+            snippets={snippets}
+            // What `{{...}}` placeholders in a snippet resolve to. `agentName`
+            // is the signed-in user rather than the conversation's assignee:
+            // a snippet signs the reply being written, and whoever is writing
+            // it is not always who it is assigned to.
+            snippetContext={{
+              customerName: conversation.customerName,
+              customerEmail: conversation.customerEmail,
+              ticketNumber: conversation.number,
+              ticketSubject: conversation.subject,
+              agentName: user.name,
+              workspaceName: workspace.name,
+            }}
           />
         </div>
 

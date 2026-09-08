@@ -4,6 +4,8 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relaydesk.models import (
+    ActivityEvent,
+    ActivityKind,
     Channel,
     Contact,
     Conversation,
@@ -133,6 +135,54 @@ async def make_conversation(
         )
     await session.commit()
     return conversation
+
+
+async def add_reply(
+    session: AsyncSession,
+    workspace: Workspace,
+    conversation: Conversation,
+    *,
+    at: datetime,
+    role: MessageRole = MessageRole.agent,
+    author: User | None = None,
+) -> Message:
+    message = Message(
+        workspace_id=workspace.id,
+        conversation_id=conversation.id,
+        role=role,
+        direction=MessageDirection.outbound,
+        author_name=author.name if author else "Support",
+        author_user_id=author.id if author else None,
+        to_address="priya@northwind.io",
+        body="Thanks for reaching out -- looking into this now.",
+        sent_at=at,
+    )
+    session.add(message)
+    await session.flush()
+    return message
+
+
+async def add_status(
+    session: AsyncSession,
+    workspace: Workspace,
+    conversation: Conversation,
+    status: str | None,
+    at: datetime,
+    user: User,
+) -> ActivityEvent:
+    event = ActivityEvent(
+        workspace_id=workspace.id,
+        conversation_id=conversation.id,
+        actor_user_id=user.id,
+        actor_name=user.name,
+        kind=ActivityKind.status,
+        verb="changed the status",
+        status=status,
+        at=at,
+    )
+    session.add(event)
+    await session.flush()
+    return event
 
 
 async def make_label(

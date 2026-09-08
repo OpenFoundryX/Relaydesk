@@ -17,14 +17,9 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Info } from "lucide-react";
-import type { MetricSeries } from "@/lib/mock/types";
+import { formatDuration } from "@/lib/analytics";
+import type { MetricSeries } from "@/lib/types";
 import { cn } from "@/lib/utils";
-
-function formatDuration(seconds: number) {
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds % 60;
-  return rest === 0 ? `${minutes}m` : `${minutes}m ${rest}s`;
-}
 
 function formatTickDate(iso: string) {
   const date = new Date(`${iso}T00:00:00Z`);
@@ -40,9 +35,19 @@ export function MetricCard({ series }: { series: MetricSeries }) {
   const formatValue = (value: number) =>
     isDuration ? formatDuration(value) : String(value);
 
-  // For durations a fall is an improvement, so the tone flips.
+  // For durations a fall is an improvement, so the tone flips. "Open
+  // backlog" is the one count that flips the same way: 40% more unanswered
+  // tickets is not a win, and the other five counts genuinely do read
+  // better when they rise.
+  //
+  // Matched on the series id rather than carried on the wire on purpose.
+  // `MetricSeries` is frozen by the analytics design's section 2 -- the API
+  // returns exactly the shape the mock settled -- and a `higherIsBetter`
+  // field would be a speculative addition to a shared contract until there
+  // is a second inverted metric to justify it.
+  const lowerIsBetter = isDuration || series.id === "backlog";
   const improving =
-    series.delta === null ? null : isDuration ? series.delta < 0 : series.delta > 0;
+    series.delta === null ? null : lowerIsBetter ? series.delta < 0 : series.delta > 0;
 
   return (
     <section className="rounded-lg border border-ink-200 bg-white p-5">

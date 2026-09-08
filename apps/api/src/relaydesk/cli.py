@@ -35,6 +35,7 @@ from relaydesk.models import (
     RawMessage,
     RawMessageState,
     Role,
+    Snippet,
     User,
     Workspace,
 )
@@ -259,6 +260,40 @@ async def seed(session: AsyncSession) -> None:
     }
     session.add_all(labels.values())
 
+    # The demo snippets. Templates is the one settings page whose value only
+    # shows up somewhere else -- these are what makes `/` in the reply
+    # composer do something on a freshly seeded database.
+    session.add_all(
+        Snippet(workspace_id=workspace.id, title=title, content=content)
+        for title, content in [
+            (
+                "Follow up",
+                "Just checking in — were you able to resolve this, or is "
+                "there anything else I can help with?",
+            ),
+            (
+                "Greeting",
+                "Hi {{customer.first_name}}, thanks for reaching out! "
+                "How can I help today?",
+            ),
+            (
+                "Issue resolved",
+                "Glad we could get this sorted out. If anything else comes "
+                "up, don't hesitate to reply here.",
+            ),
+            (
+                "Request more info",
+                "Could you provide a bit more detail so I can look into "
+                "this further? Specifically, the order ID and roughly when "
+                "it happened.",
+            ),
+            (
+                "Thank you",
+                "Thank you for your patience — I appreciate you working "
+                "through this with me.",
+            ),
+        ]
+    )
 
     people = {"admin": admin, "agent": agent, None: None}
     now = datetime.now(UTC)
@@ -293,6 +328,12 @@ async def seed(session: AsyncSession) -> None:
         conversation.priority = priority
         conversation.assignee_id = assignee.id if assignee else None
         conversation.unread = status is ConversationStatus.open
+        # `created_at` defaults to "now", which would stamp all eleven demo
+        # threads as opened this instant -- the analytics page would show a
+        # single spike today and every duration measured from now. The
+        # seeded timeline is `sent_at`, and the History tab already dates
+        # the opening entry there, so the row agrees with it.
+        conversation.created_at = sent_at
 
         await conversations.append_message(
             session,
@@ -318,6 +359,28 @@ async def seed(session: AsyncSession) -> None:
                 at=sent_at,
             )
         )
+        if status is not ConversationStatus.open:
+            # A status the timeline never mentions is a status the analytics
+            # backlog series cannot reconstruct (design section 4.6), and
+            # without it every seeded install walked its backlog negative.
+            # Written directly rather than through `conversations.record`
+            # for the same reason as the entry above: `record` stamps `at`
+            # with the wall clock, and these belong in the demo timeline.
+            # Halfway between the thread's arrival and now, so the change
+            # lands after the conversation existed and before the present.
+            session.add(
+                ActivityEvent(
+                    workspace_id=workspace.id,
+                    conversation_id=conversation.id,
+                    actor_user_id=admin.id,
+                    actor_name=admin.name,
+                    kind=ActivityKind.status,
+                    verb="marked this as",
+                    value=conversations.STATUS_LABEL[status],
+                    status=status.value,
+                    at=sent_at + timedelta(minutes=minutes_ago // 2),
+                )
+            )
         for label_name in label_names:
             session.add(
                 ConversationLabel(
