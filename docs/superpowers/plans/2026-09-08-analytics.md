@@ -2291,10 +2291,16 @@ In `metric-card.tsx`, change the type import from the deprecated
 export function formatDuration(seconds: number) {
   // Mirrors `format_duration` in the API's services/analytics.py. Resolution
   // times run to hours, and a Y axis reading "252m" is not a reading.
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
+  //
+  // Round the total once and then divide, in that order. Flooring the
+  // minutes and rounding the seconds separately turns 479.5 into "7m 60s",
+  // and duration points really are fractional -- each one is a Postgres
+  // avg() the API passes through as a float.
+  const total = Math.round(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const rest = total % 60;
   if (hours > 0) return `${hours}h ${minutes}m`;
-  const rest = Math.round(seconds % 60);
   return rest === 0 ? `${minutes}m` : `${minutes}m ${rest}s`;
 }
 ```
