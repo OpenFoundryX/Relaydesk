@@ -496,7 +496,7 @@ async def _ingest_routed(session: AsyncSession, row: RawMessage) -> RawMessageSt
             Actor(name=contact.name),
             ActivityKind.status,
             "reopened this",
-            "Open",
+            conversations.STATUS_LABEL[ConversationStatus.open],
             ConversationStatus.open.value,
         )
 

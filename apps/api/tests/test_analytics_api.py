@@ -227,6 +227,14 @@ def test_a_duration_under_an_hour_reads_in_minutes_and_seconds() -> None:
     assert format_duration(504) == "8m 24s"
 
 
+def test_a_whole_minute_drops_the_seconds() -> None:
+    """`8m`, not `8m 0s`. The console's `formatDuration` renders the Y axis
+    this way, and a headline that disagreed with the axis on the same card
+    would be the two of them contradicting each other in public."""
+    assert format_duration(480) == "8m"
+    assert format_duration(479.5) == "8m"
+
+
 def test_a_duration_over_an_hour_reads_in_hours_and_minutes() -> None:
     """`4h 12m`, not `252m 0s`. Resolution times run to hours."""
     assert format_duration(15120) == "4h 12m"

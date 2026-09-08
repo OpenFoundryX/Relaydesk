@@ -1,11 +1,24 @@
-"""Ranges, windows and buckets shared by every analytics query.
+"""The whole analytics report: windows, the six series, and the agent table.
 
-A caller picks a ``Range`` (a UI concept: "last 30 days"); ``resolve_window``
-turns that into a ``Window`` (a query concept: the half-open interval to
-filter on, and the bucket size to group by). Every later analytics query
-builds on the ``Window`` this module produces, so a wrong bucket boundary
-here silently corrupts every chart downstream — hence this module is pure
-arithmetic with no database access, easy to test exhaustively on its own.
+Read top to bottom, this module is four layers:
+
+1. **Windows** — ``Range`` (a UI concept: "last 30 days") into ``Window`` (a
+   query concept: the half-open interval to filter on and the bucket to
+   group by), plus ``bucket_starts`` and ``filled``. Pure arithmetic, no
+   database. Every query below builds on it, so a wrong boundary here
+   silently corrupts every chart downstream.
+2. **Aggregates** — ``counts``, ``durations``, ``duration_mean``, ``backlog``
+   and ``agent_rows``, each a small number of grouped statements against
+   ``conversations``, ``messages`` and ``activity_events``. Computed live;
+   there is no rollup table (design decision D1).
+3. **Presentation** — ``SERIES_SPEC`` (card order and wording),
+   ``format_duration`` and ``percent_delta``. The API ships preformatted
+   headlines, so these decide what the page literally reads.
+4. **Assembly** — ``report``, which runs every aggregate for the current and
+   previous periods and returns the ``Report`` the route serialises.
+
+Every query filters ``workspace_id`` from the caller's scope, never from a
+parameter; ``Filters`` carries the already-validated assignee.
 """
 
 import enum
@@ -147,7 +160,12 @@ class Filters:
     unassigned: bool
 
 
-def _assignee_clause(filters: Filters) -> list:
+def _assignee_clause(filters: Filters) -> list[sa.ColumnElement[bool]]:
+    """The `WHERE` terms the filter adds, splatted into a query's `where()`.
+
+    A list rather than a single clause because "no filter" has to add
+    nothing at all, and `sa.true()` would still show up in the SQL.
+    """
     if filters.unassigned:
         return [Conversation.assignee_id.is_(None)]
     if filters.assignee_id is not None:
@@ -155,7 +173,11 @@ def _assignee_clause(filters: Filters) -> list:
     return []
 
 
-def _bucket(column, window: Window):
+def _bucket(
+    column: sa.ColumnElement[datetime], window: Window
+) -> sa.ColumnElement[datetime]:
+    """`date_trunc` to the window's bucket, so Postgres groups where
+    `bucket_starts` expects."""
     return sa.func.date_trunc(window.bucket.value, column)
 
 
@@ -353,6 +375,8 @@ async def duration_mean(
     query the current period's rows and the delta would always come back
     wrong.
     """
+    # `bucket` and `previous_start` are placeholders: this query never groups
+    # and never steps back, so only `start` and `end` are read.
     window = Window(start=start, end=end, bucket=Bucket.day, previous_start=start)
     source, _, seconds, moment = _duration_source(workspace_id, window, metric)
     value = await session.scalar(
@@ -567,6 +591,14 @@ async def agent_rows(
     rows = [
         AgentRow(
             user_id=user_id,
+            # Defence only -- the fallback is unreachable. Both actor
+            # columns are `ON DELETE SET NULL` and both queries above filter
+            # `.is_not(None)`, so every id grouped here still has a `users`
+            # row. Note it is *not* what a member removed from the workspace
+            # sees either: removal drops the membership and leaves the
+            # `User` alive, so their real name keeps appearing here, which
+            # is right -- the table records who acted, not who is still on
+            # the team.
             name=names.get(user_id, "Removed member"),
             handled=by_user.get(user_id, 0),
             first_response_seconds=means.get(user_id),
@@ -612,6 +644,11 @@ def format_duration(seconds: float | None) -> str:
     minutes, remainder = divmod(rest, 60)
     if hours:
         return f"{hours}h {minutes}m"
+    # No trailing "0s": the console's `formatDuration` drops it on the Y
+    # axis, and a headline reading "8m 0s" beside an axis reading "8m" on
+    # the same card is the two of them disagreeing in public.
+    if remainder == 0:
+        return f"{minutes}m"
     return f"{minutes}m {remainder}s"
 
 
@@ -645,6 +682,10 @@ class Report:
 
 
 def _previous(window: Window) -> Window:
+    # `previous_start` is a placeholder here: nothing walks a period before
+    # the previous one, and no caller of this window ever reads the field.
+    # Repeating `start` keeps it a valid bucket-aligned datetime rather than
+    # inventing a period that is never queried.
     return Window(
         start=window.previous_start,
         end=window.start,
@@ -708,6 +749,8 @@ async def report(
         start=previous.start,
         end=window.end,
         bucket=window.bucket,
+        # A placeholder, as in `_previous`: `backlog` reads `start`, `end`
+        # and `bucket` only, and nothing steps back from this window.
         previous_start=previous.start,
     )
     levels = await backlog(session, workspace_id, span, filters)
