@@ -42,4 +42,8 @@ describe("formatDuration", () => {
   it("drops the seconds when they are zero", () => {
     expect(formatDuration(480)).toBe("8m");
   });
+
+  it("rounds the total duration before splitting to avoid impossible times", () => {
+    expect(formatDuration(479.5)).toBe("8m");
+  });
 });

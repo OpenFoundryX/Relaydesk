@@ -8,9 +8,14 @@
  * times run to hours, and a Y axis reading "252m" is not a reading.
  */
 export function formatDuration(seconds: number) {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
+  // Round once, then divide -- the same order as `format_duration` in the
+  // API's services/analytics.py. Rounding the seconds component on its own
+  // turns 479.5 into "7m 60s", and the API really does send fractional
+  // seconds: a duration point is a Postgres avg().
+  const total = Math.round(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const rest = total % 60;
   if (hours > 0) return `${hours}h ${minutes}m`;
-  const rest = Math.round(seconds % 60);
   return rest === 0 ? `${minutes}m` : `${minutes}m ${rest}s`;
 }
