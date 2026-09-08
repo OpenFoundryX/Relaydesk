@@ -79,10 +79,16 @@ async def test_the_tagged_address_stays_in_reply_to(
 
 
 async def test_an_unset_from_address_keeps_replying_from_the_ingest_address(
-    db_session: AsyncSession
+    db_session: AsyncSession, monkeypatch
 ) -> None:
-    """The default is empty, so a self-hoster who upgrades sees no change."""
-    assert get_settings().outbound_from_address == ""
+    """Empty means no change, so a self-hoster who upgrades sees none.
+
+    Set explicitly rather than trusting the ambient default: this suite runs
+    against a real deployment's environment, and a test that asserts what the
+    operator happens to have configured fails for the wrong reason the moment
+    they configure it.
+    """
+    monkeypatch.setattr(get_settings(), "outbound_from_address", "")
     message = await _outbound_message(db_session, "acme-from-default")
 
     built = await outbound.build_reply(db_session, message)
