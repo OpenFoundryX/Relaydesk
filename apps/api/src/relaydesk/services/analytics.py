@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from relaydesk.models import ActivityEvent, Conversation, Message
+from relaydesk.models import ActivityEvent, Conversation, Message, User
 
 
 class Range(enum.StrEnum):
@@ -454,3 +454,117 @@ async def backlog(
         entries, exits = deltas.get(start, (0, 0))
         running = running - (entries + opened.get(start, 0)) + exits
     return series
+
+
+@dataclass(frozen=True, slots=True)
+class AgentRow:
+    user_id: uuid.UUID
+    name: str
+    handled: int
+    first_response_seconds: float | None
+    resolved: int
+
+
+async def agent_rows(
+    session: AsyncSession, workspace_id: uuid.UUID, window: Window
+) -> list[AgentRow]:
+    """Who did what in the window.
+
+    Attributed by action -- `messages.author_user_id` and
+    `activity_events.actor_user_id` -- not by `conversations.assignee_id`. A
+    ticket answered and handed on is the answerer's work. For the same
+    reason `Filters` is not a parameter here: narrowing a per-agent
+    breakdown to one agent leaves a table with one row.
+    """
+    handled = await session.execute(
+        sa.select(
+            Message.author_user_id,
+            sa.func.count(sa.distinct(Message.conversation_id)),
+        )
+        .where(
+            Message.workspace_id == workspace_id,
+            Message.direction == "outbound",
+            Message.role.in_(REPLY_ROLES),
+            Message.author_user_id.is_not(None),
+            Message.sent_at >= window.start,
+            Message.sent_at < window.end,
+        )
+        .group_by(Message.author_user_id)
+    )
+
+    # DISTINCT ON gives the first reply per thread together with its author,
+    # which a MIN() aggregate cannot -- the aggregate loses the row.
+    first = (
+        sa.select(Message.conversation_id, Message.sent_at, Message.author_user_id)
+        .where(
+            Message.workspace_id == workspace_id,
+            Message.direction == "outbound",
+            Message.role.in_(REPLY_ROLES),
+        )
+        .distinct(Message.conversation_id)
+        .order_by(Message.conversation_id, Message.sent_at)
+        .subquery()
+    )
+    responses = await session.execute(
+        sa.select(
+            first.c.author_user_id,
+            sa.func.avg(
+                sa.func.extract("epoch", first.c.sent_at - Conversation.created_at)
+            ),
+        )
+        .select_from(first)
+        .join(Conversation, Conversation.id == first.c.conversation_id)
+        .where(
+            first.c.author_user_id.is_not(None),
+            first.c.sent_at >= window.start,
+            first.c.sent_at < window.end,
+        )
+        .group_by(first.c.author_user_id)
+    )
+
+    resolved = await session.execute(
+        sa.select(
+            ActivityEvent.actor_user_id,
+            sa.func.count(sa.distinct(ActivityEvent.conversation_id)),
+        )
+        .where(
+            ActivityEvent.workspace_id == workspace_id,
+            ActivityEvent.kind == "status",
+            ActivityEvent.status == "resolved",
+            ActivityEvent.actor_user_id.is_not(None),
+            ActivityEvent.at >= window.start,
+            ActivityEvent.at < window.end,
+        )
+        .group_by(ActivityEvent.actor_user_id)
+    )
+
+    by_user = {user_id: int(count) for user_id, count in handled.all()}
+    # `is not None` rather than a truthy check: a first reply sent in the
+    # same instant a conversation was created is a genuine zero, not a
+    # missing value.
+    means = {
+        user_id: float(value) for user_id, value in responses.all() if value is not None
+    }
+    closes = {user_id: int(count) for user_id, count in resolved.all()}
+
+    names = dict(
+        (
+            await session.execute(
+                sa.select(User.id, User.name).where(
+                    User.id.in_(set(by_user) | set(closes))
+                )
+            )
+        ).all()
+    )
+
+    rows = [
+        AgentRow(
+            user_id=user_id,
+            name=names.get(user_id, "Removed member"),
+            handled=by_user.get(user_id, 0),
+            first_response_seconds=means.get(user_id),
+            resolved=closes.get(user_id, 0),
+        )
+        for user_id in set(by_user) | set(closes)
+    ]
+    return sorted(rows, key=lambda row: (-row.handled, row.name))
