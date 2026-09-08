@@ -568,3 +568,162 @@ async def agent_rows(
         for user_id in set(by_user) | set(closes)
     ]
     return sorted(rows, key=lambda row: (-row.handled, row.name))
+
+
+#: Card order on the page, and the vocabulary the console renders. `hint`
+#: matches the copy the mock shipped, so nothing on screen changes wording.
+SERIES_SPEC = [
+    ("tickets-created", "Tickets created", None, "count"),
+    (
+        "tickets-responded",
+        "Tickets responded",
+        "Tickets that received at least one reply from an agent or the AI.",
+        "count",
+    ),
+    ("tickets-resolved", "Tickets resolved", None, "count"),
+    (
+        "first-response",
+        "Avg first response time",
+        "Measured from ingestion to the first outbound message.",
+        "duration",
+    ),
+    (
+        "resolution-time",
+        "Avg time to resolve",
+        "Measured from ingestion to the moment it was marked resolved.",
+        "duration",
+    ),
+    ("backlog", "Open backlog", None, "count"),
+]
+
+
+def format_duration(seconds: float | None) -> str:
+    if seconds is None:
+        return "—"
+    total = int(round(seconds))
+    hours, rest = divmod(total, 3600)
+    minutes, remainder = divmod(rest, 60)
+    if hours:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m {remainder}s"
+
+
+def percent_delta(current: float | None, previous: float | None) -> int | None:
+    """`None` rather than a number when there is nothing to compare against.
+
+    A workspace's first period has no previous one, and a change from zero
+    is not a percentage. `MetricCard` already renders a null delta as no
+    delta at all.
+    """
+    if current is None or not previous:
+        return None
+    return round((current - previous) / previous * 100)
+
+
+@dataclass(frozen=True, slots=True)
+class Series:
+    id: str
+    label: str
+    hint: str | None
+    headline: str
+    delta: int | None
+    format: str
+    points: list[tuple[datetime, float]]
+
+
+@dataclass(frozen=True, slots=True)
+class Report:
+    series: list[Series]
+    agents: list[AgentRow]
+
+
+def _previous(window: Window) -> Window:
+    return Window(
+        start=window.previous_start,
+        end=window.start,
+        bucket=window.bucket,
+        previous_start=window.previous_start,
+    )
+
+
+async def report(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    range_: Range,
+    filters: Filters,
+    now: datetime,
+) -> Report:
+    window = resolve_window(range_, now)
+    previous = _previous(window)
+
+    built: dict[str, tuple[str, int | None, list[tuple[datetime, float]]]] = {}
+
+    for metric, key in [
+        (CountMetric.created, "tickets-created"),
+        (CountMetric.responded, "tickets-responded"),
+        (CountMetric.resolved, "tickets-resolved"),
+    ]:
+        values = await counts(session, workspace_id, window, filters, metric)
+        before = await counts(session, workspace_id, previous, filters, metric)
+        total = sum(values.values())
+        built[key] = (
+            str(total),
+            percent_delta(total, sum(before.values())),
+            filled(values, window),
+        )
+
+    for metric, key in [
+        (DurationMetric.first_response, "first-response"),
+        (DurationMetric.resolution, "resolution-time"),
+    ]:
+        values = await durations(session, workspace_id, window, filters, metric)
+        mean = await duration_mean(
+            session, workspace_id, window.start, window.end, filters, metric
+        )
+        before = await duration_mean(
+            session, workspace_id, previous.start, previous.end, filters, metric
+        )
+        built[key] = (
+            format_duration(mean),
+            # A duration falling is an improvement, but the sign stays
+            # honest here -- MetricCard flips the colour, not the number.
+            percent_delta(mean, before),
+            filled(values, window),
+        )
+
+    # Backlog is a level, not a flow, so its headline is the newest point and
+    # its delta compares that against the newest point of the previous
+    # period. Both come from a single walk across both periods: `backlog()`
+    # anchors on *today* and steps backwards, so asking it for the previous
+    # window alone would start from today's count and skip every event
+    # between that window's end and now.
+    span = Window(
+        start=previous.start,
+        end=window.end,
+        bucket=window.bucket,
+        previous_start=previous.start,
+    )
+    levels = await backlog(session, workspace_id, span, filters)
+    current_starts = bucket_starts(window)
+    latest = levels[current_starts[-1]]
+    built["backlog"] = (
+        str(latest),
+        percent_delta(latest, levels[bucket_starts(previous)[-1]]),
+        [(start, levels[start]) for start in current_starts],
+    )
+
+    return Report(
+        series=[
+            Series(
+                id=key,
+                label=label,
+                hint=hint,
+                headline=built[key][0],
+                delta=built[key][1],
+                format=fmt,
+                points=built[key][2],
+            )
+            for key, label, hint, fmt in SERIES_SPEC
+        ],
+        agents=await agent_rows(session, workspace_id, window),
+    )

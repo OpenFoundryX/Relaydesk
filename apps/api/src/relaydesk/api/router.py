@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from relaydesk.api.analytics import router as analytics_router
 from relaydesk.api.api_keys import router as api_keys_router
 from relaydesk.api.attachments import router as attachments_router
 from relaydesk.api.auth import router as auth_router
@@ -31,6 +32,7 @@ api_router.include_router(
     attachments_router, prefix="/attachments", tags=["attachments"]
 )
 api_router.include_router(kb_router, prefix="/kb", tags=["knowledge-base"])
+api_router.include_router(analytics_router, prefix="/analytics", tags=["analytics"])
 # Anonymous: reachable at <slug>.<portal domain> with no session at all. See
 # relaydesk.api.public's module docstring for what "public" means here.
 api_router.include_router(public_router, prefix="/public", tags=["public"])
