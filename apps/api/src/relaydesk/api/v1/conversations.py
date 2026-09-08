@@ -169,6 +169,15 @@ async def update_route(
     it first means that the sole realistic failure happens before anything
     else in this request has committed, so a caller never sees a 404 that
     was itself the result of a partial write.
+
+    What that buys is precisely "no partial commit precedes an assignee
+    404", and **not** "PATCH is atomic". Each ``set_*`` commits on its own,
+    so an infrastructure failure -- a dropped connection, a deadlock, a
+    timeout -- during the second or third commit can still leave an earlier
+    field committed while the caller sees a 500. That is true of every
+    multi-call service sequence in this codebase and is not something to fix
+    here; it is written down so a future reader does not over-read the
+    paragraph above.
     """
     conversation = await conversations.get_conversation(
         session, principal.workspace_id, conversation_id
