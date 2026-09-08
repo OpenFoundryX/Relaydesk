@@ -17,14 +17,9 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Info } from "lucide-react";
-import type { MetricSeries } from "@/lib/mock/types";
+import { formatDuration } from "@/lib/analytics";
+import type { MetricSeries } from "@/lib/types";
 import { cn } from "@/lib/utils";
-
-function formatDuration(seconds: number) {
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds % 60;
-  return rest === 0 ? `${minutes}m` : `${minutes}m ${rest}s`;
-}
 
 function formatTickDate(iso: string) {
   const date = new Date(`${iso}T00:00:00Z`);

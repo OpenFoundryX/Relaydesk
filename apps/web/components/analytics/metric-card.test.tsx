@@ -1,0 +1,45 @@
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+
+import { MetricCard } from "./metric-card";
+import { formatDuration } from "@/lib/analytics";
+import type { MetricSeries } from "@/lib/types";
+
+const series: MetricSeries = {
+  id: "resolution-time",
+  label: "Avg time to resolve",
+  headline: "4h 12m",
+  delta: -8,
+  format: "duration",
+  points: [{ date: "2026-08-30", value: 15120 }],
+};
+
+describe("MetricCard", () => {
+  it("renders the headline the API formatted", () => {
+    render(<MetricCard series={series} />);
+
+    expect(screen.getByText("4h 12m")).toBeTruthy();
+  });
+
+  it("renders no delta at all when there is none", () => {
+    // A workspace's first period has nothing to compare against. An arrow
+    // pointing somewhere would be an invention.
+    render(<MetricCard series={{ ...series, delta: null }} />);
+
+    expect(screen.queryByText("%", { exact: false })).toBeNull();
+  });
+});
+
+describe("formatDuration", () => {
+  it("renders hours and minutes at or above one hour", () => {
+    expect(formatDuration(15120)).toBe("4h 12m");
+  });
+
+  it("renders minutes and seconds below one hour", () => {
+    expect(formatDuration(504)).toBe("8m 24s");
+  });
+
+  it("drops the seconds when they are zero", () => {
+    expect(formatDuration(480)).toBe("8m");
+  });
+});
