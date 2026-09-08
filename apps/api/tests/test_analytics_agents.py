@@ -4,7 +4,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from relaydesk.services import analytics
 from relaydesk.services.analytics import Range, resolve_window
-from tests.factories import add_reply, make_conversation, make_member, make_workspace
+from tests.factories import (
+    add_reply,
+    add_status,
+    make_conversation,
+    make_member,
+    make_workspace,
+)
 
 NOW = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
 
@@ -96,6 +102,52 @@ async def test_rows_are_ordered_by_how_much_was_handled(
 
     assert [row.handled for row in rows] == [2, 1]
     assert rows[0].name == sara.name
+
+
+async def test_a_resolution_is_credited_to_whoever_closed_it(
+    db_session: AsyncSession,
+) -> None:
+    """`resolved` is a third of this table and nothing else here touches it.
+    A wrong kind/status match, a non-distinct count, or the wrong timestamp
+    column would otherwise reach the page unnoticed."""
+    workspace = await make_workspace(db_session)
+    sara = await make_member(
+        db_session, workspace, email="sara@relaydesk.dev", name="Sara Blake"
+    )
+    conversation = await make_conversation(db_session, workspace)
+    await add_reply(db_session, workspace, conversation, at=NOW, author=sara)
+    await add_status(db_session, workspace, conversation, "resolved", NOW, sara)
+
+    rows = await analytics.agent_rows(
+        db_session, workspace.id, resolve_window(Range.d7, NOW)
+    )
+
+    assert [(row.name, row.handled, row.resolved) for row in rows] == [
+        (sara.name, 1, 1)
+    ]
+
+
+async def test_resolving_without_replying_still_earns_a_row(
+    db_session: AsyncSession,
+) -> None:
+    """Somebody who closes a ticket another agent answered has handled
+    nothing and resolved one. The row exists because an action was taken,
+    and the first-reply column is null because they never opened a thread."""
+    workspace = await make_workspace(db_session)
+    closer = await make_member(
+        db_session, workspace, email="dana@relaydesk.dev", name="Dana Okafor"
+    )
+    conversation = await make_conversation(db_session, workspace)
+    await add_status(db_session, workspace, conversation, "resolved", NOW, closer)
+
+    rows = await analytics.agent_rows(
+        db_session, workspace.id, resolve_window(Range.d7, NOW)
+    )
+
+    assert [(row.name, row.handled, row.resolved) for row in rows] == [
+        (closer.name, 0, 1)
+    ]
+    assert rows[0].first_response_seconds is None
 
 
 async def test_another_workspaces_agents_are_absent(db_session: AsyncSession) -> None:
