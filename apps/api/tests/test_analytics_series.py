@@ -171,3 +171,128 @@ async def test_filled_puts_a_zero_in_a_quiet_bucket(db_session: AsyncSession) ->
     assert len(points) == 7
     assert points[-1] == (datetime(2026, 8, 30, tzinfo=UTC), 3)
     assert points[0][1] == 0
+
+
+async def test_first_response_is_measured_from_the_tickets_creation(
+    db_session: AsyncSession,
+) -> None:
+    workspace = await make_workspace(db_session)
+    conversation = await make_conversation(db_session, workspace)
+    conversation.created_at = NOW - timedelta(minutes=30)
+    await db_session.flush()
+    await add_reply(db_session, workspace, conversation, at=NOW - timedelta(minutes=20))
+
+    series = await analytics.durations(
+        db_session,
+        workspace.id,
+        resolve_window(Range.d7, NOW),
+        NO_FILTER,
+        analytics.DurationMetric.first_response,
+    )
+
+    assert series[datetime(2026, 8, 30, tzinfo=UTC)] == 600
+
+
+async def test_resolution_time_is_measured_from_creation_not_from_the_last_reply(
+    db_session: AsyncSession,
+) -> None:
+    """A reopened-then-resolved ticket reports the whole elapsed ordeal."""
+    workspace = await make_workspace(db_session)
+    user = await make_member(db_session, workspace)
+    conversation = await make_conversation(db_session, workspace)
+    conversation.created_at = NOW - timedelta(hours=4)
+    await db_session.flush()
+    await add_status(db_session, workspace, conversation, "resolved", NOW, user)
+
+    series = await analytics.durations(
+        db_session,
+        workspace.id,
+        resolve_window(Range.d7, NOW),
+        NO_FILTER,
+        analytics.DurationMetric.resolution,
+    )
+
+    assert series[datetime(2026, 8, 30, tzinfo=UTC)] == 4 * 3600
+
+
+async def test_a_ticket_with_no_reply_is_absent_rather_than_zero(
+    db_session: AsyncSession,
+) -> None:
+    """Counting an unanswered ticket as a zero-second response would drag
+    the average toward zero and report the opposite of the truth."""
+    workspace = await make_workspace(db_session)
+    answered = await make_conversation(db_session, workspace)
+    answered.created_at = NOW - timedelta(minutes=10)
+    await db_session.flush()
+    await add_reply(db_session, workspace, answered, at=NOW)
+    await make_conversation(db_session, workspace, subject="Nobody answered me")
+
+    series = await analytics.durations(
+        db_session,
+        workspace.id,
+        resolve_window(Range.d7, NOW),
+        NO_FILTER,
+        analytics.DurationMetric.first_response,
+    )
+
+    assert series[datetime(2026, 8, 30, tzinfo=UTC)] == 600
+
+
+async def test_the_headline_mean_is_over_conversations_not_over_daily_means(
+    db_session: AsyncSession,
+) -> None:
+    """One slow reply yesterday and three fast ones today. The mean of the
+    two daily means is 450s; the mean over the four conversations is 225s.
+    Only the second is a number a customer experienced."""
+    workspace = await make_workspace(db_session)
+    window = resolve_window(Range.d7, NOW)
+
+    slow = await make_conversation(db_session, workspace, subject="Slow")
+    slow.created_at = NOW - timedelta(days=1, minutes=15)
+    await db_session.flush()
+    await add_reply(db_session, workspace, slow, at=NOW - timedelta(days=1))
+
+    for index in range(3):
+        fast = await make_conversation(db_session, workspace, subject=f"Fast {index}")
+        fast.created_at = NOW
+        await db_session.flush()
+        await add_reply(db_session, workspace, fast, at=NOW)
+
+    series = await analytics.durations(
+        db_session,
+        workspace.id,
+        window,
+        NO_FILTER,
+        analytics.DurationMetric.first_response,
+    )
+    headline = await analytics.duration_mean(
+        db_session,
+        workspace.id,
+        window.start,
+        window.end,
+        NO_FILTER,
+        analytics.DurationMetric.first_response,
+    )
+
+    daily = sum(series.values()) / len(series)
+    assert daily == 450
+    assert headline == 225
+
+
+async def test_the_headline_is_none_when_nothing_qualifies(
+    db_session: AsyncSession,
+) -> None:
+    workspace = await make_workspace(db_session)
+    window = resolve_window(Range.d7, NOW)
+
+    headline = await analytics.duration_mean(
+        db_session,
+        workspace.id,
+        window.start,
+        window.end,
+        NO_FILTER,
+        analytics.DurationMetric.first_response,
+    )
+
+    assert headline is None
+

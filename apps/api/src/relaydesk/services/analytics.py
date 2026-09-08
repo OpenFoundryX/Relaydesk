@@ -271,3 +271,94 @@ def filled(
     values: dict[datetime, float], window: Window
 ) -> list[tuple[datetime, float]]:
     return [(start, values.get(start, 0)) for start in bucket_starts(window)]
+
+
+class DurationMetric(enum.StrEnum):
+    first_response = "first_response"
+    resolution = "resolution"
+
+
+def _duration_source(workspace_id: uuid.UUID, window: Window, metric: DurationMetric):
+    """`(source, bucket, seconds, moment)` for a duration metric.
+
+    Both metrics are "some later moment minus the conversation's creation",
+    differing only in which moment and which rows qualify, so the query is
+    written once. `bucket` is built exactly once per call and handed back
+    for reuse in both the select list and the GROUP BY -- see the comment
+    on `counts` for why calling `_bucket` twice would compile to two
+    distinct bound parameters that Postgres refuses to fold together.
+    """
+    if metric is DurationMetric.first_response:
+        source = _first_reply(workspace_id)
+        moment = source.c.at
+        bucket = _bucket(moment, window)
+    else:
+        source = _resolves(workspace_id, window)
+        moment = source.c.at
+        bucket = source.c.bucket
+    seconds = sa.func.extract("epoch", moment - Conversation.created_at)
+    return source, bucket, seconds, moment
+
+
+async def durations(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    window: Window,
+    filters: Filters,
+    metric: DurationMetric,
+) -> dict[datetime, float]:
+    source, bucket, seconds, moment = _duration_source(workspace_id, window, metric)
+    query = (
+        sa.select(bucket, sa.func.avg(seconds))
+        .select_from(source)
+        .join(Conversation, Conversation.id == source.c.conversation_id)
+        .where(
+            moment >= window.start,
+            moment < window.end,
+            *_assignee_clause(filters),
+        )
+        .group_by(bucket)
+    )
+    rows = await session.execute(query)
+    # Same tz-naive-from-asyncpg situation as `counts` -- see the comment
+    # there. A conversation with no qualifying moment (no reply, never
+    # resolved) simply has no row here rather than a zero, which is the
+    # point of the "absent, not zero" test.
+    return {
+        at.replace(tzinfo=UTC): float(value)
+        for at, value in rows.all()
+        if value is not None
+    }
+
+
+async def duration_mean(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    start: datetime,
+    end: datetime,
+    filters: Filters,
+    metric: DurationMetric,
+) -> float | None:
+    """One mean over every qualifying conversation in `[start, end)`.
+
+    Deliberately not the mean of `durations()`'s per-bucket values: a day
+    with one slow reply would weigh as much as a day with two hundred fast
+    ones, and the headline would report a number no customer experienced.
+
+    Takes `start`/`end` rather than a `Window` because this is also called
+    for the *previous* period to compute the delta. `_resolves` bounds
+    itself by `window.start`/`window.end`, so the local `Window` built here
+    must carry the interval this call was actually asked about -- not some
+    ambient "current" window -- or the previous-period call would silently
+    query the current period's rows and the delta would always come back
+    wrong.
+    """
+    window = Window(start=start, end=end, bucket=Bucket.day, previous_start=start)
+    source, _, seconds, moment = _duration_source(workspace_id, window, metric)
+    value = await session.scalar(
+        sa.select(sa.func.avg(seconds))
+        .select_from(source)
+        .join(Conversation, Conversation.id == source.c.conversation_id)
+        .where(moment >= start, moment < end, *_assignee_clause(filters))
+    )
+    return None if value is None else float(value)
