@@ -15,7 +15,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.exc import TimeoutError as SATimeoutError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from relaydesk.email_parse import normalize
+from relaydesk.email_parse import normalize, quoting
 from relaydesk.email_parse.classify import Disposition, classify
 from relaydesk.email_parse.normalize import InboundMessage
 from relaydesk.models.activity import ActivityKind
@@ -495,7 +495,11 @@ async def _ingest_routed(session: AsyncSession, row: RawMessage) -> RawMessageSt
         direction=MessageDirection.inbound,
         author_name=contact.name,
         to_address=matched.address,
-        body=message.text_body,
+        # Trimmed, not raw: the client appended the message it was
+        # answering, and `conversation.preview` is derived from this
+        # body. The full source stays in `raw_messages.raw` and the
+        # untrimmed HTML in `body_html` below.
+        body=quoting.strip_quoted(message.text_body),
         body_html=message.html_body,
         sent_at=sent_at,
         external_id=message.message_id,
