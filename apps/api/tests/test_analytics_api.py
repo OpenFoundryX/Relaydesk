@@ -142,6 +142,32 @@ async def test_the_agent_table_ignores_the_assignee_filter(
     assert len(everyone["agents"]) == 1
 
 
+async def test_a_real_assignee_narrows_the_cards(client, db_session) -> None:
+    """A regression guard for `_parsed_filters` comparing a parsed
+    `uuid.UUID` against `TeamMember.user_id`, which is a `str` -- that
+    comparison is always `False`, so every real, in-workspace assignee was
+    rejected with a 422 and the whole filter was dead. Asserted as "fewer
+    than the unfiltered total" rather than a hardcoded count, so this does
+    not depend on how `make_conversation` stamps `created_at`."""
+    workspace = await make_workspace(db_session)
+    headers = await admin_headers(client, db_session, workspace)
+    sara = await make_member(db_session, workspace, email="sara@relaydesk.dev")
+    await make_conversation(db_session, workspace, assignee=sara)
+    await make_conversation(db_session, workspace, contact_email="other@northwind.io")
+
+    response = await client.get(
+        f"/api/analytics?assignee={sara.id}", headers=headers
+    )
+    everyone = (await client.get("/api/analytics", headers=headers)).json()
+
+    assert response.status_code == 200, response.text
+    filtered = response.json()
+    filtered_total = int(filtered["series"][0]["headline"])
+    everyone_total = int(everyone["series"][0]["headline"])
+    assert filtered["series"][0]["id"] == "tickets-created"
+    assert filtered_total < everyone_total
+
+
 def test_a_duration_under_an_hour_reads_in_minutes_and_seconds() -> None:
     assert format_duration(504) == "8m 24s"
 
