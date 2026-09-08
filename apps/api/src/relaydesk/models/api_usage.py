@@ -33,6 +33,14 @@ class ApiKeyUsage(Base):
         primary_key=True,
     )
     window_start: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), primary_key=True
+        DateTime(timezone=True),
+        primary_key=True,
+        # Declared here as well as in migration 0017, which creates
+        # ``ix_api_key_usage_window_start`` -- the name SQLAlchemy's default
+        # ``ix_<table>_<column>`` produces, so the two agree exactly. Without
+        # it the next ``alembic revision --autogenerate`` would see an index
+        # in the database that the metadata does not declare and propose
+        # *dropping* it, taking ``sweep``'s range delete to a sequential scan.
+        index=True,
     )
     count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
