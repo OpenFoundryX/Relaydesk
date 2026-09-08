@@ -1180,7 +1180,15 @@ async def test_moving_between_two_backlog_statuses_changes_nothing(
         db_session, workspace.id, resolve_window(Range.d7, NOW), NO_FILTER
     )
 
-    assert set(series.values()) == {1}
+    # Only from the day it was created. The buckets before that are
+    # legitimately zero -- the conversation did not exist yet -- so
+    # asserting over every value would demand a backlog of one on days
+    # nothing was in it.
+    since_creation = {
+        value for at, value in series.items()
+        if at >= datetime(2026, 8, 27, tzinfo=UTC)
+    }
+    assert since_creation == {1}
 
 
 async def test_a_reopen_puts_a_ticket_back(db_session: AsyncSession) -> None:
@@ -1223,7 +1231,15 @@ async def test_a_status_event_with_no_status_is_ignored(
         db_session, workspace.id, resolve_window(Range.d7, NOW), NO_FILTER
     )
 
-    assert set(series.values()) == {1}
+    # Only from the day it was created. The buckets before that are
+    # legitimately zero -- the conversation did not exist yet -- so
+    # asserting over every value would demand a backlog of one on days
+    # nothing was in it.
+    since_creation = {
+        value for at, value in series.items()
+        if at >= datetime(2026, 8, 27, tzinfo=UTC)
+    }
+    assert since_creation == {1}
 
 
 async def test_todays_value_is_counted_not_replayed(
