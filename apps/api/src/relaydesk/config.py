@@ -101,6 +101,18 @@ class Settings(BaseSettings):
     # up to twice this across a boundary -- see the note in migration 0017.
     api_key_rate_limit_per_minute: int = 120
 
+    # A webhook URL is supplied by a workspace and fetched by the server, so
+    # the default assumes it is hostile: https only, and nothing that
+    # resolves off the public internet. Setting this admits private and
+    # loopback addresses -- correct for a self-hoster whose tools live on the
+    # same network, wrong for anyone else. See spec D8; it relaxes the
+    # address check and nothing else.
+    webhook_allow_private: bool = False
+    webhook_timeout_seconds: float = 10.0
+    # Generous for someone debugging an endpoint, far short of useful for
+    # turning the console into a request proxy.
+    webhook_test_hourly_cap: int = 60
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
