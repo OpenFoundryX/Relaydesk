@@ -4,49 +4,8 @@ import type {
   Integration,
   McpServer,
   Plan,
-  Snippet,
   Webhook,
 } from "./types";
-
-const snippets: Snippet[] = [
-  {
-    id: "follow-up",
-    title: "Follow up",
-    content:
-      "Just checking in — were you able to resolve this, or is there anything else I can help with?",
-  },
-  {
-    id: "greeting",
-    title: "Greeting",
-    content: "Hi {{customer.first_name}}, thanks for reaching out! How can I help today?",
-  },
-  {
-    id: "issue-resolved",
-    title: "Issue resolved",
-    content:
-      "Glad we could get this sorted out. If anything else comes up, don't hesitate to reply here.",
-  },
-  {
-    id: "request-more-info",
-    title: "Request more info",
-    content:
-      "Could you provide a bit more detail so I can look into this further? Specifically, the order ID and roughly when it happened.",
-  },
-  {
-    id: "thank-you",
-    title: "Thank you",
-    content: "Thank you for your patience — I appreciate you working through this with me.",
-  },
-];
-
-const snippetVariables = [
-  "{{customer.first_name}}",
-  "{{customer.email}}",
-  "{{ticket.id}}",
-  "{{ticket.subject}}",
-  "{{agent.name}}",
-  "{{workspace.name}}",
-];
 
 const webhooks: Webhook[] = [
   {
@@ -175,12 +134,6 @@ Enterprise customers → assign to @Sara
 Anything marked urgent → assign to @Nilesh`,
 };
 
-export async function getSnippets(): Promise<Snippet[]> {
-  return snippets;
-}
-export async function getSnippetVariables(): Promise<string[]> {
-  return snippetVariables;
-}
 export async function getWebhooks(): Promise<Webhook[]> {
   return webhooks;
 }
