@@ -9,6 +9,7 @@ from relaydesk.api.health import router as health_router
 from relaydesk.api.kb import router as kb_router
 from relaydesk.api.labels import router as labels_router
 from relaydesk.api.public import router as public_router
+from relaydesk.api.snippets import router as snippets_router
 from relaydesk.api.team import invites_router
 from relaydesk.api.team import router as team_router
 from relaydesk.api.workspace import router as workspace_router
@@ -25,6 +26,7 @@ api_router.include_router(invites_router, prefix="/invites", tags=["team"])
 api_router.include_router(conversations_router, prefix="/conversations", tags=["inbox"])
 api_router.include_router(labels_router, prefix="/labels", tags=["inbox"])
 api_router.include_router(channels_router, prefix="/channels", tags=["channels"])
+api_router.include_router(snippets_router, prefix="/snippets", tags=["templates"])
 api_router.include_router(
     attachments_router, prefix="/attachments", tags=["attachments"]
 )

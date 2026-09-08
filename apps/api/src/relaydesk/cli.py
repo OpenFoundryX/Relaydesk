@@ -35,6 +35,7 @@ from relaydesk.models import (
     RawMessage,
     RawMessageState,
     Role,
+    Snippet,
     User,
     Workspace,
 )
@@ -259,6 +260,40 @@ async def seed(session: AsyncSession) -> None:
     }
     session.add_all(labels.values())
 
+    # The demo snippets. Templates is the one settings page whose value only
+    # shows up somewhere else -- these are what makes `/` in the reply
+    # composer do something on a freshly seeded database.
+    session.add_all(
+        Snippet(workspace_id=workspace.id, title=title, content=content)
+        for title, content in [
+            (
+                "Follow up",
+                "Just checking in — were you able to resolve this, or is "
+                "there anything else I can help with?",
+            ),
+            (
+                "Greeting",
+                "Hi {{customer.first_name}}, thanks for reaching out! "
+                "How can I help today?",
+            ),
+            (
+                "Issue resolved",
+                "Glad we could get this sorted out. If anything else comes "
+                "up, don't hesitate to reply here.",
+            ),
+            (
+                "Request more info",
+                "Could you provide a bit more detail so I can look into "
+                "this further? Specifically, the order ID and roughly when "
+                "it happened.",
+            ),
+            (
+                "Thank you",
+                "Thank you for your patience — I appreciate you working "
+                "through this with me.",
+            ),
+        ]
+    )
 
     people = {"admin": admin, "agent": agent, None: None}
     now = datetime.now(UTC)
