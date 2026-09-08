@@ -486,6 +486,19 @@ async def _ingest_routed(session: AsyncSession, row: RawMessage) -> RawMessageSt
         )
     elif conversation.status in REOPENING_STATUSES:
         conversation.status = ConversationStatus.open
+        # The customer's reply is what reopened it, so the trail says so.
+        # Written here rather than left implicit because a status the
+        # timeline never mentions is a status the analytics backlog series
+        # cannot reconstruct -- see the analytics design, section 6.
+        conversations.record(
+            session,
+            conversation,
+            Actor(name=contact.name),
+            ActivityKind.status,
+            "reopened this",
+            "Open",
+            ConversationStatus.open.value,
+        )
 
     conversation.unread = True
     appended = await conversations.append_message(
