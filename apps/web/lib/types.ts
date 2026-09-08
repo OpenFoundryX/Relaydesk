@@ -224,6 +224,24 @@ export interface Webhook {
   method: HttpMethod;
   url: string;
   params: WebhookParam[];
+  createdAt: string;
+}
+
+/** The only shape that carries the signing secret: the response to creating a
+ * webhook, or to rotating its secret. The list never includes it. */
+export interface WebhookCreated {
+  webhook: Webhook;
+  secret: string;
+}
+
+/** What a test request found. `ok` is about the receiver's status code, not
+ * about whether the call happened — a 500 comes back here, not as an error. */
+export interface WebhookTestResult {
+  ok: boolean;
+  status: number | null;
+  durationMs: number;
+  responseBody: string;
+  error: string | null;
 }
 
 export interface McpServer {

@@ -1,8 +1,9 @@
 import { PageHeader } from "@/components/console/page-header";
 import { SectionEmpty, SettingSection } from "@/components/console/setting-section";
 import { Badge } from "@/components/ui/badge";
+import { WebhookActions } from "@/components/settings/webhook-actions";
 import { WebhookDialog } from "@/components/settings/webhook-dialog";
-import { getWebhooks } from "@/lib/mock/settings";
+import { getWebhooks } from "@/lib/api/webhooks";
 import { requireAdmin } from "@/lib/api/workspace";
 
 export const metadata = { title: "Custom webhooks" };
@@ -40,6 +41,7 @@ export default async function CustomWebhooksPage() {
                   </span>
                 </div>
                 <p className="mt-1 text-[13px] text-ink-500">{webhook.description}</p>
+                <WebhookActions webhook={webhook} />
                 {webhook.params.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1">
                     {webhook.params.map((param) => (

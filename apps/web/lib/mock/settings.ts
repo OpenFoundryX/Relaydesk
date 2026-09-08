@@ -4,32 +4,7 @@ import type {
   Integration,
   McpServer,
   Plan,
-  Webhook,
 } from "./types";
-
-const webhooks: Webhook[] = [
-  {
-    id: "wh_refund",
-    name: "refund_order",
-    description: "Refunds an order by its order_id.",
-    method: "POST",
-    url: "https://api.example.com/relaydesk/refund",
-    params: [
-      { name: "order_id", type: "string", description: "The order to refund.", required: true },
-      { name: "amount", type: "number", description: "Partial amount in cents.", required: false },
-    ],
-  },
-  {
-    id: "wh_lookup",
-    name: "lookup_subscription",
-    description: "Returns the caller's current plan and renewal date.",
-    method: "GET",
-    url: "https://api.example.com/relaydesk/subscription",
-    params: [
-      { name: "email", type: "string", description: "Customer email address.", required: true },
-    ],
-  },
-];
 
 const mcpServers: McpServer[] = [
   {
@@ -134,9 +109,6 @@ Enterprise customers → assign to @Sara
 Anything marked urgent → assign to @Nilesh`,
 };
 
-export async function getWebhooks(): Promise<Webhook[]> {
-  return webhooks;
-}
 export async function getMcpServers(): Promise<McpServer[]> {
   return mcpServers;
 }
