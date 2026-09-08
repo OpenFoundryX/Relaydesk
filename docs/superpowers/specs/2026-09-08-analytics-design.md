@@ -237,9 +237,15 @@ elif conversation.status in REOPENING_STATUSES:
 
 No `ActivityEvent` is written. Two consequences, one of them pre-existing:
 
-1. §4.6 cannot see the reopen, so every backlog point before it is short by
-   one. Reopening is not rare — it is what happens whenever a customer
-   replies to a ticket an agent closed.
+1. §4.6 cannot see the reopen, so every backlog point before it is **over**
+   by one. Trace a ticket resolved at D2 (recorded) and reopened at D4
+   (unrecorded), still open today: the walk starts from today's anchor,
+   which counts it; nothing at D4 tells the walk to take it back out; and
+   the recorded exit at D2 then *adds* it on the way past, so every bucket
+   before the close carries it twice. ("Short by one" is what you get
+   reasoning forwards from zero, which D6 rejects.) Reopening is not rare —
+   it is what happens whenever a customer replies to a ticket an agent
+   closed.
 2. The conversation's own activity feed has never shown reopens either. A
    ticket silently changes state and the timeline does not say so.
 
@@ -322,8 +328,19 @@ Console: `vitest` over the range/assignee filters driving the URL, and
 happened left no trace and cannot be recovered. Because the walk is
 anchored on today (D6), the error sits in the oldest buckets and shrinks
 toward the right-hand edge — the 12-month view of a busy workspace will be
-the least trustworthy thing on the page for its first year. Not worth a
-backfill: there is no source to backfill from.
+the least trustworthy thing on the page for its first year. The error runs
+in one direction: each unrecorded reopen leaves every earlier bucket **over**
+by one (§6), so old backlog numbers read worse than the workspace really
+was, never better. Not worth a backfill: there is no source to backfill
+from.
+
+The same gap is why the walk is floored at zero. An unrecorded status
+change can drive the running total negative — a conversation created
+inside the window and closed with no `kind = 'status'` event subtracts a
+creation the anchor has already excluded — and a backlog of `-4` is not an
+approximation a reader can discount, it is a number that cannot exist.
+Clamping keeps the series merely uncertain in the oldest buckets rather
+than visibly impossible.
 
 **`delta` against a zero previous period is `null`, not `+100%`.** A
 workspace's first month shows no deltas at all. This is deliberate — a
