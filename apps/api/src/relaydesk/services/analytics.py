@@ -9,8 +9,14 @@ arithmetic with no database access, easy to test exhaustively on its own.
 """
 
 import enum
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+
+import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from relaydesk.models import ActivityEvent, Conversation, Message
 
 
 class Range(enum.StrEnum):
@@ -115,3 +121,153 @@ def bucket_starts(window: Window) -> list[datetime]:
         starts.append(moment)
         moment = _step_back(moment, window.bucket, -1)
     return starts
+
+
+#: Statuses that keep a conversation in the backlog. Everything else --
+#: resolved, ignored, trash -- is terminal.
+BACKLOG_STATUSES = ("open", "pending", "on_hold")
+
+#: A reply to the customer. `system` is excluded: a bounce notice belongs to
+#: the thread but answers nobody.
+REPLY_ROLES = ("agent", "ai")
+
+
+class CountMetric(enum.StrEnum):
+    created = "created"
+    responded = "responded"
+    resolved = "resolved"
+
+
+@dataclass(frozen=True, slots=True)
+class Filters:
+    """Who the page is scoped to. Mutually exclusive by construction: the
+    console's select offers one assignee or "Unassigned", never both."""
+
+    assignee_id: uuid.UUID | None
+    unassigned: bool
+
+
+def _assignee_clause(filters: Filters) -> list:
+    if filters.unassigned:
+        return [Conversation.assignee_id.is_(None)]
+    if filters.assignee_id is not None:
+        return [Conversation.assignee_id == filters.assignee_id]
+    return []
+
+
+def _bucket(column, window: Window):
+    return sa.func.date_trunc(window.bucket.value, column)
+
+
+def _first_reply(workspace_id: uuid.UUID):
+    """One row per conversation: when it was first answered.
+
+    A subquery rather than a join, because "the first reply" is a property
+    of the thread and every metric that needs it needs exactly one row.
+    """
+    return (
+        sa.select(
+            Message.conversation_id.label("conversation_id"),
+            sa.func.min(Message.sent_at).label("at"),
+        )
+        .where(
+            Message.workspace_id == workspace_id,
+            Message.direction == "outbound",
+            Message.role.in_(REPLY_ROLES),
+        )
+        .group_by(Message.conversation_id)
+        .subquery()
+    )
+
+
+def _resolves(workspace_id: uuid.UUID, window: Window):
+    """One row per (conversation, bucket) it was resolved in.
+
+    Grouped, not raw: a ticket resolved, reopened and resolved again inside
+    one bucket is one resolution that bucket, and `min` is the moment the
+    resolution-time metric measures to.
+    """
+    # Same expression reused in the select list and the GROUP BY -- see the
+    # comment in `counts` on why calling `_bucket` twice here would compile
+    # to two distinct bound parameters that Postgres refuses to fold together.
+    resolved_bucket = _bucket(ActivityEvent.at, window)
+    return (
+        sa.select(
+            ActivityEvent.conversation_id.label("conversation_id"),
+            resolved_bucket.label("bucket"),
+            sa.func.min(ActivityEvent.at).label("at"),
+        )
+        .where(
+            ActivityEvent.workspace_id == workspace_id,
+            ActivityEvent.kind == "status",
+            ActivityEvent.status == "resolved",
+            ActivityEvent.at >= window.start,
+            ActivityEvent.at < window.end,
+        )
+        .group_by(ActivityEvent.conversation_id, resolved_bucket)
+        .subquery()
+    )
+
+
+async def counts(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    window: Window,
+    filters: Filters,
+    metric: CountMetric,
+) -> dict[datetime, int]:
+    where = _assignee_clause(filters)
+
+    if metric is CountMetric.created:
+        # Reuse one bucket expression for both the select list and the
+        # GROUP BY: calling `_bucket` twice compiles to two separate bound
+        # parameters for the `date_trunc` unit, and Postgres only folds a
+        # GROUP BY entry into the select list when the two are the exact
+        # same expression, not merely two parameters holding equal values.
+        created_bucket = _bucket(Conversation.created_at, window)
+        query = (
+            sa.select(created_bucket, sa.func.count())
+            .where(
+                Conversation.workspace_id == workspace_id,
+                Conversation.created_at >= window.start,
+                Conversation.created_at < window.end,
+                *where,
+            )
+            .group_by(created_bucket)
+        )
+    elif metric is CountMetric.responded:
+        replies = _first_reply(workspace_id)
+        reply_bucket = _bucket(replies.c.at, window)
+        query = (
+            sa.select(reply_bucket, sa.func.count())
+            .select_from(replies)
+            .join(Conversation, Conversation.id == replies.c.conversation_id)
+            .where(
+                replies.c.at >= window.start,
+                replies.c.at < window.end,
+                *where,
+            )
+            .group_by(reply_bucket)
+        )
+    else:
+        resolves = _resolves(workspace_id, window)
+        query = (
+            sa.select(resolves.c.bucket, sa.func.count())
+            .select_from(resolves)
+            .join(Conversation, Conversation.id == resolves.c.conversation_id)
+            .where(*where)
+            .group_by(resolves.c.bucket)
+        )
+
+    rows = await session.execute(query)
+    # `date_trunc` on a `timestamptz` column returns a tz-aware datetime, but
+    # asyncpg hands it back naive (UTC wall-clock); reattach the tzinfo so
+    # these keys compare equal to the tz-aware `bucket_starts` the caller
+    # looks them up with.
+    return {bucket.replace(tzinfo=UTC): int(value) for bucket, value in rows.all()}
+
+
+def filled(
+    values: dict[datetime, float], window: Window
+) -> list[tuple[datetime, float]]:
+    return [(start, values.get(start, 0)) for start in bucket_starts(window)]
