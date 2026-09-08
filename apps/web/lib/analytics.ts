@@ -19,3 +19,17 @@ export function formatDuration(seconds: number) {
   if (hours > 0) return `${hours}h ${minutes}m`;
   return rest === 0 ? `${minutes}m` : `${minutes}m ${rest}s`;
 }
+
+export const RANGES = [
+  { id: "7d", label: "Last 7 days" },
+  { id: "30d", label: "Last 30 days" },
+  { id: "90d", label: "Last 90 days" },
+  { id: "12m", label: "Last 12 months" },
+] as const;
+
+/** Anything else in the URL falls back rather than 422-ing the page: a
+ *  hand-edited query string should not be an error screen. The API is the
+ *  authority and refuses an unknown range on its own. */
+export function safeRange(raw: string | undefined): string {
+  return RANGES.some((option) => option.id === raw) ? raw! : "30d";
+}
