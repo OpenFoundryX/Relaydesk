@@ -616,7 +616,12 @@ async def test_the_assignee_filter_narrows_to_one_persons_tickets(
     db_session: AsyncSession,
 ) -> None:
     workspace = await make_workspace(db_session)
-    sara = await make_member(db_session, workspace, email="sara@relaydesk.dev")
+    # `name` must be passed: make_member defaults it to "Nilesh Pant", which
+    # would collide with the other member these tests create and break any
+    # assertion keyed by name.
+    sara = await make_member(
+        db_session, workspace, email="sara@relaydesk.dev", name="Sara Duval"
+    )
     mine = await make_conversation(db_session, workspace, assignee=sara)
     await make_conversation(db_session, workspace, subject="Someone else's")
     mine.created_at = NOW
@@ -637,7 +642,12 @@ async def test_unassigned_selects_tickets_with_no_assignee(
     db_session: AsyncSession,
 ) -> None:
     workspace = await make_workspace(db_session)
-    sara = await make_member(db_session, workspace, email="sara@relaydesk.dev")
+    # `name` must be passed: make_member defaults it to "Nilesh Pant", which
+    # would collide with the other member these tests create and break any
+    # assertion keyed by name.
+    sara = await make_member(
+        db_session, workspace, email="sara@relaydesk.dev", name="Sara Duval"
+    )
     await make_conversation(db_session, workspace, assignee=sara)
     loose = await make_conversation(db_session, workspace, subject="Nobody's")
     loose.created_at = NOW
@@ -1411,7 +1421,12 @@ async def test_a_reply_is_credited_to_whoever_wrote_it_not_the_assignee(
 ) -> None:
     """Sara answers and hands the ticket to Nilesh. The reply is Sara's."""
     workspace = await make_workspace(db_session)
-    sara = await make_member(db_session, workspace, email="sara@relaydesk.dev")
+    # `name` must be passed: make_member defaults it to "Nilesh Pant", which
+    # would collide with the other member these tests create and break any
+    # assertion keyed by name.
+    sara = await make_member(
+        db_session, workspace, email="sara@relaydesk.dev", name="Sara Duval"
+    )
     nilesh = await make_member(
         db_session, workspace, email="nilesh@relaydesk.dev", name="Nilesh Pant"
     )
@@ -1443,7 +1458,12 @@ async def test_replying_second_leaves_first_response_unset(
     """The honest answer for somebody who only ever picks up threads others
     opened -- not a zero, and not somebody else's number."""
     workspace = await make_workspace(db_session)
-    sara = await make_member(db_session, workspace, email="sara@relaydesk.dev")
+    # `name` must be passed: make_member defaults it to "Nilesh Pant", which
+    # would collide with the other member these tests create and break any
+    # assertion keyed by name.
+    sara = await make_member(
+        db_session, workspace, email="sara@relaydesk.dev", name="Sara Duval"
+    )
     nilesh = await make_member(
         db_session, workspace, email="nilesh@relaydesk.dev", name="Nilesh Pant"
     )
@@ -1466,7 +1486,12 @@ async def test_rows_are_ordered_by_how_much_was_handled(
     db_session: AsyncSession,
 ) -> None:
     workspace = await make_workspace(db_session)
-    sara = await make_member(db_session, workspace, email="sara@relaydesk.dev")
+    # `name` must be passed: make_member defaults it to "Nilesh Pant", which
+    # would collide with the other member these tests create and break any
+    # assertion keyed by name.
+    sara = await make_member(
+        db_session, workspace, email="sara@relaydesk.dev", name="Sara Duval"
+    )
     nilesh = await make_member(
         db_session, workspace, email="nilesh@relaydesk.dev", name="Nilesh Pant"
     )
@@ -1769,7 +1794,12 @@ async def test_the_agent_table_ignores_the_assignee_filter(
     leaves the table alone."""
     workspace = await make_workspace(db_session)
     headers = await admin_headers(client, db_session, workspace)
-    sara = await make_member(db_session, workspace, email="sara@relaydesk.dev")
+    # `name` must be passed: make_member defaults it to "Nilesh Pant", which
+    # would collide with the other member these tests create and break any
+    # assertion keyed by name.
+    sara = await make_member(
+        db_session, workspace, email="sara@relaydesk.dev", name="Sara Duval"
+    )
     conversation = await make_conversation(db_session, workspace)
     await add_reply(db_session, workspace, conversation, at=NOW, author=sara)
     await db_session.commit()
