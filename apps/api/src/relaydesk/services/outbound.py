@@ -110,8 +110,13 @@ async def build_reply(session: AsyncSession, message: Message) -> EmailMessage:
         address = channel_accounts.address_for(
             account, workspace.slug, conversation.number
         )
-        sender = f'"{workspace.name}" <{address}>'
         reply_to = address
+        # Only the From moves. `reply_to` keeps the tagged address above:
+        # the `+c` tag is what routes the customer's reply back onto this
+        # conversation, and `ingest._route` finds a workspace by looking for
+        # a token in the recipient, nowhere else.
+        configured = get_settings().outbound_from_address
+        sender = f'"{workspace.name}" <{configured or address}>'
     else:
         # channel_accounts.deactivate can leave a workspace with no active
         # account. The send still succeeds, but the +c tag that lets the

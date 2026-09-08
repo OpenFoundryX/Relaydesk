@@ -58,6 +58,12 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_use_tls: bool = False
     smtp_from_name: str = "Relaydesk"
+    # The address outbound replies are sent *from*. Empty means send from the
+    # workspace's own tagged ingest address, which is what routing needs but
+    # reads as machine-generated to a recipient and to spam filters. Setting
+    # it moves only the From; `Reply-To` keeps the tagged address, because
+    # that is what actually carries a reply back onto the conversation.
+    outbound_from_address: str = ""
 
     attachment_dir: str = "/var/lib/relaydesk/attachments"
     attachment_max_bytes: int = 26214400
