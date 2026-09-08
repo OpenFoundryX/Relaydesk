@@ -20,5 +20,9 @@ async def list_route(scope: Scope, session: DbSession) -> list[LabelOut]:
 async def create_route(
     payload: LabelCreateRequest, scope: Scope, session: DbSession
 ) -> LabelOut:
-    label = await labels.create_label(session, scope.workspace_id, payload.name)
+    # The console does not distinguish the two cases: the dialog closes on
+    # either, and a duplicate name is not an error worth surfacing there.
+    label, _created = await labels.create_label(
+        session, scope.workspace_id, payload.name
+    )
     return LabelOut(id=str(label.id), name=label.name, color=label.color.value)

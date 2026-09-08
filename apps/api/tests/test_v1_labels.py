@@ -61,6 +61,47 @@ async def test_creating_the_same_label_twice_returns_the_first(
     assert first.json()["id"] == second.json()["id"]
 
 
+async def test_a_new_label_is_201_and_a_repeat_is_200(client, db_session) -> None:
+    """The status code is the only thing that distinguishes the two.
+
+    ``POST /v1/conversations`` already answers 201 for a genuine create and
+    200 when ``external_id`` matched something the workspace had. This route
+    is equally idempotent, so it has to report the outcome the same way: an
+    importer creating labels and conversations in one pass and counting
+    creations by status code would otherwise log "created 40 labels" on
+    every re-run, with no way to learn that 39 already existed.
+
+    Case-insensitively, too -- ``labels.name`` is CITEXT, so "refunds" is a
+    replay of "Refunds", not a second label.
+    """
+    workspace = await make_workspace(db_session)
+    headers = await key_for(db_session, workspace, [ApiKeyScope.labels_write])
+
+    first = await client.post("/v1/labels", json={"name": "Refunds"}, headers=headers)
+    second = await client.post("/v1/labels", json={"name": "Refunds"}, headers=headers)
+    variant = await client.post("/v1/labels", json={"name": "refunds"}, headers=headers)
+
+    assert first.status_code == 201
+    assert second.status_code == 200
+    assert variant.status_code == 200
+    assert first.json() == second.json() == variant.json()
+
+
+async def test_the_openapi_document_declares_the_idempotent_200(client) -> None:
+    """A generated SDK must know 200 is a valid answer to this POST.
+
+    Without the ``responses={200: ...}`` declaration the route advertises
+    only its ``status_code=201``, and a strict client treats the replay as
+    an unexpected response.
+    """
+    from relaydesk.main import app
+
+    operation = app.openapi()["paths"]["/v1/labels"]["post"]
+
+    assert "200" in operation["responses"]
+    assert "201" in operation["responses"]
+
+
 async def test_labels_read_alone_cannot_create(client, db_session) -> None:
     workspace = await make_workspace(db_session)
     headers = await key_for(db_session, workspace, [ApiKeyScope.labels_read])

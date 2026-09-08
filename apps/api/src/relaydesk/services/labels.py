@@ -27,8 +27,15 @@ async def list_labels(session: AsyncSession, workspace_id: uuid.UUID) -> list[La
 
 async def create_label(
     session: AsyncSession, workspace_id: uuid.UUID, name: str
-) -> Label:
-    """Idempotent by name, so a double submit returns the existing label."""
+) -> tuple[Label, bool]:
+    """Idempotent by name, so a double submit returns the existing label.
+
+    Returns ``(label, created)``, the same shape ``tickets.create_from_api``
+    returns and for the same reason: the caller cannot otherwise tell an
+    idempotent hit from a genuine create, so an importer logging
+    created-counts by status code would report "created 40 labels" on every
+    re-run with no way to learn that 39 already existed.
+    """
     trimmed = name.strip()
     if not trimmed:
         raise Invalid("A label needs a name.")
@@ -44,7 +51,7 @@ async def create_label(
         )
     )
     if existing is not None:
-        return existing
+        return existing, False
 
     count = await session.scalar(
         sa.select(sa.func.count())
@@ -58,4 +65,4 @@ async def create_label(
     )
     session.add(label)
     await session.commit()
-    return label
+    return label, True
