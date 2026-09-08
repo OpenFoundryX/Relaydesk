@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator
 
@@ -109,11 +110,50 @@ class PublicArticleOut(PublicArticleSummary):
     updated_at: datetime
 
 
-class PublicCategoryOut(CamelModel):
+class PublicCollectionOut(CamelModel):
+    """A collection as it appears on a card: blurb, icon, and a count.
+
+    `article_count` is the whole subtree, not the direct children -- a
+    collection whose articles all live in its sections would otherwise
+    advertise zero.
+    """
+
     id: str
     name: str
     slug: str
+    description: str
+    icon: str
+    article_count: int
+
+
+class PublicCrumbOut(CamelModel):
+    """One step of a breadcrumb. Name to print, slug to build the href."""
+
+    name: str
+    slug: str
+
+
+class PublicCategoryNodeOut(CamelModel):
+    kind: Literal["category"] = "category"
+    category: PublicCollectionOut
+    #: Root first, excluding the category itself.
+    ancestors: list[PublicCrumbOut]
+    collections: list[PublicCollectionOut]
+    #: Articles sitting directly here rather than in a sub-collection.
     articles: list[PublicArticleSummary]
+
+
+class PublicArticleNodeOut(CamelModel):
+    kind: Literal["article"] = "article"
+    article: PublicArticleOut
+    ancestors: list[PublicCrumbOut]
+
+
+#: What a help-site path resolves to. The caller -- one catch-all route --
+#: cannot know which of the two it is asking for, so `kind` tells it.
+PublicNodeOut = Annotated[
+    PublicCategoryNodeOut | PublicArticleNodeOut, Field(discriminator="kind")
+]
 
 
 class TicketSubmittedOut(CamelModel):

@@ -18,12 +18,16 @@ from relaydesk.api.deps import DbSession
 from relaydesk.config import get_settings
 from relaydesk.email_parse.normalize import ParsedAttachment
 from relaydesk.errors import Invalid, NotFound, TooManyRequests
-from relaydesk.models.kb import KbArticle
+from relaydesk.models.kb import KbArticle, KbCategory
 from relaydesk.models.workspace import Workspace
 from relaydesk.schemas.kb import (
+    PublicArticleNodeOut,
     PublicArticleOut,
     PublicArticleSummary,
-    PublicCategoryOut,
+    PublicCategoryNodeOut,
+    PublicCollectionOut,
+    PublicCrumbOut,
+    PublicNodeOut,
     PublicWorkspaceOut,
     TicketSubmittedOut,
 )
@@ -79,19 +83,31 @@ def _article_out(article: KbArticle) -> PublicArticleOut:
     )
 
 
-@router.get("/{slug}/kb", response_model=list[PublicCategoryOut])
-async def read_kb_index(slug: str, session: DbSession) -> list[PublicCategoryOut]:
-    workspace = await resolve_workspace(session, slug)
-    rows = await kb_public.index(session, workspace.id)
+def _collection(category: KbCategory, article_count: int) -> PublicCollectionOut:
+    return PublicCollectionOut(
+        id=str(category.id),
+        name=category.name,
+        slug=category.slug,
+        description=category.description,
+        icon=category.icon,
+        article_count=article_count,
+    )
+
+
+def _crumbs(categories: list[KbCategory]) -> list[PublicCrumbOut]:
     return [
-        PublicCategoryOut(
-            id=str(category.id),
-            name=category.name,
-            slug=category.slug,
-            articles=[_article_summary(article) for article in articles],
-        )
-        for category, articles in rows
+        PublicCrumbOut(name=category.name, slug=category.slug)
+        for category in categories
     ]
+
+
+@router.get("/{slug}/kb", response_model=list[PublicCollectionOut])
+async def read_kb_index(slug: str, session: DbSession) -> list[PublicCollectionOut]:
+    """The help site's front page: root collections, each with its blurb,
+    its icon, and how many published articles sit anywhere beneath it."""
+    workspace = await resolve_workspace(session, slug)
+    rows = await kb_public.roots(session, workspace.id)
+    return [_collection(category, count) for category, count in rows]
 
 
 @router.get("/{slug}/kb/search", response_model=list[PublicArticleSummary])
@@ -117,17 +133,40 @@ async def read_kb_image(slug: str, image_id: uuid.UUID, session: DbSession) -> R
     )
 
 
-@router.get(
-    "/{slug}/kb/{category_slug}/{article_slug}", response_model=PublicArticleOut
-)
-async def read_kb_article(
-    slug: str, category_slug: str, article_slug: str, session: DbSession
-) -> PublicArticleOut:
+# Declared last of the `/kb` routes on purpose: `{path:path}` swallows
+# everything, so `search` and `images/{id}` above it would never be reached
+# otherwise. Those two names are also refused as category slugs -- see
+# `RESERVED_CATEGORY_SLUGS` in `relaydesk.services.kb_categories`.
+@router.get("/{slug}/kb/{path:path}", response_model=PublicNodeOut)
+async def read_kb_path(
+    slug: str, path: str, session: DbSession
+) -> PublicCategoryNodeOut | PublicArticleNodeOut:
+    """One help-site path, resolved to whatever it names.
+
+    A collection, a section, and an article are three renderings of the
+    same walk, and the caller holding a URL cannot tell which it has until
+    the walk is done -- so this answers all three, and `kind` says which.
+
+    The ancestors come back with it, which is both the breadcrumb and the
+    canonical path: a caller whose URL disagrees with them is holding an
+    old link to a moved article and can redirect to the real one.
+    """
     workspace = await resolve_workspace(session, slug)
-    article = await kb_public.article(
-        session, workspace.id, category_slug, article_slug
+    node = await kb_public.resolve(
+        session, workspace.id, [s for s in path.split("/") if s]
     )
-    return _article_out(article)
+    if isinstance(node, kb_public.ArticleNode):
+        return PublicArticleNodeOut(
+            article=_article_out(node.article), ancestors=_crumbs(node.ancestors)
+        )
+    return PublicCategoryNodeOut(
+        category=_collection(
+            node.category, sum(n for _, n in node.collections) + len(node.articles)
+        ),
+        ancestors=_crumbs(node.ancestors),
+        collections=[_collection(c, n) for c, n in node.collections],
+        articles=[_article_summary(a) for a in node.articles],
+    )
 
 
 # `/{slug}/tickets` adds no new fixed first segment -- the first segment is
