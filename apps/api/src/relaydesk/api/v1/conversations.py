@@ -174,7 +174,6 @@ async def update_route(
         session, principal.workspace_id, conversation_id
     )
     actor = principal.actor
-    mutated = False
 
     # Checked by presence, not by ``is not None``: ``assignee_id`` is
     # ``uuid.UUID | None``, so an explicit ``{"assignee_id": null}`` and an
@@ -189,29 +188,24 @@ async def update_route(
             payload.assignee_id,
             actor,
         )
-        mutated = True
     if payload.status is not None:
         conversation = await conversations.set_status(
             session, principal.workspace_id, conversation_id, payload.status, actor
         )
-        mutated = True
     if payload.priority is not None:
         conversation = await conversations.set_priority(
             session, principal.workspace_id, conversation_id, payload.priority, actor
         )
-        mutated = True
 
-    if mutated:
-        # Each ``set_*`` call above commits, and ``updated_at`` carries
-        # ``onupdate=func.now()`` -- a server-computed value that Postgres
-        # does not hand back inline, so SQLAlchemy leaves it (and
-        # ``assignee_id``) expired on the instance. ``conversation_out``
-        # reads both directly, not through a relationship, so touching
-        # either without a refresh first raises ``MissingGreenlet``. See
-        # the identical note in ``services.tickets.create_from_api``.
-        await session.refresh(
-            conversation, ["labels", "assignee", "updated_at", "assignee_id"]
-        )
+    # No refresh here. Every ``set_*`` above refreshes ``updated_at`` and
+    # ``assignee_id`` itself after its own commit, which is where that
+    # belongs: ``Conversation.updated_at`` carries ``onupdate=func.now()``,
+    # so any UPDATE expires it, and a route is the wrong place to have to
+    # know that. This used to be patched here and in
+    # ``tickets.create_from_api`` -- two call sites that happened to have
+    # been bitten -- while ``set_status`` and ``set_priority`` had no refresh
+    # at all and would have crashed the next caller to serialise their
+    # result.
     return conversation_out(conversation)
 
 

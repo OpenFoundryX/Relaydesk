@@ -5,13 +5,16 @@ import sqlalchemy as sa
 
 from relaydesk.models import (
     ApiKeyScope,
+    ConversationStatus,
     DeliveryState,
     Message,
     MessageDirection,
     MessageRole,
     Priority,
 )
+from relaydesk.schemas.v1 import conversation_out
 from relaydesk.services import api_keys, conversations
+from relaydesk.services.actors import Actor
 from tests.factories import make_conversation, make_member, make_workspace
 
 
@@ -325,3 +328,52 @@ async def test_the_reply_response_is_the_reply_not_a_future_dated_inbound(
     assert body["direction"] == "outbound"
     assert body["author_name"] == "Support bot"
     assert body["body"] == "We have refunded your order."
+
+
+async def test_set_status_leaves_a_conversation_conversation_out_can_read(
+    db_session,
+) -> None:
+    """``set_status`` must refresh ``updated_at`` itself.
+
+    ``Conversation.updated_at`` carries ``onupdate=func.now()``, so any
+    UPDATE expires it server-side whatever ``expire_on_commit`` says --
+    SQLAlchemy cannot know a value Postgres computed and did not return.
+    ``schemas.v1.conversation_out`` reads it synchronously, so without a
+    refresh inside the service the next caller to serialise the result
+    raises ``MissingGreenlet``. That was patched at two call sites that
+    happened to be bitten while these two helpers had no refresh at all,
+    which left the trap armed for the next path to call either directly.
+
+    This test calls the service, not the route, precisely so it fails if the
+    fix moves back out to a route.
+    """
+    workspace = await make_workspace(db_session)
+    conversation = await make_conversation(db_session, workspace)
+
+    updated = await conversations.set_status(
+        db_session,
+        workspace.id,
+        conversation.id,
+        ConversationStatus.resolved,
+        Actor.for_user(await make_member(db_session, workspace)),
+    )
+
+    assert conversation_out(updated).status is ConversationStatus.resolved
+
+
+async def test_set_priority_leaves_a_conversation_conversation_out_can_read(
+    db_session,
+) -> None:
+    """The companion to the above; same trap, same reason."""
+    workspace = await make_workspace(db_session)
+    conversation = await make_conversation(db_session, workspace, priority=Priority.low)
+
+    updated = await conversations.set_priority(
+        db_session,
+        workspace.id,
+        conversation.id,
+        Priority.urgent,
+        Actor.for_user(await make_member(db_session, workspace)),
+    )
+
+    assert conversation_out(updated).priority is Priority.urgent

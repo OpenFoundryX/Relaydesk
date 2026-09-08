@@ -407,6 +407,12 @@ async def set_status(
     conversation = await get_conversation(session, workspace_id, conversation_id)
     _apply_status(session, conversation, status, actor)
     await session.commit()
+    # See the note in ``set_assignee``. This one has no relationships to
+    # reload, but the refresh is not optional: without it any caller that
+    # changes a status and then hands the conversation to
+    # ``schemas.v1.conversation_out`` raises ``MissingGreenlet`` on the
+    # expired ``updated_at``, with nothing at the call site to warn them.
+    await session.refresh(conversation, ["updated_at", "assignee_id"])
     return conversation
 
 
@@ -453,6 +459,9 @@ async def set_priority(
         PRIORITY_LABEL[priority],
     )
     await session.commit()
+    # Same reason as ``set_status``: the UPDATE expires ``updated_at``, and
+    # the next caller to serialise this object would be the one to find out.
+    await session.refresh(conversation, ["updated_at", "assignee_id"])
     return conversation
 
 
@@ -487,7 +496,19 @@ async def set_assignee(
     conversation.assignee_id = assignee_id
     record(session, conversation, actor, ActivityKind.assignee, verb, value)
     await session.commit()
-    await session.refresh(conversation, ["draft", "labels", "assignee"])
+    # ``updated_at`` and ``assignee_id`` on top of the relationships:
+    # ``Conversation.updated_at`` carries ``onupdate=func.now()``, a
+    # server-computed value Postgres does not hand back inline, so every
+    # UPDATE leaves it expired on the instance no matter what
+    # ``expire_on_commit`` says -- and ``schemas.v1.conversation_out`` reads
+    # it synchronously, so a caller that mutates and then serialises would
+    # raise ``MissingGreenlet``. Naming them here rather than at each route
+    # costs nothing: ``session.refresh`` issues **one** row query however
+    # many attributes it is given, so this is two more scalar columns on a
+    # SELECT that already happens, not another round trip.
+    await session.refresh(
+        conversation, ["draft", "labels", "assignee", "updated_at", "assignee_id"]
+    )
     if conversation.assignee is not None:
         notifications.notify_assignment(conversation, conversation.assignee, actor)
     return conversation
@@ -512,7 +533,19 @@ async def add_label(
     session.add(ConversationLabel(conversation_id=conversation.id, label_id=label.id))
     record(session, conversation, actor, ActivityKind.label, "added label", label.name)
     await session.commit()
-    await session.refresh(conversation, ["draft", "labels", "assignee"])
+    # ``updated_at`` and ``assignee_id`` on top of the relationships:
+    # ``Conversation.updated_at`` carries ``onupdate=func.now()``, a
+    # server-computed value Postgres does not hand back inline, so every
+    # UPDATE leaves it expired on the instance no matter what
+    # ``expire_on_commit`` says -- and ``schemas.v1.conversation_out`` reads
+    # it synchronously, so a caller that mutates and then serialises would
+    # raise ``MissingGreenlet``. Naming them here rather than at each route
+    # costs nothing: ``session.refresh`` issues **one** row query however
+    # many attributes it is given, so this is two more scalar columns on a
+    # SELECT that already happens, not another round trip.
+    await session.refresh(
+        conversation, ["draft", "labels", "assignee", "updated_at", "assignee_id"]
+    )
     return conversation
 
 
@@ -542,7 +575,19 @@ async def remove_label(
         session, conversation, actor, ActivityKind.label, "removed label", label.name
     )
     await session.commit()
-    await session.refresh(conversation, ["draft", "labels", "assignee"])
+    # ``updated_at`` and ``assignee_id`` on top of the relationships:
+    # ``Conversation.updated_at`` carries ``onupdate=func.now()``, a
+    # server-computed value Postgres does not hand back inline, so every
+    # UPDATE leaves it expired on the instance no matter what
+    # ``expire_on_commit`` says -- and ``schemas.v1.conversation_out`` reads
+    # it synchronously, so a caller that mutates and then serialises would
+    # raise ``MissingGreenlet``. Naming them here rather than at each route
+    # costs nothing: ``session.refresh`` issues **one** row query however
+    # many attributes it is given, so this is two more scalar columns on a
+    # SELECT that already happens, not another round trip.
+    await session.refresh(
+        conversation, ["draft", "labels", "assignee", "updated_at", "assignee_id"]
+    )
     return conversation
 
 
@@ -601,7 +646,19 @@ async def add_reply(
         conversation.contact.name,
     )
     await session.commit()
-    await session.refresh(conversation, ["draft", "labels", "assignee"])
+    # ``updated_at`` and ``assignee_id`` on top of the relationships:
+    # ``Conversation.updated_at`` carries ``onupdate=func.now()``, a
+    # server-computed value Postgres does not hand back inline, so every
+    # UPDATE leaves it expired on the instance no matter what
+    # ``expire_on_commit`` says -- and ``schemas.v1.conversation_out`` reads
+    # it synchronously, so a caller that mutates and then serialises would
+    # raise ``MissingGreenlet``. Naming them here rather than at each route
+    # costs nothing: ``session.refresh`` issues **one** row query however
+    # many attributes it is given, so this is two more scalar columns on a
+    # SELECT that already happens, not another round trip.
+    await session.refresh(
+        conversation, ["draft", "labels", "assignee", "updated_at", "assignee_id"]
+    )
     queue.enqueue_reply(message.id)
     return conversation, message
 
@@ -614,4 +671,16 @@ async def discard_draft(
         sa.delete(Draft).where(Draft.conversation_id == conversation.id)
     )
     await session.commit()
-    await session.refresh(conversation, ["draft", "labels", "assignee"])
+    # ``updated_at`` and ``assignee_id`` on top of the relationships:
+    # ``Conversation.updated_at`` carries ``onupdate=func.now()``, a
+    # server-computed value Postgres does not hand back inline, so every
+    # UPDATE leaves it expired on the instance no matter what
+    # ``expire_on_commit`` says -- and ``schemas.v1.conversation_out`` reads
+    # it synchronously, so a caller that mutates and then serialises would
+    # raise ``MissingGreenlet``. Naming them here rather than at each route
+    # costs nothing: ``session.refresh`` issues **one** row query however
+    # many attributes it is given, so this is two more scalar columns on a
+    # SELECT that already happens, not another round trip.
+    await session.refresh(
+        conversation, ["draft", "labels", "assignee", "updated_at", "assignee_id"]
+    )

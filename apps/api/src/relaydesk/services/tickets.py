@@ -280,6 +280,12 @@ async def create_from_api(
     # via RETURNING, so both are left expired. ``conversation_out`` reads
     # both directly (not through a relationship), so without naming them
     # here the very next line to touch either raises ``MissingGreenlet``.
+    # This one is load-bearing and stays, unlike the refresh the v1 PATCH
+    # route used to carry: nothing else on this path refreshes, because this
+    # function does its own flush and commit rather than going through any
+    # of the ``conversations.set_*`` helpers that now refresh for their
+    # callers. Removing it fails eleven tests in
+    # ``test_v1_conversations_create``.
     await session.refresh(
         conversation, ["labels", "assignee", "updated_at", "assignee_id"]
     )
