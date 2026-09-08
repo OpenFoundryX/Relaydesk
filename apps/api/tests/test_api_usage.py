@@ -149,3 +149,72 @@ async def test_sweep_drops_windows_older_than_the_retention(db_session) -> None:
         )
     )
     assert len(remaining) == 1
+
+
+async def test_usage_in_a_previous_window_does_not_count_against_this_one(
+    db_session,
+) -> None:
+    """The behaviour that matters operationally, and nothing covered it.
+
+    A key that spends its whole allowance gets it back at the top of the
+    next minute. If that broke, a key would be locked out permanently after
+    120 calls and the suite would stay green -- every other test here spends
+    a single window, and ``sa.func.now()`` is the transaction timestamp, so
+    ``date_trunc('minute', now())`` cannot advance inside one test.
+
+    Seeding an exhausted row for the *previous* window is the way around
+    that: the clock never has to move, because the second window is already
+    in the table. ``interval '1 minute'`` back from Postgres's own
+    ``date_trunc('minute', now())`` is used rather than a Python timestamp,
+    so the row lands exactly one window before the one ``charge`` will
+    compute for itself.
+    """
+    key = await _key(db_session)
+    previous_window = await db_session.scalar(
+        sa.select(
+            sa.func.date_trunc("minute", sa.func.now())
+            - sa.text("interval '1 minute'")
+        )
+    )
+    db_session.add(
+        ApiKeyUsage(api_key_id=key.id, window_start=previous_window, count=3)
+    )
+    await db_session.commit()
+
+    allowed, remaining = await api_usage.charge(db_session, key.id, limit=3)
+
+    assert allowed
+    # 2, not 0: the fresh window starts at one, and the exhausted window
+    # behind it contributes nothing.
+    assert remaining == 2
+    rows = list(
+        await db_session.scalars(
+            sa.select(ApiKeyUsage)
+            .where(ApiKeyUsage.api_key_id == key.id)
+            .order_by(ApiKeyUsage.window_start)
+        )
+    )
+    assert [row.count for row in rows] == [3, 1]
+
+
+async def test_a_charge_lands_in_the_current_minutes_window(db_session) -> None:
+    """Pins the window *granularity*, which nothing else here does.
+
+    ``charge``'s truncation could be widened from ``'minute'`` to ``'day'``
+    and every other test in this file would still pass, because each spends
+    exactly one window and a wider window is still one window. The limit
+    would then be 120 calls a day. Comparing the stored ``window_start``
+    against Postgres's own ``date_trunc('minute', now())`` is what makes
+    that change fail a test.
+    """
+    key = await _key(db_session)
+
+    await api_usage.charge(db_session, key.id, limit=100)
+
+    stored = await db_session.scalar(
+        sa.select(ApiKeyUsage.window_start).where(ApiKeyUsage.api_key_id == key.id)
+    )
+    expected = await db_session.scalar(
+        sa.select(sa.func.date_trunc("minute", sa.func.now()))
+    )
+    assert stored == expected
