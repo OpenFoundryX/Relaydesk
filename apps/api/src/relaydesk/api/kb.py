@@ -10,13 +10,13 @@ from relaydesk.models.kb import ArticleStatus, KbArticle, KbCategory, KbScope
 from relaydesk.schemas.kb import (
     ArticleCreateRequest,
     ArticleOut,
-    PublicAuthorOut,
     ArticlePatch,
     ArticleSummary,
     CategoryCreateRequest,
     CategoryOut,
     CategoryPatch,
     ImageOut,
+    PublicAuthorOut,
     StatusRequest,
 )
 from relaydesk.services import kb_articles, kb_categories, kb_images

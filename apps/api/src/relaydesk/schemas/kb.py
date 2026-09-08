@@ -151,6 +151,23 @@ class PublicCrumbOut(CamelModel):
     slug: str
 
 
+class PublicSearchEntryOut(CamelModel):
+    """One row of the browser's search index.
+
+    Title, blurb, and the collections above it -- the collection an article
+    sits in is part of how people describe it, so it is worth matching on.
+    No body: that is what makes an index shippable, and what the server's
+    full-text search is still there for.
+    """
+
+    id: str
+    title: str
+    excerpt: str
+    path: str
+    #: Root first. Both a breadcrumb to show and extra words to match on.
+    collections: list[str]
+
+
 class PublicSectionOut(CamelModel):
     """One card on a collection page: a section, and the rows it lists.
 

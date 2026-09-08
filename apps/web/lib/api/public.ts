@@ -154,6 +154,30 @@ export const getPublicNode = cache(
   },
 );
 
+/** One row of the browser's search index. See `components/portal/search-index.ts`. */
+export interface PublicSearchEntry {
+  id: string;
+  title: string;
+  excerpt: string;
+  path: string;
+  /** The collections above it, root first. Shown, and matched on. */
+  collections: string[];
+}
+
+/**
+ * Every published article's title, blurb and path -- the whole surface the
+ * browser scores instant results against. Bodies are absent by design:
+ * they are what makes a knowledge base too large to ship, and
+ * `searchPublicKb` below is what searches them.
+ */
+export const getPublicSearchIndex = cache(
+  async (slug: string): Promise<PublicSearchEntry[]> => {
+    return apiFetch<PublicSearchEntry[]>(`/public/${slug}/kb/search/index`, {
+      auth: false,
+    });
+  },
+);
+
 /** Full-text search across a workspace's published external articles. */
 export const searchPublicKb = cache(
   async (slug: string, q: string): Promise<PublicArticleSummary[]> => {

@@ -29,6 +29,7 @@ from relaydesk.schemas.kb import (
     PublicCollectionOut,
     PublicCrumbOut,
     PublicNodeOut,
+    PublicSearchEntryOut,
     PublicSectionOut,
     PublicWorkspaceOut,
     TicketSubmittedOut,
@@ -139,6 +140,33 @@ async def search_kb(
     return [
         _article_summary(article, ancestors.get(article.id, []))
         for article in articles
+    ]
+
+
+@router.get(
+    "/{slug}/kb/search/index", response_model=list[PublicSearchEntryOut]
+)
+async def read_kb_search_index(
+    slug: str, session: DbSession
+) -> list[PublicSearchEntryOut]:
+    """The whole searchable surface, for the browser to score locally.
+
+    Sits under `search`, which is already refused as a category slug, so it
+    needs no new reserved word of its own. Read once per visitor rather
+    than per keystroke -- which is the entire reason instant search here
+    costs no network at all after the first fetch.
+    """
+    workspace = await resolve_workspace(session, slug)
+    rows = await kb_public.searchable(session, workspace.id)
+    return [
+        PublicSearchEntryOut(
+            id=str(article.id),
+            title=article.title,
+            excerpt=article.excerpt,
+            path=_path(ancestors, article),
+            collections=[category.name for category in ancestors],
+        )
+        for article, ancestors in rows
     ]
 
 

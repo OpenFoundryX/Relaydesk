@@ -724,3 +724,57 @@ async def test_a_collection_page_carries_each_section_with_its_rows(
     assert only.category.name == "Getting started"
     assert [a.title for a in only.articles] == ["First steps"]
     assert [(c.name, n) for c, n in only.collections] == [("Account settings", 1)]
+
+
+async def test_the_search_index_lists_every_published_article_once(
+    db_session: AsyncSession,
+) -> None:
+    """The whole searchable surface, in one read. The browser scores against
+    this locally, so it is fetched once per visitor rather than queried per
+    keystroke."""
+    workspace, _, _, overview, receipts = await _spenders_tree(db_session)
+
+    rows = await kb_public.searchable(db_session, workspace.id)
+
+    assert sorted(a.title for a, _ in rows) == ["Add a receipt", "Overview"]
+
+
+async def test_the_search_index_never_carries_a_hidden_article(
+    db_session: AsyncSession,
+) -> None:
+    """It is handed to anonymous visitors wholesale, so a draft leaking into
+    it would publish an unfinished article's title and blurb to everyone --
+    without ever rendering the article itself, which is what makes the leak
+    easy to miss."""
+    workspace, collection, _, _, _ = await _spenders_tree(db_session)
+    author = await make_member(db_session, workspace, email="b@acme.dev")
+    await kb_articles.create(db_session, workspace.id, collection.id, "Secret", author)
+    internal = await kb_categories.create(
+        db_session, workspace.id, "Runbooks", KbScope.internal
+    )
+    published_but_internal = await kb_articles.create(
+        db_session, workspace.id, internal.id, "Staff only", author
+    )
+    published_but_internal.status = ArticleStatus.published
+    await db_session.flush()
+
+    rows = await kb_public.searchable(db_session, workspace.id)
+
+    assert sorted(a.title for a, _ in rows) == ["Add a receipt", "Overview"]
+
+
+async def test_the_search_index_route_carries_paths_and_collections(
+    client, db_session: AsyncSession
+) -> None:
+    """Each entry is a link and the words a reader might search by -- the
+    collection it sits in is part of how people describe an article."""
+    workspace, _, _, _, _ = await _spenders_tree(db_session)
+
+    response = await client.get(f"/api/public/{workspace.slug}/kb/search/index")
+
+    assert response.status_code == 200
+    entries = {a["title"]: a for a in response.json()}
+    assert entries["Add a receipt"]["path"] == (
+        "for-spenders/expenses/add-a-receipt"
+    )
+    assert entries["Add a receipt"]["collections"] == ["For spenders", "Expenses"]

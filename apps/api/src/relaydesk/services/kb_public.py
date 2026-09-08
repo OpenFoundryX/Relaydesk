@@ -215,6 +215,40 @@ async def _unique_article(
     return rows[0] if len(rows) == 1 else None
 
 
+async def searchable(
+    session: AsyncSession, workspace_id: uuid.UUID
+) -> list[tuple[KbArticle, list[KbCategory]]]:
+    """Every published article, with the categories above it.
+
+    The help site's instant search scores this in the browser, so it is
+    read once per visitor instead of queried per keystroke. That makes the
+    visibility rule matter more here than anywhere else on this module: the
+    result is handed to anonymous visitors wholesale, and a draft that
+    reached it would publish an unfinished article's title and blurb to
+    everyone without ever rendering the article -- a leak with nothing on
+    screen to give it away. It is the same `_visible()` predicate as every
+    other read here, which is the point: there is one definition of public
+    and this is not allowed its own.
+
+    Bodies are deliberately absent. They are what makes a knowledge base
+    too large to ship, and the server's full-text search over them is what
+    the results page is for.
+    """
+    rows = await session.scalars(
+        _visible(
+            sa.select(KbArticle)
+            .join(KbCategory, KbCategory.id == KbArticle.category_id)
+            .where(
+                KbArticle.workspace_id == workspace_id,
+                KbCategory.workspace_id == workspace_id,
+            )
+        ).order_by(KbArticle.title)
+    )
+    articles = list(rows)
+    ancestors = await paths_for(session, workspace_id, articles)
+    return [(article, ancestors.get(article.id, [])) for article in articles]
+
+
 async def paths_for(
     session: AsyncSession,
     workspace_id: uuid.UUID,
