@@ -123,4 +123,21 @@ describe("PortalSearch", () => {
 
     expect(await screen.findByText(/No articles match/)).toBeDefined();
   });
+
+  it("closes the suggestions when one is clicked", async () => {
+    // The box lives in the hero, which survives the navigation -- so a list
+    // left open stays open on top of the article the reader just chose.
+    render(<PortalSearch />);
+    const box = screen.getByRole("combobox");
+
+    fireEvent.focus(box);
+    fireEvent.change(box, { target: { value: "receipt" } });
+    const option = await screen.findByRole("option", { name: /Add a receipt/ });
+
+    const link = option.querySelector("a");
+    if (!link) throw new Error("the suggestion rendered no link");
+    fireEvent.click(link);
+
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+  });
 });

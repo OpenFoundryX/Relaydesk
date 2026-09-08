@@ -188,8 +188,13 @@ export function PortalSearch({
                     href={`/help/${result.path}`}
                     className="block px-4 py-3"
                     // The blur that a click causes would close the list
-                    // before the navigation started.
+                    // before the navigation started -- but preventing it
+                    // means the input never blurs, so the close has to be
+                    // done here instead. The box lives in the hero, which
+                    // survives the navigation, and a list left open would
+                    // sit on top of the article the reader just chose.
                     onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => setOpen(false)}
                     onMouseEnter={() => setActive(i)}
                   >
                     <span className="block text-[14px] text-ink-900">
