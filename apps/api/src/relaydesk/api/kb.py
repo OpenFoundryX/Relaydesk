@@ -47,6 +47,10 @@ def _category_out(category: KbCategory, article_count: int) -> CategoryOut:
         scope=category.scope.value,
         position=category.position,
         article_count=article_count,
+        parent_id=str(category.parent_id) if category.parent_id else None,
+        depth=category.depth,
+        description=category.description,
+        icon=category.icon,
     )
 
 
@@ -101,7 +105,13 @@ async def create_category(
 ) -> CategoryOut:
     scope_.require_admin()
     category = await kb_categories.create(
-        session, scope_.workspace_id, payload.name, _parsed_scope(payload.scope)
+        session,
+        scope_.workspace_id,
+        payload.name,
+        _parsed_scope(payload.scope),
+        parent_id=payload.parent_id,
+        description=payload.description,
+        icon=payload.icon,
     )
     await session.commit()
     return _category_out(category, 0)
@@ -121,6 +131,8 @@ async def update_category(
         category_id,
         name=payload.name,
         position=payload.position,
+        description=payload.description,
+        icon=payload.icon,
     )
     await session.commit()
     rows = await kb_categories.list_for(session, scope_.workspace_id, category.scope)

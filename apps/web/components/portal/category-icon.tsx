@@ -24,7 +24,7 @@ import {
  * created before an icon was chosen has none and a card with a hole in it
  * would be worse than a generic one.
  */
-const ICONS = {
+export const ICONS = {
   "book-open": BookOpen,
   rocket: Rocket,
   "credit-card": CreditCard,

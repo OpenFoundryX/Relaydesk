@@ -11,7 +11,7 @@ vi.mock("@/app/(console)/knowledge-base/actions", () => ({
   createCategoryAction: vi.fn(),
   deleteArticleAction: vi.fn(),
   deleteCategoryAction: vi.fn(),
-  renameCategoryAction: vi.fn(),
+  editCategoryAction: vi.fn(),
 }));
 
 // There is no App Router mounted here. `params` and `?tab=` are exactly what

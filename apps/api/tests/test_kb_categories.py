@@ -424,3 +424,81 @@ async def test_an_icon_outside_the_set_is_rejected(db_session: AsyncSession) -> 
         await kb_categories.create(
             db_session, workspace.id, "Billing", KbScope.external, icon="skull"
         )
+
+
+async def test_the_route_creates_a_sub_collection_with_a_face(
+    db_session, client
+) -> None:
+    """Everything the help site draws on a card -- where it sits, its blurb,
+    its icon -- has to be settable by the person writing the articles, not
+    only by whoever can run Python against the database."""
+    workspace = await make_workspace(db_session)
+    admin = await make_member(db_session, workspace, email="nilesh@example.com")
+    parent = await kb_categories.create(
+        db_session, workspace.id, "For spenders", KbScope.external
+    )
+    await db_session.commit()
+    headers = await sign_in(client, db_session, admin.email)
+
+    response = await client.post(
+        "/api/kb/categories",
+        json={
+            "name": "Expenses",
+            "scope": "external",
+            "parentId": str(parent.id),
+            "description": "Filing and coding what you spent.",
+            "icon": "credit-card",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["parentId"] == str(parent.id)
+    assert body["depth"] == 1
+    assert body["description"] == "Filing and coding what you spent."
+    assert body["icon"] == "credit-card"
+
+
+async def test_the_route_edits_a_description_and_an_icon(db_session, client) -> None:
+    workspace = await make_workspace(db_session)
+    admin = await make_member(db_session, workspace, email="nilesh@example.com")
+    category = await kb_categories.create(
+        db_session, workspace.id, "Billing", KbScope.external
+    )
+    await db_session.commit()
+    headers = await sign_in(client, db_session, admin.email)
+
+    response = await client.patch(
+        f"/api/kb/categories/{category.id}",
+        json={"description": "Invoices and refunds.", "icon": "shield"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["description"] == "Invoices and refunds."
+    assert response.json()["icon"] == "shield"
+
+
+async def test_the_route_refuses_an_icon_outside_the_set(db_session, client) -> None:
+    """The name is looked up in a fixed table by both the console and the
+    help site. Anything else renders as a hole in a customer's page."""
+    workspace = await make_workspace(db_session)
+    admin = await make_member(db_session, workspace, email="nilesh@example.com")
+    category = await kb_categories.create(
+        db_session, workspace.id, "Billing", KbScope.external
+    )
+    await db_session.commit()
+    headers = await sign_in(client, db_session, admin.email)
+
+    response = await client.patch(
+        f"/api/kb/categories/{category.id}",
+        json={"icon": "skull"},
+        headers=headers,
+    )
+
+    # 422 is what `Invalid` maps to. Asserting the message too, so this
+    # cannot pass on some unrelated schema rejection that happens to share
+    # the status.
+    assert response.status_code == 422
+    assert "icons" in response.json()["error"]["message"]

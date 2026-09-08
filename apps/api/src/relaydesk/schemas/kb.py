@@ -26,16 +26,29 @@ class CategoryOut(CamelModel):
     scope: str
     position: int
     article_count: int
+    #: None for a root collection. Depth is derived from it and sent along
+    #: so the console can indent without walking the list itself.
+    parent_id: str | None = None
+    depth: int = 0
+    description: str = ""
+    icon: str = ""
 
 
 class CategoryCreateRequest(CamelModel):
     name: str = Field(min_length=1, max_length=120)
     scope: str
+    #: The collection this one sits under. Absent makes it a root.
+    parent_id: uuid.UUID | None = None
+    description: str = Field(default="", max_length=400)
+    #: One of `CATEGORY_ICONS`; the service refuses anything else.
+    icon: str = Field(default="", max_length=40)
 
 
 class CategoryPatch(CamelModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     position: int | None = None
+    description: str | None = Field(default=None, max_length=400)
+    icon: str | None = Field(default=None, max_length=40)
 
 
 class ArticleSummary(CamelModel):

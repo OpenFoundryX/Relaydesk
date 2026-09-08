@@ -156,6 +156,14 @@ export interface KbCategory {
   scope: KbScope;
   position: number;
   articleCount: number;
+  /** Null for a root collection. */
+  parentId: string | null;
+  /** 0 for a root, 2 at the deepest the help site renders. */
+  depth: number;
+  /** The blurb under the name on the help site's card. */
+  description: string;
+  /** A name from the fixed set in `components/portal/category-icon.tsx`. */
+  icon: string;
 }
 
 export interface Snippet {

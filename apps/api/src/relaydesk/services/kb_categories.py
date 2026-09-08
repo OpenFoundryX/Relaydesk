@@ -153,14 +153,23 @@ async def update(
     *,
     name: str | None = None,
     position: int | None = None,
+    description: str | None = None,
+    icon: str | None = None,
 ) -> KbCategory:
     category = await _get(session, workspace_id, category_id)
+    if icon is not None and icon and icon not in CATEGORY_ICONS:
+        raise Invalid("That is not one of the available category icons.")
     if name is not None:
         # The slug is deliberately not recomputed: it is the public URL, and
         # renaming a category must not break a link someone bookmarked.
         category.name = name.strip()
     if position is not None:
         category.position = position
+    if description is not None:
+        category.description = description.strip()
+    if icon is not None:
+        # Empty clears it, and the card falls back to a generic folder.
+        category.icon = icon
     await session.flush()
     return category
 

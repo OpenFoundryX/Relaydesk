@@ -108,16 +108,22 @@ export async function deleteArticle(id: string): Promise<void> {
 export async function createCategory(
   name: string,
   scope: KbScope,
+  face: { parentId?: string | null; description?: string; icon?: string } = {},
 ): Promise<KbCategory> {
   return apiFetch<KbCategory>("/kb/categories", {
     method: "POST",
-    body: JSON.stringify({ name, scope }),
+    body: JSON.stringify({ name, scope, ...face }),
   });
 }
 
 export async function updateCategory(
   id: string,
-  patch: { name?: string; position?: number },
+  patch: {
+    name?: string;
+    position?: number;
+    description?: string;
+    icon?: string;
+  },
 ): Promise<KbCategory> {
   return apiFetch<KbCategory>(`/kb/categories/${id}`, {
     method: "PATCH",
