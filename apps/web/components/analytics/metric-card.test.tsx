@@ -28,6 +28,59 @@ describe("MetricCard", () => {
 
     expect(screen.queryByText("%", { exact: false })).toBeNull();
   });
+
+  it("gives a falling duration the improving tone", () => {
+    const { container } = render(<MetricCard series={series} />);
+
+    expect(container.querySelector(".text-positive-600")).not.toBeNull();
+  });
+
+  it("gives a rising count the improving tone", () => {
+    const created: MetricSeries = {
+      ...series,
+      id: "tickets-created",
+      format: "count",
+      headline: "412",
+      delta: 40,
+    };
+
+    const { container } = render(<MetricCard series={created} />);
+
+    expect(container.querySelector(".text-positive-600")).not.toBeNull();
+  });
+
+  it("does not congratulate a growing backlog", () => {
+    // "Open backlog" is a count, but the only one where up is bad: 40% more
+    // unanswered tickets was rendering in the same green as 40% more
+    // tickets resolved.
+    const backlog: MetricSeries = {
+      ...series,
+      id: "backlog",
+      label: "Open backlog",
+      format: "count",
+      headline: "42",
+      delta: 40,
+    };
+
+    const { container } = render(<MetricCard series={backlog} />);
+
+    expect(container.querySelector(".text-positive-600")).toBeNull();
+  });
+
+  it("congratulates a shrinking backlog", () => {
+    const backlog: MetricSeries = {
+      ...series,
+      id: "backlog",
+      label: "Open backlog",
+      format: "count",
+      headline: "42",
+      delta: -40,
+    };
+
+    const { container } = render(<MetricCard series={backlog} />);
+
+    expect(container.querySelector(".text-positive-600")).not.toBeNull();
+  });
 });
 
 describe("formatDuration", () => {
