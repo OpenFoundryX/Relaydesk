@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from relaydesk.models import Role
 from relaydesk.services.analytics import format_duration, percent_delta
@@ -166,6 +166,61 @@ async def test_a_real_assignee_narrows_the_cards(client, db_session) -> None:
     everyone_total = int(everyone["series"][0]["headline"])
     assert filtered["series"][0]["id"] == "tickets-created"
     assert filtered_total < everyone_total
+
+
+async def test_a_delta_measures_the_window_against_the_one_before_it(
+    client, db_session
+) -> None:
+    """The only end-to-end cover for `_previous`, the previous-period
+    `counts` call and `duration_mean`'s explicit `start`/`end`. Everything
+    else asserts `delta is None`, which every one of those paths satisfies
+    by doing nothing at all: an off-by-one window, a previous call that
+    silently re-queried the current period, or a `_previous` whose end did
+    not meet the window's start would all still pass.
+
+    Exact integers, not "not null" -- a wrong window mostly yields a
+    plausible-looking number, and only the arithmetic gives it away.
+
+    A 7d window runs `[today-6d, tomorrow)`; the period before it is
+    `[today-13d, today-6d)`. Three tickets in the first, two in the second,
+    so `tickets-created` is +50%. One answered in 10 minutes in the first
+    and one in 5 in the second, so `first-response` is +100% -- rising,
+    because the sign stays honest and the card flips only the colour.
+    """
+    workspace = await make_workspace(db_session)
+    headers = await admin_headers(client, db_session, workspace)
+    today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    # An hour into the bucket, so nothing lands on a boundary.
+    recently = today - timedelta(days=2) + timedelta(hours=1)
+    earlier = today - timedelta(days=9) + timedelta(hours=1)
+
+    answered_now = await make_conversation(db_session, workspace, subject="Answered")
+    answered_now.created_at = recently
+    quiet_now = await make_conversation(db_session, workspace, subject="Quiet")
+    quiet_now.created_at = recently
+    also_now = await make_conversation(db_session, workspace, subject="Also quiet")
+    also_now.created_at = today - timedelta(days=3) + timedelta(hours=1)
+    answered_before = await make_conversation(db_session, workspace, subject="Before")
+    answered_before.created_at = earlier
+    quiet_before = await make_conversation(db_session, workspace, subject="Quiet too")
+    quiet_before.created_at = earlier
+    await db_session.flush()
+
+    await add_reply(
+        db_session, workspace, answered_now, at=recently + timedelta(minutes=10)
+    )
+    await add_reply(
+        db_session, workspace, answered_before, at=earlier + timedelta(minutes=5)
+    )
+    await db_session.commit()
+
+    body = (await client.get("/api/analytics?range=7d", headers=headers)).json()
+    by_id = {series["id"]: series for series in body["series"]}
+
+    assert by_id["tickets-created"]["headline"] == "3"
+    assert by_id["tickets-created"]["delta"] == 50
+    assert by_id["first-response"]["headline"] == "10m"
+    assert by_id["first-response"]["delta"] == 100
 
 
 def test_a_duration_under_an_hour_reads_in_minutes_and_seconds() -> None:
