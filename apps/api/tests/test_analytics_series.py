@@ -296,3 +296,99 @@ async def test_the_headline_is_none_when_nothing_qualifies(
 
     assert headline is None
 
+
+async def test_another_workspaces_replies_are_not_counted_as_responses(
+    db_session: AsyncSession,
+) -> None:
+    """`counts`' join to `Conversation` for the `responded` metric carries
+    no `workspace_id` clause of its own -- the whole tenant boundary runs
+    through `_first_reply`'s subquery predicate. Both workspaces answer a
+    ticket here, so dropping that predicate would return 2 rather than
+    trivially returning 0 for an empty tenant."""
+    one = await make_workspace(db_session, slug="chronon")
+    two = await make_workspace(db_session, slug="northwind")
+    mine = await make_conversation(db_session, one)
+    theirs = await make_conversation(db_session, two)
+    await add_reply(db_session, one, mine, at=NOW)
+    await add_reply(db_session, two, theirs, at=NOW)
+
+    series = await analytics.counts(
+        db_session,
+        one.id,
+        resolve_window(Range.d7, NOW),
+        NO_FILTER,
+        CountMetric.responded,
+    )
+
+    assert sum(series.values()) == 1
+
+
+async def test_another_workspaces_resolutions_are_not_counted(
+    db_session: AsyncSession,
+) -> None:
+    """Same hole as the response metric: `counts` joins `Conversation`
+    without a workspace clause, so `_resolves`' predicate is the only thing
+    keeping the tenants apart. Both workspaces resolve a ticket."""
+    one = await make_workspace(db_session, slug="chronon")
+    two = await make_workspace(db_session, slug="northwind")
+    mine_user = await make_member(db_session, one, email="nilesh@relaydesk.dev")
+    their_user = await make_member(db_session, two, email="elsewhere@northwind.io")
+    mine = await make_conversation(db_session, one)
+    theirs = await make_conversation(db_session, two)
+    await add_status(db_session, one, mine, "resolved", NOW, mine_user)
+    await add_status(db_session, two, theirs, "resolved", NOW, their_user)
+
+    series = await analytics.counts(
+        db_session,
+        one.id,
+        resolve_window(Range.d7, NOW),
+        NO_FILTER,
+        CountMetric.resolved,
+    )
+
+    assert sum(series.values()) == 1
+
+
+async def test_the_assignee_filter_narrows_the_responded_metric(
+    db_session: AsyncSession,
+) -> None:
+    """The filter reaches `responded` through the same unqualified join to
+    `Conversation`; the only route-level assignee test asserts on
+    `tickets-created`, the one metric that does not use it."""
+    workspace = await make_workspace(db_session)
+    sara = await make_member(db_session, workspace, email="sara@relaydesk.dev")
+    mine = await make_conversation(db_session, workspace, assignee=sara)
+    theirs = await make_conversation(db_session, workspace, subject="Someone else's")
+    await add_reply(db_session, workspace, mine, at=NOW)
+    await add_reply(db_session, workspace, theirs, at=NOW)
+
+    series = await analytics.counts(
+        db_session,
+        workspace.id,
+        resolve_window(Range.d7, NOW),
+        Filters(assignee_id=sara.id, unassigned=False),
+        CountMetric.responded,
+    )
+
+    assert sum(series.values()) == 1
+
+
+async def test_the_assignee_filter_narrows_the_resolved_metric(
+    db_session: AsyncSession,
+) -> None:
+    workspace = await make_workspace(db_session)
+    sara = await make_member(db_session, workspace, email="sara@relaydesk.dev")
+    mine = await make_conversation(db_session, workspace, assignee=sara)
+    theirs = await make_conversation(db_session, workspace, subject="Someone else's")
+    await add_status(db_session, workspace, mine, "resolved", NOW, sara)
+    await add_status(db_session, workspace, theirs, "resolved", NOW, sara)
+
+    series = await analytics.counts(
+        db_session,
+        workspace.id,
+        resolve_window(Range.d7, NOW),
+        Filters(assignee_id=sara.id, unassigned=False),
+        CountMetric.resolved,
+    )
+
+    assert sum(series.values()) == 1
