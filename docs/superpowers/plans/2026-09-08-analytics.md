@@ -947,7 +947,11 @@ async def test_the_headline_mean_is_over_conversations_not_over_daily_means(
 
     for index in range(3):
         fast = await make_conversation(db_session, workspace, subject=f"Fast {index}")
-        fast.created_at = NOW - timedelta(minutes=1)
+        # Answered the instant it arrived, so the three fast tickets
+        # contribute zero and the two means below are 450 and 225. With any
+        # non-zero fast response the property under test still holds, but
+        # the arithmetic in the assertions has to move with it.
+        fast.created_at = NOW
         await db_session.flush()
         await add_reply(db_session, workspace, fast, at=NOW)
 
