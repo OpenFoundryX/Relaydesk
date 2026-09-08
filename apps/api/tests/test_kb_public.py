@@ -537,7 +537,9 @@ async def test_a_category_path_resolves_to_its_children(
 
     assert found.category.id == collection.id
     assert found.ancestors == []
-    assert [(c.name, n) for c, n in found.collections] == [("Expenses", 1)]
+    assert [(s.category.name, s.article_count) for s in found.sections] == [
+        ("Expenses", 1)
+    ]
     assert [a.title for a in found.articles] == ["Overview"]
 
 
@@ -614,9 +616,10 @@ async def test_the_kb_route_serves_a_collection_page(
     assert body["kind"] == "category"
     assert body["category"]["name"] == "For spenders"
     assert body["ancestors"] == []
-    assert [(c["name"], c["articleCount"]) for c in body["collections"]] == [
-        ("Expenses", 1)
-    ]
+    assert [
+        (s["collection"]["name"], s["collection"]["articleCount"])
+        for s in body["sections"]
+    ] == [("Expenses", 1)]
     assert [a["title"] for a in body["articles"]] == ["Overview"]
 
 
@@ -690,3 +693,34 @@ async def test_a_search_result_carries_the_path_that_links_to_it(
         "for-spenders/expenses/add-a-receipt",
         "for-spenders/overview",
     ]
+
+
+async def test_a_collection_page_carries_each_section_with_its_rows(
+    db_session: AsyncSession,
+) -> None:
+    """A collection page draws a card per section, and each card lists that
+    section's own rows -- its articles and its sub-collections. Fetching
+    those per card would be a request per section for a page the tree in
+    hand can already answer."""
+    workspace = await make_workspace(db_session, slug="acme")
+    author = await make_member(db_session, workspace, email="a@acme.dev")
+    collection = await kb_categories.create(
+        db_session, workspace.id, "For spenders", KbScope.external
+    )
+    section = await kb_categories.create(
+        db_session, workspace.id, "Getting started", KbScope.external,
+        parent_id=collection.id,
+    )
+    settings = await kb_categories.create(
+        db_session, workspace.id, "Account settings", KbScope.external,
+        parent_id=section.id,
+    )
+    await _publish_in(db_session, workspace, section, author, "First steps")
+    await _publish_in(db_session, workspace, settings, author, "Change your email")
+
+    found = await kb_public.resolve(db_session, workspace.id, ["for-spenders"])
+
+    (only,) = found.sections
+    assert only.category.name == "Getting started"
+    assert [a.title for a in only.articles] == ["First steps"]
+    assert [(c.name, n) for c, n in only.collections] == [("Account settings", 1)]

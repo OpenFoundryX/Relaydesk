@@ -21,6 +21,20 @@ type MarkShape = {
 export type DocRendererProps = {
   doc: unknown;
   imageSrc: (id: string) => string;
+  /**
+   * The id to put on a heading, keyed by the heading node itself. Supplied
+   * by `articleHeadings` (components/portal/headings.ts) so a table of
+   * contents links to anchors this renderer actually emits. Omitted where
+   * there is no contents list -- the console preview -- and headings then
+   * render without ids.
+   */
+  headingId?: (node: object) => string | undefined;
+};
+
+/** Everything threaded down the tree, so adding one more is a field. */
+type RenderContext = {
+  imageSrc: (id: string) => string;
+  headingId?: (node: object) => string | undefined;
 };
 
 // A link href comes from the editor, but the editor is a text field and a
@@ -82,11 +96,9 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function children(node: DocNodeShape, imageSrc: (id: string) => string): ReactNode {
+function children(node: DocNodeShape, ctx: RenderContext): ReactNode {
   return Array.isArray(node.content)
-    ? node.content.map((child, i) => (
-        <DocNode key={i} node={child} imageSrc={imageSrc} />
-      ))
+    ? node.content.map((child, i) => <DocNode key={i} node={child} ctx={ctx} />)
     : null;
 }
 
@@ -133,41 +145,42 @@ function renderText(node: DocNodeShape): ReactNode {
 // from a stored document to injected HTML because there is no HTML here.
 const NODE_TABLE: Record<
   string,
-  (node: DocNodeShape, imageSrc: (id: string) => string) => ReactNode
+  (node: DocNodeShape, ctx: RenderContext) => ReactNode
 > = {
-  doc: (node, imageSrc) => children(node, imageSrc),
-  paragraph: (node, imageSrc) => <p>{children(node, imageSrc)}</p>,
-  heading: (node, imageSrc) => {
+  doc: (node, ctx) => children(node, ctx),
+  paragraph: (node, ctx) => <p>{children(node, ctx)}</p>,
+  heading: (node, ctx) => {
     const level = asAttrs(node.attrs).level;
-    const content = children(node, imageSrc);
+    const content = children(node, ctx);
+    const id = ctx.headingId?.(node);
     switch (level) {
       case 2:
-        return <h2>{content}</h2>;
+        return <h2 id={id}>{content}</h2>;
       case 3:
-        return <h3>{content}</h3>;
+        return <h3 id={id}>{content}</h3>;
       default:
-        return <h1>{content}</h1>;
+        return <h1 id={id}>{content}</h1>;
     }
   },
-  bulletList: (node, imageSrc) => <ul>{children(node, imageSrc)}</ul>,
-  orderedList: (node, imageSrc) => <ol>{children(node, imageSrc)}</ol>,
-  listItem: (node, imageSrc) => <li>{children(node, imageSrc)}</li>,
-  blockquote: (node, imageSrc) => <blockquote>{children(node, imageSrc)}</blockquote>,
-  codeBlock: (node, imageSrc) => (
+  bulletList: (node, ctx) => <ul>{children(node, ctx)}</ul>,
+  orderedList: (node, ctx) => <ol>{children(node, ctx)}</ol>,
+  listItem: (node, ctx) => <li>{children(node, ctx)}</li>,
+  blockquote: (node, ctx) => <blockquote>{children(node, ctx)}</blockquote>,
+  codeBlock: (node, ctx) => (
     <pre>
-      <code>{children(node, imageSrc)}</code>
+      <code>{children(node, ctx)}</code>
     </pre>
   ),
   horizontalRule: () => <hr />,
-  table: (node, imageSrc) => (
+  table: (node, ctx) => (
     <table>
-      <tbody>{children(node, imageSrc)}</tbody>
+      <tbody>{children(node, ctx)}</tbody>
     </table>
   ),
-  tableRow: (node, imageSrc) => <tr>{children(node, imageSrc)}</tr>,
-  tableCell: (node, imageSrc) => <td>{children(node, imageSrc)}</td>,
-  tableHeader: (node, imageSrc) => <th>{children(node, imageSrc)}</th>,
-  image: (node, imageSrc) => {
+  tableRow: (node, ctx) => <tr>{children(node, ctx)}</tr>,
+  tableCell: (node, ctx) => <td>{children(node, ctx)}</td>,
+  tableHeader: (node, ctx) => <th>{children(node, ctx)}</th>,
+  image: (node, ctx) => {
     const attrs = asAttrs(node.attrs);
     const id = asString(attrs.id);
     if (!id) return null;
@@ -183,19 +196,13 @@ const NODE_TABLE: Record<
     // (console preview, public help site) owns its own image-id resolution
     // rather than this renderer second-guessing it.
     // eslint-disable-next-line @next/next/no-img-element
-    return <img src={imageSrc(id)} alt={asString(attrs.alt) ?? ""} />;
+    return <img src={ctx.imageSrc(id)} alt={asString(attrs.alt) ?? ""} />;
   },
   hardBreak: () => <br />,
   text: renderText,
 };
 
-function DocNode({
-  node,
-  imageSrc,
-}: {
-  node: unknown;
-  imageSrc: (id: string) => string;
-}): ReactNode {
+function DocNode({ node, ctx }: { node: unknown; ctx: RenderContext }): ReactNode {
   if (!node || typeof node !== "object") return null;
 
   const shape = node as DocNodeShape;
@@ -205,7 +212,7 @@ function DocNode({
   const render = NODE_TABLE[type];
   if (!render) return null;
 
-  return render(shape, imageSrc);
+  return render(shape, ctx);
 }
 
 /**
@@ -216,6 +223,6 @@ function DocNode({
  * is what makes it safe to render a member-authored document on a page
  * anonymous visitors read.
  */
-export function DocRenderer({ doc, imageSrc }: DocRendererProps) {
-  return <DocNode node={doc} imageSrc={imageSrc} />;
+export function DocRenderer({ doc, imageSrc, headingId }: DocRendererProps) {
+  return <DocNode node={doc} ctx={{ imageSrc, headingId }} />;
 }

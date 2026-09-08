@@ -48,9 +48,20 @@ class ArticleSummary(CamelModel):
     updated_at: datetime
 
 
+class PublicAuthorOut(CamelModel):
+    """Who wrote an article, as a reader sees it. Name and monogram only --
+    an email address here would publish a staff address to the world."""
+
+    name: str
+    monogram: str
+
+
 class ArticleOut(ArticleSummary):
     doc: dict
     published_at: datetime | None
+    #: Who wrote it, for the console preview's byline -- the same one the
+    #: help site prints. None where their account has been deleted.
+    author: PublicAuthorOut | None = None
 
 
 class ArticleCreateRequest(CamelModel):
@@ -103,14 +114,6 @@ class PublicArticleSummary(CamelModel):
     path: str
 
 
-class PublicAuthorOut(CamelModel):
-    """Who wrote an article, as a reader sees it. Name and monogram only --
-    an email address here would publish a staff address to the world."""
-
-    name: str
-    monogram: str
-
-
 class PublicArticleOut(PublicArticleSummary):
     doc: dict
     #: None where the author's account has been deleted: `author_user_id`
@@ -148,13 +151,26 @@ class PublicCrumbOut(CamelModel):
     slug: str
 
 
+class PublicSectionOut(CamelModel):
+    """One card on a collection page: a section, and the rows it lists.
+
+    The rows are of two kinds -- articles, and sub-collections with their
+    own counts -- and a card mixes them freely, which is what the three
+    container levels look like once drawn.
+    """
+
+    collection: PublicCollectionOut
+    collections: list[PublicCollectionOut]
+    articles: list[PublicArticleSummary]
+
+
 class PublicCategoryNodeOut(CamelModel):
     kind: Literal["category"] = "category"
     category: PublicCollectionOut
     #: Root first, excluding the category itself.
     ancestors: list[PublicCrumbOut]
-    collections: list[PublicCollectionOut]
-    #: Articles sitting directly here rather than in a sub-collection.
+    sections: list[PublicSectionOut]
+    #: Articles sitting directly here rather than in a section.
     articles: list[PublicArticleSummary]
 
 

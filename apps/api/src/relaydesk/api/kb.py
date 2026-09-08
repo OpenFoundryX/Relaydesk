@@ -10,6 +10,7 @@ from relaydesk.models.kb import ArticleStatus, KbArticle, KbCategory, KbScope
 from relaydesk.schemas.kb import (
     ArticleCreateRequest,
     ArticleOut,
+    PublicAuthorOut,
     ArticlePatch,
     ArticleSummary,
     CategoryCreateRequest,
@@ -72,6 +73,13 @@ def _article_out(article: KbArticle) -> ArticleOut:
         updated_at=article.updated_at,
         doc=article.doc,
         published_at=article.published_at,
+        author=(
+            PublicAuthorOut(
+                name=article.author.name, monogram=article.author.monogram
+            )
+            if article.author is not None
+            else None
+        ),
     )
 
 

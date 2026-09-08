@@ -3,10 +3,8 @@ import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 
 import { ArticleView } from "@/components/portal/article-view";
-import { PortalKbSidebar } from "@/components/portal/kb-sidebar";
-import type { PortalTreeCategory } from "@/components/portal/kb-tree";
 import { Badge } from "@/components/ui/badge";
-import { getArticle, getArticles, getCategories } from "@/lib/api/kb";
+import { getArticle, getCategories } from "@/lib/api/kb";
 import type { ArticleStatus } from "@/lib/types";
 
 export const metadata = { title: "Preview" };
@@ -42,9 +40,9 @@ function consoleImageSrc(id: string): string {
  * API, and so it may show a draft. Nothing here is reachable anonymously,
  * and nothing here changes what `/help` serves.
  *
- * It renders the portal's own `ArticleView` and `PortalKbSidebar` rather
- * than a copy of them. A forked preview would drift from the page it claims
- * to be previewing, which would make it worse than no preview at all.
+ * It renders the portal's own `ArticleView` rather than a copy of it. A
+ * forked preview would drift from the page it claims to be previewing,
+ * which would make it worse than no preview at all.
  */
 export default async function ArticlePreviewPage({
   params,
@@ -67,27 +65,6 @@ export default async function ArticlePreviewPage({
     [...internal, ...external].find((entry) => entry.id === article.categoryId) ??
     null;
   const scope = category?.scope ?? "internal";
-  const categories = scope === "external" ? external : internal;
-  const articles = await getArticles({ scope });
-
-  // The console's flat lists, nested the way the help site nests them. No
-  // status filter: a member previewing a draft needs to see it in the tree
-  // beside the one they are reading, which is the difference between this
-  // and the public index.
-  const tree: PortalTreeCategory[] = categories.map((entry) => ({
-    id: entry.id,
-    name: entry.name,
-    // The console has no page at `/help/{category}`, and the public one is
-    // not this reader's -- so the category is a label here, not a link.
-    href: null,
-    articles: articles
-      .filter((summary) => summary.categoryId === entry.id)
-      .map((summary) => ({
-        id: summary.id,
-        title: summary.title,
-        href: `/knowledge-base/${summary.id}/preview`,
-      })),
-  }));
 
   return (
     <div>
@@ -118,25 +95,21 @@ export default async function ArticlePreviewPage({
       )}
 
       {/* The frame stands in for the browser window the help site fills, so
-          the reading width and the tree beside it land where they will in
-          the real thing. The portal's own header, nav and search are not
-          reproduced: they would be controls that go nowhere from inside the
-          console. */}
+          the reading width and the contents list beside the body land where
+          they will in the real thing. The portal's own hero, nav and search
+          are not reproduced: they would be controls that go nowhere from
+          inside the console. */}
       <div className="overflow-hidden rounded-lg border border-ink-200 bg-white">
-        <div className="flex flex-col gap-10 px-6 py-10 md:flex-row md:gap-12">
-          <PortalKbSidebar
-            categories={tree}
-            activeArticleId={article.id}
-            className="w-full shrink-0 md:w-56"
+        <div className="px-6 py-10">
+          <ArticleView
+            title={article.title}
+            excerpt={article.excerpt}
+            doc={article.doc}
+            imageSrc={consoleImageSrc}
+            updatedAt={article.updatedAt}
+            publishedAt={article.publishedAt}
+            author={article.author}
           />
-          <div className="min-w-0 flex-1">
-            <ArticleView
-              title={article.title}
-              doc={article.doc}
-              imageSrc={consoleImageSrc}
-              updatedAt={article.updatedAt}
-            />
-          </div>
         </div>
       </div>
     </div>

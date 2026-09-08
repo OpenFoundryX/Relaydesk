@@ -13,12 +13,24 @@ export interface PublicWorkspace {
   monogram: string;
 }
 
-/** An entry in the KB index or search results -- no body, no doc. */
+/** An entry in a collection listing or search results -- no body, no doc. */
 export interface PublicArticleSummary {
   id: string;
   title: string;
   slug: string;
   excerpt: string;
+  /**
+   * Slash-joined, no leading slash. Carried with the article rather than
+   * derived: once categories nest, a slug alone does not say where the
+   * article lives, and rebuilding the href would mean walking the index.
+   */
+  path: string;
+}
+
+/** Who wrote an article. Name and monogram -- never an address. */
+export interface PublicAuthor {
+  name: string;
+  monogram: string;
 }
 
 /** A single published article, with its rendered body. */
@@ -27,14 +39,54 @@ export interface PublicArticle extends PublicArticleSummary {
   publishedAt: string | null;
   /** ISO-8601. Printed under the body as "Last updated". */
   updatedAt: string;
+  /** Null where the author's account has been deleted. */
+  author: PublicAuthor | null;
 }
 
-export interface PublicCategory {
+/** A collection as it appears on a card. */
+export interface PublicCollection {
   id: string;
   name: string;
   slug: string;
+  description: string;
+  /** A name from the API's fixed set, resolved by `CategoryIcon`. */
+  icon: string;
+  /** Every published article beneath it, not only its direct ones. */
+  articleCount: number;
+}
+
+/** One step of a breadcrumb: name to print, slug to build the href. */
+export interface PublicCrumb {
+  name: string;
+  slug: string;
+}
+
+/**
+ * What a help-site path resolves to. A collection page, a section page and
+ * an article page are one walk with three endings, so the API answers all
+ * three from one route and `kind` says which came back.
+ */
+/**
+ * One card on a collection page: a section, and the rows it lists. The rows
+ * are of two kinds -- articles, and sub-collections carrying their own
+ * counts -- and a card mixes them freely.
+ */
+export interface PublicSection {
+  collection: PublicCollection;
+  collections: PublicCollection[];
   articles: PublicArticleSummary[];
 }
+
+export type PublicNode =
+  | {
+      kind: "category";
+      category: PublicCollection;
+      ancestors: PublicCrumb[];
+      sections: PublicSection[];
+      /** Articles sitting directly here rather than in a section. */
+      articles: PublicArticleSummary[];
+    }
+  | { kind: "article"; article: PublicArticle; ancestors: PublicCrumb[] };
 
 /**
  * Anonymous, unauthenticated calls against `/api/public/*`.
@@ -64,33 +116,37 @@ export const getPublicWorkspace = cache(
 );
 
 /**
- * The published categories and articles for a workspace's help site. Empty
- * categories are already omitted by the API.
+ * The help site's front page: root collections, each with its blurb, its
+ * icon, and how many published articles sit anywhere beneath it. A
+ * collection with nothing published under it is already omitted by the API.
  */
-export const getPublicKb = cache(
-  async (slug: string): Promise<PublicCategory[]> => {
-    return apiFetch<PublicCategory[]>(`/public/${slug}/kb`, { auth: false });
+export const getPublicCollections = cache(
+  async (slug: string): Promise<PublicCollection[]> => {
+    return apiFetch<PublicCollection[]>(`/public/${slug}/kb`, { auth: false });
   },
 );
 
 /**
- * A single published article. `null` on anything that is not a live,
- * external, published article in this workspace -- draft, ready, another
- * workspace's, or nonexistent all look identical here, so the caller can
- * turn every one of them into the same `notFound()`. See `getArticle` in
- * `lib/api/kb.ts` for the same idiom.
+ * One help-site path, resolved to the page it names.
+ *
+ * `null` on anything that is not a live, external, published page in this
+ * workspace -- a draft, a ready-but-unpublished article, an internal
+ * category, another workspace's, or a path that never existed all look
+ * identical here, so the caller can turn every one of them into the same
+ * `notFound()`. See `getArticle` in `lib/api/kb.ts` for the same idiom.
+ *
+ * The node carries its ancestors, which are both the breadcrumb and the
+ * canonical path: a URL that disagrees with them is an old link to an
+ * article that has since moved, and the page redirects rather than serving
+ * the same article at two addresses.
  */
-export const getPublicArticle = cache(
-  async (
-    slug: string,
-    category: string,
-    article: string,
-  ): Promise<PublicArticle | null> => {
+export const getPublicNode = cache(
+  async (slug: string, path: string[]): Promise<PublicNode | null> => {
+    const encoded = path.map(encodeURIComponent).join("/");
     try {
-      return await apiFetch<PublicArticle>(
-        `/public/${slug}/kb/${category}/${article}`,
-        { auth: false },
-      );
+      return await apiFetch<PublicNode>(`/public/${slug}/kb/${encoded}`, {
+        auth: false,
+      });
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) return null;
       throw error;

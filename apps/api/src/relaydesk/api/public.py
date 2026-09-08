@@ -29,6 +29,7 @@ from relaydesk.schemas.kb import (
     PublicCollectionOut,
     PublicCrumbOut,
     PublicNodeOut,
+    PublicSectionOut,
     PublicWorkspaceOut,
     TicketSubmittedOut,
 )
@@ -182,16 +183,28 @@ async def read_kb_path(
             article=_article_out(node.article, node.ancestors),
             ancestors=_crumbs(node.ancestors),
         )
+    here = [*node.ancestors, node.category]
     return PublicCategoryNodeOut(
         category=_collection(
-            node.category, sum(n for _, n in node.collections) + len(node.articles)
+            node.category,
+            sum(section.article_count for section in node.sections)
+            + len(node.articles),
         ),
         ancestors=_crumbs(node.ancestors),
-        collections=[_collection(c, n) for c, n in node.collections],
-        articles=[
-            _article_summary(a, [*node.ancestors, node.category])
-            for a in node.articles
+        sections=[
+            PublicSectionOut(
+                collection=_collection(section.category, section.article_count),
+                collections=[
+                    _collection(child, n) for child, n in section.collections
+                ],
+                articles=[
+                    _article_summary(a, [*here, section.category])
+                    for a in section.articles
+                ],
+            )
+            for section in node.sections
         ],
+        articles=[_article_summary(a, here) for a in node.articles],
     )
 
 

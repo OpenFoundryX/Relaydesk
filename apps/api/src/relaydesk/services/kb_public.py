@@ -111,15 +111,34 @@ async def roots(
 
 
 @dataclass(frozen=True)
+class Section:
+    """A child collection together with the rows its card lists.
+
+    The page draws one card per section, and each card lists that section's
+    own articles and sub-collections. Fetching those a card at a time would
+    be a request per section for something the tree already in hand can
+    answer, so they come down with the page.
+    """
+
+    category: KbCategory
+    #: Everything published beneath it -- what its own card would say.
+    article_count: int
+    #: Sub-collections of this section, with their counts. Rows, not cards.
+    collections: list[tuple[KbCategory, int]]
+    #: Published articles directly in this section. The other kind of row.
+    articles: list[KbArticle]
+
+
+@dataclass(frozen=True)
 class CategoryNode:
     """A collection or section page: what it is, where it sits, what it holds."""
 
     category: KbCategory
     #: Root first, excluding the category itself. The breadcrumb.
     ancestors: list[KbCategory]
-    #: Child collections with their subtree counts -- the "7 articles" rows.
-    collections: list[tuple[KbCategory, int]]
-    #: Published articles sitting directly in this category, not in a child.
+    #: The cards on this page: one per child collection, each with its rows.
+    sections: list[Section]
+    #: Published articles sitting directly here rather than in a section.
     articles: list[KbArticle]
 
 
@@ -132,19 +151,31 @@ class ArticleNode:
 
 
 async def _direct_articles(
-    session: AsyncSession, workspace_id: uuid.UUID, category_id: uuid.UUID
-) -> list[KbArticle]:
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    category_ids: Sequence[uuid.UUID],
+) -> dict[uuid.UUID, list[KbArticle]]:
+    """The published articles sitting directly in each of these categories.
+
+    Takes the whole set a page needs -- the category itself and every
+    section on it -- so one query answers the page rather than one per card.
+    """
+    if not category_ids:
+        return {}
     rows = await session.scalars(
         _visible(
             sa.select(KbArticle)
             .join(KbCategory, KbCategory.id == KbArticle.category_id)
             .where(
                 KbArticle.workspace_id == workspace_id,
-                KbArticle.category_id == category_id,
+                KbArticle.category_id.in_(category_ids),
             )
         ).order_by(KbArticle.title)
     )
-    return list(rows)
+    grouped: dict[uuid.UUID, list[KbArticle]] = {}
+    for article in rows:
+        grouped.setdefault(article.category_id, []).append(article)
+    return grouped
 
 
 def _ancestors_of(
@@ -272,15 +303,37 @@ async def resolve(
         current = match
 
     assert current is not None  # the empty path is refused above
+
+    # A section with nothing published anywhere beneath it is dropped for
+    # the same reason an empty collection never reaches the front page: its
+    # card would be a heading over a set of links that all 404.
+    sections = [
+        (child, _subtree_count(child, children, direct))
+        for child in children.get(current.id, [])
+    ]
+    sections = [(child, n) for child, n in sections if n]
+
+    by_category = await _direct_articles(
+        session, workspace_id, [current.id, *(child.id for child, _ in sections)]
+    )
+
     return CategoryNode(
         category=current,
         ancestors=ancestors,
-        collections=[
-            (child, _subtree_count(child, children, direct))
-            for child in children.get(current.id, [])
-            if _subtree_count(child, children, direct)
+        sections=[
+            Section(
+                category=child,
+                article_count=count,
+                collections=[
+                    (grandchild, _subtree_count(grandchild, children, direct))
+                    for grandchild in children.get(child.id, [])
+                    if _subtree_count(grandchild, children, direct)
+                ],
+                articles=by_category.get(child.id, []),
+            )
+            for child, count in sections
         ],
-        articles=await _direct_articles(session, workspace_id, current.id),
+        articles=by_category.get(current.id, []),
     )
 
 

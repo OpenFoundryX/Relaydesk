@@ -22,8 +22,16 @@ import { cn } from "@/lib/utils";
  * Link away from a results page, where this element would otherwise survive
  * reconciliation with the old query still typed in it.
  */
-export function PortalSearch({ className }: { className?: string }) {
+export function PortalSearch({
+  className,
+  tone = "light",
+}: {
+  className?: string;
+  /** "dark" for the hero band, where the field sits on near-black. */
+  tone?: "light" | "dark";
+}) {
   const query = useSearchParams().get("q") ?? "";
+  const dark = tone === "dark";
 
   return (
     <form
@@ -34,15 +42,23 @@ export function PortalSearch({ className }: { className?: string }) {
     >
       <Search
         aria-hidden
-        className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-ink-400"
+        className={cn(
+          "pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2",
+          dark ? "text-ink-400" : "text-ink-400",
+        )}
       />
       <Input
         type="search"
         name="q"
         defaultValue={query}
-        placeholder="Search articles…"
+        placeholder="Search for articles…"
         aria-label="Search articles"
-        className="h-9 pl-8"
+        className={cn(
+          "pl-11",
+          dark
+            ? "h-12 rounded-xl border-ink-700 bg-ink-800 text-[15px] text-white placeholder:text-ink-400 focus-visible:border-ink-500"
+            : "h-9",
+        )}
       />
     </form>
   );

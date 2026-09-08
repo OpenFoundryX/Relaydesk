@@ -1,6 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
+import { articleHeadings } from "@/components/portal/headings";
+
 import { DocRenderer } from "./doc-renderer";
 
 const src = (id: string) => `/api/kb/images/${id}`;
@@ -240,5 +242,42 @@ describe("DocRenderer", () => {
     expect(p?.getAttribute("onclick")).toBeNull();
     expect(p?.getAttribute("style")).toBeNull();
     expect(p?.id).toBe("");
+  });
+
+  it("puts the table of contents' anchor on the heading itself", () => {
+    // The id the contents list links to and the id the heading carries are
+    // the same value from one pass over the document -- see
+    // components/portal/headings.ts.
+    const doc_ = doc({
+      type: "heading",
+      attrs: { level: 2 },
+      content: [{ type: "text", text: "What is a POS terminal?" }],
+    });
+    const headings = articleHeadings(doc_);
+
+    render(
+      <DocRenderer doc={doc_} imageSrc={src} headingId={headings.idFor} />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "What is a POS terminal?" }).id,
+    ).toBe(headings.list[0].id);
+  });
+
+  it("renders a heading with no id when none is offered", () => {
+    // The console editor's preview renders the same component without a
+    // contents list beside it.
+    render(
+      <DocRenderer
+        doc={doc({
+          type: "heading",
+          attrs: { level: 2 },
+          content: [{ type: "text", text: "Plain" }],
+        })}
+        imageSrc={src}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Plain" }).id).toBe("");
   });
 });

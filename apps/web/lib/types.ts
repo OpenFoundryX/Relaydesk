@@ -1,4 +1,5 @@
 import type { BrandSlug } from "@/components/brand-icons";
+import type { PublicAuthor } from "@/lib/api/public";
 
 /**
  * Domain types for the Relaydesk console.
@@ -139,6 +140,13 @@ export interface KbArticle extends KbArticleSummary {
   doc: unknown;
   /** When it first went live. Stays set after an unpublish; `status` says whether it is live now. */
   publishedAt: string | null;
+  /**
+   * Who wrote it. The preview renders the help site's own `ArticleView`,
+   * byline and all, so it needs the same author the public API sends --
+   * a preview missing the byline is previewing a different page. Null
+   * where their account has been deleted.
+   */
+  author: PublicAuthor | null;
 }
 
 export interface KbCategory {

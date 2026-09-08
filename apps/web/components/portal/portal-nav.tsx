@@ -28,11 +28,22 @@ const LINKS = [
  * layout) purely to read the current path for the active-link state --
  * the layout itself has no other reason to know it.
  */
-export function PortalNav() {
+export function PortalNav({
+  className,
+  tone = "light",
+}: {
+  className?: string;
+  /** "dark" for the hero band, where the links sit on near-black. */
+  tone?: "light" | "dark";
+}) {
   const pathname = usePathname();
+  const dark = tone === "dark";
 
   return (
-    <nav aria-label="Portal" className="flex items-center gap-4 text-[13px]">
+    <nav
+      aria-label="Portal"
+      className={cn("flex items-center gap-4 text-[13px]", className)}
+    >
       {LINKS.map(({ href, label, icon: Icon }) => {
         const active = pathname === href || pathname.startsWith(`${href}/`);
         return (
@@ -42,7 +53,13 @@ export function PortalNav() {
             aria-current={active ? "page" : undefined}
             className={cn(
               "flex items-center gap-1.5 whitespace-nowrap transition-colors",
-              active ? "font-semibold text-ink-900" : "text-ink-500 hover:text-ink-900",
+              dark
+                ? active
+                  ? "font-semibold text-white"
+                  : "text-ink-300 hover:text-white"
+                : active
+                  ? "font-semibold text-ink-900"
+                  : "text-ink-500 hover:text-ink-900",
             )}
           >
             <Icon aria-hidden className="size-4 shrink-0" />
