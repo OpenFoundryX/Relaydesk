@@ -48,6 +48,13 @@ class Message(UUIDMixin, TimestampMixin, Base):
                 "channel_account_id IS NOT NULL AND external_id IS NOT NULL"
             ),
         ),
+        # Analytics: first-reply lookups by workspace, direction, sent_at.
+        Index(
+            "ix_messages_workspace_direction_sent_at",
+            "workspace_id",
+            "direction",
+            "sent_at",
+        ),
     )
 
     workspace_id: Mapped[uuid.UUID] = mapped_column(

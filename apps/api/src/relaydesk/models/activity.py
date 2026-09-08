@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, String
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -20,6 +20,10 @@ class ActivityKind(enum.StrEnum):
 
 class ActivityEvent(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "activity_events"
+    __table_args__ = (
+        # Analytics: resolved counts, resolution times, and backlog replay.
+        Index("ix_activity_events_workspace_kind_at", "workspace_id", "kind", "at"),
+    )
 
     workspace_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True),
