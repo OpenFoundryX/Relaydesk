@@ -351,3 +351,54 @@ async def test_the_conversation_is_channel_api(client, db_session) -> None:
         sa.select(Conversation).where(Conversation.id == created["id"])
     )
     assert stored.channel is Channel.api
+
+
+async def test_an_oversized_customer_name_is_refused(client, db_session) -> None:
+    """422, not a bare 500.
+
+    ``Contact.name`` is ``String(160)``. Unbounded here, a 200-character
+    name for an address the workspace has not seen reached
+    ``contacts.upsert`` untruncated and Postgres raised
+    ``StringDataRightTruncation`` -- a SQLAlchemy ``DataError``, which is
+    *not* an ``IntegrityError``, so ``create_from_api``'s guarded flush let
+    it through and the public API answered a 500 with no ``{"error": ...}}``
+    envelope at all. A new address is the load-bearing part: an existing
+    contact never inserts, so the truncation error only appears the first
+    time a workspace sees the address.
+    """
+    workspace = await make_workspace(db_session)
+    headers, _ = await writer(db_session, workspace)
+
+    response = await client.post(
+        "/v1/conversations",
+        json={
+            **BODY,
+            "customer_email": "a-brand-new-address@example.com",
+            "customer_name": "x" * 200,
+            "external_id": "long-name",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"]
+
+
+async def test_a_customer_name_at_the_limit_is_accepted(client, db_session) -> None:
+    """160 is the boundary, not 159 -- it is ``Contact.name``'s own width."""
+    workspace = await make_workspace(db_session)
+    headers, _ = await writer(db_session, workspace)
+
+    response = await client.post(
+        "/v1/conversations",
+        json={
+            **BODY,
+            "customer_email": "exactly-at-the-limit@example.com",
+            "customer_name": "y" * 160,
+            "external_id": "limit-name",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["customer"]["name"] == "y" * 160

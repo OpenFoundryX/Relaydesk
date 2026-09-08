@@ -23,7 +23,19 @@ async def upsert(
     session: AsyncSession, workspace_id: uuid.UUID, email: str, name: str
 ) -> Contact:
     """Find or create a contact. ``contacts.email`` is CITEXT, so lookup is
-    already case-insensitive."""
+    already case-insensitive.
+
+    ``name`` is truncated to ``Contact.name``'s ``String(160)`` here rather
+    than trusted from the caller. Postgres answers an over-long value with
+    ``StringDataRightTruncation`` -> SQLAlchemy ``DataError``, which is not
+    an ``IntegrityError`` and so escapes both the savepoint below and
+    ``tickets.create_from_api``'s guarded flush -- surfacing as a bare 500.
+    The v1 schema bounds its own field at 160 so an API caller gets a 422
+    instead; this is the belt to that braces, and it is what closes the same
+    hole on the portal form, whose ``name`` field is an unbounded
+    ``Annotated[str, Form()]``.
+    """
+    name = name[:160]
     contact = await _find(session, workspace_id, email)
     if contact is not None:
         # A later message may carry a better display name than the first did.
@@ -31,7 +43,9 @@ async def upsert(
             contact.name = name
         return contact
 
-    contact = Contact(workspace_id=workspace_id, email=email, name=name or email)
+    # ``email`` is the fallback display name and is CITEXT (unbounded) on its
+    # own column, so it is trimmed to the same 160 before landing in ``name``.
+    contact = Contact(workspace_id=workspace_id, email=email, name=name or email[:160])
     try:
         # A savepoint, not a bare flush: by the time this runs, the caller
         # (ingest_raw) has already mutated `row` in this same transaction.

@@ -105,7 +105,19 @@ class ConversationCreate(V1Model):
 
     customer_email: EmailStr
     message: str = Field(min_length=1)
-    customer_name: str = ""
+    # Bounded to ``Contact.name``'s own ``String(160)``. Unbounded, a
+    # 200-character name for an address the workspace has not seen reached
+    # ``contacts.upsert`` untruncated and Postgres raised
+    # ``StringDataRightTruncation`` -> SQLAlchemy ``DataError``, which is
+    # *not* an ``IntegrityError``, so ``create_from_api``'s guarded flush did
+    # not catch it and the public API answered a bare 500 with no
+    # ``{"error": {...}}`` envelope. Every other string on this path is
+    # already bounded -- ``external_id`` here, ``subject`` by
+    # ``create_conversation``'s ``[:400]``, ``message`` by
+    # ``ticket_message_max_chars``, ``Message.author_name`` by
+    # ``append_message``'s ``[:160]`` -- so this one refuses with a 422 like
+    # the rest of the body rather than being the one field that 500s.
+    customer_name: str = Field(default="", max_length=160)
     subject: str = ""
     priority: Priority = Priority.medium
     external_id: str | None = Field(default=None, max_length=200)
