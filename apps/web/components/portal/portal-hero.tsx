@@ -31,14 +31,22 @@ export function PortalHero({
   const isFrontPage = pathname === "/help";
 
   return (
-    <header className="relative overflow-hidden bg-ink-950">
+    <header className="relative bg-ink-950">
       {/* A soft wash of the brand colour behind the bar. Decorative, and
           deliberately not an image: it costs no request and cannot fail to
-          load, leaving a black rectangle. */}
+          load, leaving a black rectangle.
+
+          The clipping lives on this wrapper rather than on the header, so
+          that the glow stays inside the band while the search
+          suggestions -- absolutely positioned inside the same header --
+          can still hang below it. `overflow-hidden` on the header itself
+          cut them off at the black edge. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute -top-32 right-0 size-96 rounded-full bg-accent-600/20 blur-3xl"
-      />
+        className="pointer-events-none absolute inset-0 overflow-hidden"
+      >
+        <div className="absolute -top-32 right-0 size-96 rounded-full bg-accent-600/20 blur-3xl" />
+      </div>
 
       <div className="relative mx-auto max-w-5xl px-6">
         <div className="flex min-h-14 flex-wrap items-center gap-x-6 gap-y-2 py-3">
