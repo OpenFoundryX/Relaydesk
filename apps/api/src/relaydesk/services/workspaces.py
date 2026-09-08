@@ -139,6 +139,7 @@ async def update_workspace(
     workspace_id: uuid.UUID,
     name: str | None,
     timezone: str | None,
+    monogram: str | None = None,
 ) -> Workspace:
     workspace = await session.get(Workspace, workspace_id)
     if workspace is None:
@@ -147,5 +148,9 @@ async def update_workspace(
         workspace.name = name
     if timezone is not None:
         workspace.timezone = valid_timezone(timezone)
+    if monogram is not None:
+        # Trimmed here so the stored value is what the tile renders. The
+        # schema has already refused a blank one.
+        workspace.monogram = monogram.strip()
     await session.commit()
     return workspace

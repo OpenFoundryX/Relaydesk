@@ -16,6 +16,7 @@ from relaydesk.schemas.kb import (
     CategoryOut,
     CategoryPatch,
     ImageOut,
+    PublicAuthorOut,
     StatusRequest,
 )
 from relaydesk.services import kb_articles, kb_categories, kb_images
@@ -46,6 +47,10 @@ def _category_out(category: KbCategory, article_count: int) -> CategoryOut:
         scope=category.scope.value,
         position=category.position,
         article_count=article_count,
+        parent_id=str(category.parent_id) if category.parent_id else None,
+        depth=category.depth,
+        description=category.description,
+        icon=category.icon,
     )
 
 
@@ -72,6 +77,13 @@ def _article_out(article: KbArticle) -> ArticleOut:
         updated_at=article.updated_at,
         doc=article.doc,
         published_at=article.published_at,
+        author=(
+            PublicAuthorOut(
+                name=article.author.name, monogram=article.author.monogram
+            )
+            if article.author is not None
+            else None
+        ),
     )
 
 
@@ -93,7 +105,13 @@ async def create_category(
 ) -> CategoryOut:
     scope_.require_admin()
     category = await kb_categories.create(
-        session, scope_.workspace_id, payload.name, _parsed_scope(payload.scope)
+        session,
+        scope_.workspace_id,
+        payload.name,
+        _parsed_scope(payload.scope),
+        parent_id=payload.parent_id,
+        description=payload.description,
+        icon=payload.icon,
     )
     await session.commit()
     return _category_out(category, 0)
@@ -113,6 +131,8 @@ async def update_category(
         category_id,
         name=payload.name,
         position=payload.position,
+        description=payload.description,
+        icon=payload.icon,
     )
     await session.commit()
     rows = await kb_categories.list_for(session, scope_.workspace_id, category.scope)

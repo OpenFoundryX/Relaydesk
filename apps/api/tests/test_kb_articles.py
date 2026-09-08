@@ -309,3 +309,23 @@ async def test_a_malformed_category_id_is_a_422_not_a_500(db_session, client) ->
     )
 
     assert created.status_code == 422
+
+
+async def test_the_console_article_names_its_author(db_session, client) -> None:
+    """The console's preview renders the same `ArticleView` the help site
+    does, byline and all, so it has to be handed the same author -- a
+    preview missing the byline is previewing a different page."""
+    workspace, author, category = await _setup(db_session)
+    article = await kb_articles.create(
+        db_session, workspace.id, category.id, "Refunds", author
+    )
+    await db_session.commit()
+    headers = await sign_in(client, db_session, author.email)
+
+    response = await client.get(f"/api/kb/articles/{article.id}", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["author"] == {
+        "name": author.name,
+        "monogram": author.monogram,
+    }

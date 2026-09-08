@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator
 
@@ -25,16 +26,29 @@ class CategoryOut(CamelModel):
     scope: str
     position: int
     article_count: int
+    #: None for a root collection. Depth is derived from it and sent along
+    #: so the console can indent without walking the list itself.
+    parent_id: str | None = None
+    depth: int = 0
+    description: str = ""
+    icon: str = ""
 
 
 class CategoryCreateRequest(CamelModel):
     name: str = Field(min_length=1, max_length=120)
     scope: str
+    #: The collection this one sits under. Absent makes it a root.
+    parent_id: uuid.UUID | None = None
+    description: str = Field(default="", max_length=400)
+    #: One of `CATEGORY_ICONS`; the service refuses anything else.
+    icon: str = Field(default="", max_length=40)
 
 
 class CategoryPatch(CamelModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     position: int | None = None
+    description: str | None = Field(default=None, max_length=400)
+    icon: str | None = Field(default=None, max_length=40)
 
 
 class ArticleSummary(CamelModel):
@@ -47,9 +61,20 @@ class ArticleSummary(CamelModel):
     updated_at: datetime
 
 
+class PublicAuthorOut(CamelModel):
+    """Who wrote an article, as a reader sees it. Name and monogram only --
+    an email address here would publish a staff address to the world."""
+
+    name: str
+    monogram: str
+
+
 class ArticleOut(ArticleSummary):
     doc: dict
     published_at: datetime | None
+    #: Who wrote it, for the console preview's byline -- the same one the
+    #: help site prints. None where their account has been deleted.
+    author: PublicAuthorOut | None = None
 
 
 class ArticleCreateRequest(CamelModel):
@@ -90,16 +115,23 @@ class PublicWorkspaceOut(CamelModel):
 
 
 class PublicArticleSummary(CamelModel):
-    """An entry in the index or search results -- no body, no doc."""
+    """An entry in a collection listing or search results -- no body, no doc."""
 
     id: str
     title: str
     slug: str
     excerpt: str
+    #: Slash-joined, no leading slash: "for-spenders/expenses/add-a-receipt".
+    #: The href, carried with the article because a nested KB makes it
+    #: impossible to derive from the slug.
+    path: str
 
 
 class PublicArticleOut(PublicArticleSummary):
     doc: dict
+    #: None where the author's account has been deleted: `author_user_id`
+    #: is SET NULL, and the article outlives them.
+    author: PublicAuthorOut | None = None
     published_at: datetime | None
     #: When the article last changed. The help site prints it under the body
     #: as "Last updated", which is the one thing a reader needs to judge
@@ -109,11 +141,80 @@ class PublicArticleOut(PublicArticleSummary):
     updated_at: datetime
 
 
-class PublicCategoryOut(CamelModel):
+class PublicCollectionOut(CamelModel):
+    """A collection as it appears on a card: blurb, icon, and a count.
+
+    `article_count` is the whole subtree, not the direct children -- a
+    collection whose articles all live in its sections would otherwise
+    advertise zero.
+    """
+
     id: str
     name: str
     slug: str
+    description: str
+    icon: str
+    article_count: int
+
+
+class PublicCrumbOut(CamelModel):
+    """One step of a breadcrumb. Name to print, slug to build the href."""
+
+    name: str
+    slug: str
+
+
+class PublicSearchEntryOut(CamelModel):
+    """One row of the browser's search index.
+
+    Title, blurb, and the collections above it -- the collection an article
+    sits in is part of how people describe it, so it is worth matching on.
+    No body: that is what makes an index shippable, and what the server's
+    full-text search is still there for.
+    """
+
+    id: str
+    title: str
+    excerpt: str
+    path: str
+    #: Root first. Both a breadcrumb to show and extra words to match on.
+    collections: list[str]
+
+
+class PublicSectionOut(CamelModel):
+    """One card on a collection page: a section, and the rows it lists.
+
+    The rows are of two kinds -- articles, and sub-collections with their
+    own counts -- and a card mixes them freely, which is what the three
+    container levels look like once drawn.
+    """
+
+    collection: PublicCollectionOut
+    collections: list[PublicCollectionOut]
     articles: list[PublicArticleSummary]
+
+
+class PublicCategoryNodeOut(CamelModel):
+    kind: Literal["category"] = "category"
+    category: PublicCollectionOut
+    #: Root first, excluding the category itself.
+    ancestors: list[PublicCrumbOut]
+    sections: list[PublicSectionOut]
+    #: Articles sitting directly here rather than in a section.
+    articles: list[PublicArticleSummary]
+
+
+class PublicArticleNodeOut(CamelModel):
+    kind: Literal["article"] = "article"
+    article: PublicArticleOut
+    ancestors: list[PublicCrumbOut]
+
+
+#: What a help-site path resolves to. The caller -- one catch-all route --
+#: cannot know which of the two it is asking for, so `kind` tells it.
+PublicNodeOut = Annotated[
+    PublicCategoryNodeOut | PublicArticleNodeOut, Field(discriminator="kind")
+]
 
 
 class TicketSubmittedOut(CamelModel):

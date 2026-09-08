@@ -12,9 +12,10 @@ import type { ArticleStatus, KbArticleSummary, KbCategory } from "@/lib/types";
 // assertions call one.
 vi.mock("@/app/(console)/knowledge-base/actions", () => ({
   createArticleAction: vi.fn(),
+  createCategoryAction: vi.fn(),
   deleteArticleAction: vi.fn(),
   deleteCategoryAction: vi.fn(),
-  renameCategoryAction: vi.fn(),
+  editCategoryAction: vi.fn(),
 }));
 
 const { push } = vi.hoisted(() => ({ push: vi.fn() }));
@@ -40,6 +41,10 @@ function category(overrides: Partial<KbCategory> = {}): KbCategory {
     scope: "internal",
     position: 0,
     articleCount: 1,
+    parentId: null,
+    depth: 0,
+    description: "",
+    icon: "",
     ...overrides,
   };
 }
@@ -157,11 +162,14 @@ describe("SidebarTree", () => {
   });
 
   describe("the row menus", () => {
-    it("offers an admin rename and delete on a category", () => {
+    it("offers an admin edit, a nested section, and delete on a category", () => {
       tree();
       openMenu("Billing actions");
 
-      expect(screen.getByRole("menuitem", { name: "Rename" })).toBeDefined();
+      expect(screen.getByRole("menuitem", { name: "Edit" })).toBeDefined();
+      expect(
+        screen.getByRole("menuitem", { name: "Add section inside" }),
+      ).toBeDefined();
       expect(
         screen.getByRole("menuitem", { name: "Delete category" }),
       ).toBeDefined();

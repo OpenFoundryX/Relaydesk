@@ -40,6 +40,7 @@ import {
 import { useArticleGuard } from "@/components/knowledge-base/article-guard";
 import { STATUS_CONTROL } from "@/components/knowledge-base/article-status";
 import { DocRenderer } from "@/components/knowledge-base/doc-renderer";
+import { plainDoc } from "@/components/knowledge-base/plain-doc";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -314,7 +315,11 @@ export function ArticleEditor({
       const result = await saveArticleAction(article.id, {
         title: title.trim(),
         excerpt: excerpt.trim(),
-        doc: editor.getJSON(),
+        // Not `getJSON()` directly: its `attrs` are the null-prototype
+        // objects prosemirror-model builds, and a Server Action's encoder
+        // drops those in transit -- the save succeeds and the document
+        // arrives with every node's attributes gone. See `plainDoc`.
+        doc: plainDoc(editor.getJSON()),
       });
       if (result.ok) {
         setDirty(false);

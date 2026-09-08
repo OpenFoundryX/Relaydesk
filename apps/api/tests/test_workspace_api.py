@@ -116,3 +116,39 @@ async def test_an_agent_cannot_patch_the_workspace(
     assert response.json()["error"]["code"] == "forbidden"
     await db_session.refresh(workspace)
     assert workspace.name != "Renamed"
+
+
+async def test_an_admin_can_change_the_monogram(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The tile beside the workspace name, on the console header and on the
+    help centre's hero. It was settable only when the workspace was first
+    created, which left a rename showing the old initials for good."""
+    workspace = await make_workspace(db_session, slug="acme-support")
+    user = await make_member(db_session, workspace)
+    await db_session.commit()
+    headers = await sign_in(client, db_session, user.email)
+
+    response = await client.patch(
+        "/api/workspace", headers=headers, json={"monogram": "NW"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["monogram"] == "NW"
+
+
+async def test_a_blank_monogram_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """It is rendered inside a tile that has to hold something. An empty one
+    leaves a coloured square with nothing in it on every page."""
+    workspace = await make_workspace(db_session, slug="acme-support")
+    user = await make_member(db_session, workspace)
+    await db_session.commit()
+    headers = await sign_in(client, db_session, user.email)
+
+    response = await client.patch(
+        "/api/workspace", headers=headers, json={"monogram": "   "}
+    )
+
+    assert response.status_code == 422

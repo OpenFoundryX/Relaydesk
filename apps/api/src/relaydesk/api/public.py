@@ -18,12 +18,19 @@ from relaydesk.api.deps import DbSession
 from relaydesk.config import get_settings
 from relaydesk.email_parse.normalize import ParsedAttachment
 from relaydesk.errors import Invalid, NotFound, TooManyRequests
-from relaydesk.models.kb import KbArticle
+from relaydesk.models.kb import KbArticle, KbCategory
 from relaydesk.models.workspace import Workspace
 from relaydesk.schemas.kb import (
+    PublicArticleNodeOut,
     PublicArticleOut,
     PublicArticleSummary,
-    PublicCategoryOut,
+    PublicAuthorOut,
+    PublicCategoryNodeOut,
+    PublicCollectionOut,
+    PublicCrumbOut,
+    PublicNodeOut,
+    PublicSearchEntryOut,
+    PublicSectionOut,
     PublicWorkspaceOut,
     TicketSubmittedOut,
 )
@@ -58,40 +65,69 @@ async def read_workspace(slug: str, session: DbSession) -> PublicWorkspaceOut:
     return PublicWorkspaceOut(name=workspace.name, monogram=workspace.monogram)
 
 
-def _article_summary(article: KbArticle) -> PublicArticleSummary:
+def _path(ancestors: list[KbCategory], article: KbArticle) -> str:
+    return "/".join([*(c.slug for c in ancestors), article.slug])
+
+
+def _article_summary(
+    article: KbArticle, ancestors: list[KbCategory]
+) -> PublicArticleSummary:
     return PublicArticleSummary(
         id=str(article.id),
         title=article.title,
         slug=article.slug,
         excerpt=article.excerpt,
+        path=_path(ancestors, article),
     )
 
 
-def _article_out(article: KbArticle) -> PublicArticleOut:
+def _article_out(
+    article: KbArticle, ancestors: list[KbCategory]
+) -> PublicArticleOut:
     return PublicArticleOut(
         id=str(article.id),
         title=article.title,
         slug=article.slug,
         excerpt=article.excerpt,
+        path=_path(ancestors, article),
         doc=article.doc,
         published_at=article.published_at,
         updated_at=article.updated_at,
+        author=(
+            PublicAuthorOut(
+                name=article.author.name, monogram=article.author.monogram
+            )
+            if article.author is not None
+            else None
+        ),
     )
 
 
-@router.get("/{slug}/kb", response_model=list[PublicCategoryOut])
-async def read_kb_index(slug: str, session: DbSession) -> list[PublicCategoryOut]:
-    workspace = await resolve_workspace(session, slug)
-    rows = await kb_public.index(session, workspace.id)
+def _collection(category: KbCategory, article_count: int) -> PublicCollectionOut:
+    return PublicCollectionOut(
+        id=str(category.id),
+        name=category.name,
+        slug=category.slug,
+        description=category.description,
+        icon=category.icon,
+        article_count=article_count,
+    )
+
+
+def _crumbs(categories: list[KbCategory]) -> list[PublicCrumbOut]:
     return [
-        PublicCategoryOut(
-            id=str(category.id),
-            name=category.name,
-            slug=category.slug,
-            articles=[_article_summary(article) for article in articles],
-        )
-        for category, articles in rows
+        PublicCrumbOut(name=category.name, slug=category.slug)
+        for category in categories
     ]
+
+
+@router.get("/{slug}/kb", response_model=list[PublicCollectionOut])
+async def read_kb_index(slug: str, session: DbSession) -> list[PublicCollectionOut]:
+    """The help site's front page: root collections, each with its blurb,
+    its icon, and how many published articles sit anywhere beneath it."""
+    workspace = await resolve_workspace(session, slug)
+    rows = await kb_public.roots(session, workspace.id)
+    return [_collection(category, count) for category, count in rows]
 
 
 @router.get("/{slug}/kb/search", response_model=list[PublicArticleSummary])
@@ -100,7 +136,38 @@ async def search_kb(
 ) -> list[PublicArticleSummary]:
     workspace = await resolve_workspace(session, slug)
     articles = await kb_public.search(session, workspace.id, q)
-    return [_article_summary(article) for article in articles]
+    ancestors = await kb_public.paths_for(session, workspace.id, articles)
+    return [
+        _article_summary(article, ancestors.get(article.id, []))
+        for article in articles
+    ]
+
+
+@router.get(
+    "/{slug}/kb/search/index", response_model=list[PublicSearchEntryOut]
+)
+async def read_kb_search_index(
+    slug: str, session: DbSession
+) -> list[PublicSearchEntryOut]:
+    """The whole searchable surface, for the browser to score locally.
+
+    Sits under `search`, which is already refused as a category slug, so it
+    needs no new reserved word of its own. Read once per visitor rather
+    than per keystroke -- which is the entire reason instant search here
+    costs no network at all after the first fetch.
+    """
+    workspace = await resolve_workspace(session, slug)
+    rows = await kb_public.searchable(session, workspace.id)
+    return [
+        PublicSearchEntryOut(
+            id=str(article.id),
+            title=article.title,
+            excerpt=article.excerpt,
+            path=_path(ancestors, article),
+            collections=[category.name for category in ancestors],
+        )
+        for article, ancestors in rows
+    ]
 
 
 @router.get("/{slug}/kb/images/{image_id}")
@@ -117,17 +184,56 @@ async def read_kb_image(slug: str, image_id: uuid.UUID, session: DbSession) -> R
     )
 
 
-@router.get(
-    "/{slug}/kb/{category_slug}/{article_slug}", response_model=PublicArticleOut
-)
-async def read_kb_article(
-    slug: str, category_slug: str, article_slug: str, session: DbSession
-) -> PublicArticleOut:
+# Declared last of the `/kb` routes on purpose: `{path:path}` swallows
+# everything, so `search` and `images/{id}` above it would never be reached
+# otherwise. Those two names are also refused as category slugs -- see
+# `RESERVED_CATEGORY_SLUGS` in `relaydesk.services.kb_categories`.
+@router.get("/{slug}/kb/{path:path}", response_model=PublicNodeOut)
+async def read_kb_path(
+    slug: str, path: str, session: DbSession
+) -> PublicCategoryNodeOut | PublicArticleNodeOut:
+    """One help-site path, resolved to whatever it names.
+
+    A collection, a section, and an article are three renderings of the
+    same walk, and the caller holding a URL cannot tell which it has until
+    the walk is done -- so this answers all three, and `kind` says which.
+
+    The ancestors come back with it, which is both the breadcrumb and the
+    canonical path: a caller whose URL disagrees with them is holding an
+    old link to a moved article and can redirect to the real one.
+    """
     workspace = await resolve_workspace(session, slug)
-    article = await kb_public.article(
-        session, workspace.id, category_slug, article_slug
+    node = await kb_public.resolve(
+        session, workspace.id, [s for s in path.split("/") if s]
     )
-    return _article_out(article)
+    if isinstance(node, kb_public.ArticleNode):
+        return PublicArticleNodeOut(
+            article=_article_out(node.article, node.ancestors),
+            ancestors=_crumbs(node.ancestors),
+        )
+    here = [*node.ancestors, node.category]
+    return PublicCategoryNodeOut(
+        category=_collection(
+            node.category,
+            sum(section.article_count for section in node.sections)
+            + len(node.articles),
+        ),
+        ancestors=_crumbs(node.ancestors),
+        sections=[
+            PublicSectionOut(
+                collection=_collection(section.category, section.article_count),
+                collections=[
+                    _collection(child, n) for child, n in section.collections
+                ],
+                articles=[
+                    _article_summary(a, [*here, section.category])
+                    for a in section.articles
+                ],
+            )
+            for section in node.sections
+        ],
+        articles=[_article_summary(a, here) for a in node.articles],
+    )
 
 
 # `/{slug}/tickets` adds no new fixed first segment -- the first segment is

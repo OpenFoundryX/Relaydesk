@@ -233,3 +233,272 @@ async def test_deleting_a_category_requires_admin(db_session, client) -> None:
     response = await client.delete(f"/api/kb/categories/{category.id}", headers=headers)
 
     assert response.status_code == 403
+
+
+async def test_a_category_can_be_created_under_a_parent(
+    db_session: AsyncSession,
+) -> None:
+    workspace = await make_workspace(db_session)
+    parent = await kb_categories.create(
+        db_session, workspace.id, "For spenders", KbScope.external
+    )
+
+    child = await kb_categories.create(
+        db_session,
+        workspace.id,
+        "Getting started",
+        KbScope.external,
+        parent_id=parent.id,
+    )
+
+    assert child.parent_id == parent.id
+    assert child.depth == 1
+    assert parent.depth == 0
+
+
+async def test_three_levels_are_allowed_and_a_fourth_is_not(
+    db_session: AsyncSession,
+) -> None:
+    """The help site renders collection -> section -> sub-section. A fourth
+    container level has nowhere to appear, so it is refused at the service
+    rather than stored and silently dropped by the renderer."""
+    workspace = await make_workspace(db_session)
+
+    collection = await kb_categories.create(
+        db_session, workspace.id, "For spenders", KbScope.external
+    )
+    section = await kb_categories.create(
+        db_session, workspace.id, "Expenses", KbScope.external, parent_id=collection.id
+    )
+    subsection = await kb_categories.create(
+        db_session, workspace.id, "Creating expenses", KbScope.external,
+        parent_id=section.id,
+    )
+
+    assert subsection.depth == 2
+
+    with pytest.raises(Invalid):
+        await kb_categories.create(
+            db_session, workspace.id, "Too deep", KbScope.external,
+            parent_id=subsection.id,
+        )
+
+
+async def test_an_external_category_cannot_be_nested_under_an_internal_one(
+    db_session: AsyncSession,
+) -> None:
+    """The one that matters. Internal and external are separate namespaces,
+    and a section that crosses between them would put staff-only articles
+    under a collection the public help site walks."""
+    workspace = await make_workspace(db_session)
+    internal = await kb_categories.create(
+        db_session, workspace.id, "Runbooks", KbScope.internal
+    )
+
+    with pytest.raises(Invalid):
+        await kb_categories.create(
+            db_session, workspace.id, "Refunds", KbScope.external,
+            parent_id=internal.id,
+        )
+
+
+async def test_a_parent_in_another_workspace_does_not_exist(
+    db_session: AsyncSession,
+) -> None:
+    workspace = await make_workspace(db_session)
+    other = await make_workspace(db_session, slug="acme")
+    theirs = await kb_categories.create(
+        db_session, other.id, "For spenders", KbScope.external
+    )
+
+    with pytest.raises(NotFound):
+        await kb_categories.create(
+            db_session, workspace.id, "Expenses", KbScope.external,
+            parent_id=theirs.id,
+        )
+
+
+async def test_cousins_may_share_a_slug_but_siblings_may_not(
+    db_session: AsyncSession,
+) -> None:
+    """Slugs are unique among siblings, not across the workspace. Every
+    collection wants a "Getting started"; forcing the second one to be
+    "getting-started-2" would put that in the URL forever."""
+    workspace = await make_workspace(db_session)
+    spenders = await kb_categories.create(
+        db_session, workspace.id, "For spenders", KbScope.external
+    )
+    admins = await kb_categories.create(
+        db_session, workspace.id, "For admins", KbScope.external
+    )
+
+    under_spenders = await kb_categories.create(
+        db_session, workspace.id, "Getting started", KbScope.external,
+        parent_id=spenders.id,
+    )
+    under_admins = await kb_categories.create(
+        db_session, workspace.id, "Getting started", KbScope.external,
+        parent_id=admins.id,
+    )
+
+    assert under_spenders.slug == under_admins.slug == "getting-started"
+
+    with pytest.raises(Conflict):
+        await kb_categories.create(
+            db_session, workspace.id, "Getting started", KbScope.external,
+            parent_id=spenders.id,
+        )
+
+
+async def test_two_root_collections_still_may_not_share_a_slug(
+    db_session: AsyncSession,
+) -> None:
+    """Roots are siblings of each other. Postgres counts NULLs as distinct
+    by default, which would quietly let two root collections share a slug
+    and make `/help/{slug}` ambiguous."""
+    workspace = await make_workspace(db_session)
+    await kb_categories.create(db_session, workspace.id, "Billing", KbScope.external)
+
+    with pytest.raises(Conflict):
+        await kb_categories.create(
+            db_session, workspace.id, "Billing", KbScope.external
+        )
+
+
+async def test_deleting_a_category_that_holds_sub_collections_is_a_conflict(
+    db_session: AsyncSession,
+) -> None:
+    """The same refusal articles already get. Without it the FK raises and
+    the caller sees a 500 instead of being told what is in the way."""
+    workspace = await make_workspace(db_session)
+    collection = await kb_categories.create(
+        db_session, workspace.id, "For spenders", KbScope.external
+    )
+    await kb_categories.create(
+        db_session, workspace.id, "Expenses", KbScope.external, parent_id=collection.id
+    )
+
+    with pytest.raises(Conflict):
+        await kb_categories.delete(db_session, workspace.id, collection.id)
+
+
+async def test_a_category_carries_a_description_and_an_icon(
+    db_session: AsyncSession,
+) -> None:
+    workspace = await make_workspace(db_session)
+
+    category = await kb_categories.create(
+        db_session,
+        workspace.id,
+        "For spenders",
+        KbScope.external,
+        description="Track expenses and file reports in a single click.",
+        icon="credit-card",
+    )
+
+    assert category.description == "Track expenses and file reports in a single click."
+    assert category.icon == "credit-card"
+
+
+async def test_a_category_created_without_them_gets_neither(
+    db_session: AsyncSession,
+) -> None:
+    """Empty, not NULL. The help site renders a card either way and has no
+    second branch for a missing blurb."""
+    workspace = await make_workspace(db_session)
+
+    category = await kb_categories.create(
+        db_session, workspace.id, "Billing", KbScope.external
+    )
+
+    assert (category.description, category.icon) == ("", "")
+
+
+async def test_an_icon_outside_the_set_is_rejected(db_session: AsyncSession) -> None:
+    """The icon names a component the console and the help site both look
+    up. An arbitrary string renders as a hole in the page, and the failure
+    would only ever be seen by a customer."""
+    workspace = await make_workspace(db_session)
+
+    with pytest.raises(Invalid):
+        await kb_categories.create(
+            db_session, workspace.id, "Billing", KbScope.external, icon="skull"
+        )
+
+
+async def test_the_route_creates_a_sub_collection_with_a_face(
+    db_session, client
+) -> None:
+    """Everything the help site draws on a card -- where it sits, its blurb,
+    its icon -- has to be settable by the person writing the articles, not
+    only by whoever can run Python against the database."""
+    workspace = await make_workspace(db_session)
+    admin = await make_member(db_session, workspace, email="nilesh@example.com")
+    parent = await kb_categories.create(
+        db_session, workspace.id, "For spenders", KbScope.external
+    )
+    await db_session.commit()
+    headers = await sign_in(client, db_session, admin.email)
+
+    response = await client.post(
+        "/api/kb/categories",
+        json={
+            "name": "Expenses",
+            "scope": "external",
+            "parentId": str(parent.id),
+            "description": "Filing and coding what you spent.",
+            "icon": "credit-card",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["parentId"] == str(parent.id)
+    assert body["depth"] == 1
+    assert body["description"] == "Filing and coding what you spent."
+    assert body["icon"] == "credit-card"
+
+
+async def test_the_route_edits_a_description_and_an_icon(db_session, client) -> None:
+    workspace = await make_workspace(db_session)
+    admin = await make_member(db_session, workspace, email="nilesh@example.com")
+    category = await kb_categories.create(
+        db_session, workspace.id, "Billing", KbScope.external
+    )
+    await db_session.commit()
+    headers = await sign_in(client, db_session, admin.email)
+
+    response = await client.patch(
+        f"/api/kb/categories/{category.id}",
+        json={"description": "Invoices and refunds.", "icon": "shield"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["description"] == "Invoices and refunds."
+    assert response.json()["icon"] == "shield"
+
+
+async def test_the_route_refuses_an_icon_outside_the_set(db_session, client) -> None:
+    """The name is looked up in a fixed table by both the console and the
+    help site. Anything else renders as a hole in a customer's page."""
+    workspace = await make_workspace(db_session)
+    admin = await make_member(db_session, workspace, email="nilesh@example.com")
+    category = await kb_categories.create(
+        db_session, workspace.id, "Billing", KbScope.external
+    )
+    await db_session.commit()
+    headers = await sign_in(client, db_session, admin.email)
+
+    response = await client.patch(
+        f"/api/kb/categories/{category.id}",
+        json={"icon": "skull"},
+        headers=headers,
+    )
+
+    # 422 is what `Invalid` maps to. Asserting the message too, so this
+    # cannot pass on some unrelated schema rejection that happens to share
+    # the status.
+    assert response.status_code == 422
+    assert "icons" in response.json()["error"]["message"]

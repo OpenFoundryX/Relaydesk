@@ -4,6 +4,11 @@ import { useState, useTransition } from "react";
 import { FolderPlus } from "lucide-react";
 
 import { createCategoryAction } from "@/app/(console)/knowledge-base/actions";
+import {
+  CategoryFields,
+  EMPTY_FACE,
+  type CategoryFace,
+} from "@/components/knowledge-base/category-fields";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -14,8 +19,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import type { KbScope } from "@/lib/types";
 
 /**
@@ -29,20 +32,23 @@ export function NewCategoryDialog({
   scope,
   triggerLabel,
   variant = "primary",
+  parentId = null,
 }: {
   scope: KbScope;
   triggerLabel: string;
   variant?: "primary" | "secondary";
+  /** Set to create this one *inside* an existing collection. */
+  parentId?: string | null;
 }) {
   const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
+  const [face, setFace] = useState<CategoryFace>(EMPTY_FACE);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   function handleOpenChange(next: boolean) {
     setOpen(next);
     if (!next) {
-      setName("");
+      setFace(EMPTY_FACE);
       setError(null);
     }
   }
@@ -50,7 +56,11 @@ export function NewCategoryDialog({
   function submit() {
     setError(null);
     startTransition(async () => {
-      const result = await createCategoryAction(name.trim(), scope);
+      const result = await createCategoryAction(face.name.trim(), scope, {
+        parentId,
+        description: face.description.trim(),
+        icon: face.icon,
+      });
       if (result.ok) {
         handleOpenChange(false);
       } else {
@@ -80,17 +90,7 @@ export function NewCategoryDialog({
               {error}
             </p>
           )}
-          <div className="space-y-1.5">
-            <Label htmlFor="category-name">Name</Label>
-            <Input
-              id="category-name"
-              placeholder="e.g. Getting started"
-              value={name}
-              maxLength={120}
-              onChange={(event) => setName(event.target.value)}
-              autoFocus
-            />
-          </div>
+          <CategoryFields value={face} onChange={setFace} idPrefix="new-category" />
         </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={() => handleOpenChange(false)}>
@@ -98,7 +98,7 @@ export function NewCategoryDialog({
           </Button>
           <Button
             variant="primary"
-            disabled={pending || name.trim().length === 0}
+            disabled={pending || face.name.trim().length === 0}
             onClick={submit}
           >
             {pending ? "Creating…" : "Create"}

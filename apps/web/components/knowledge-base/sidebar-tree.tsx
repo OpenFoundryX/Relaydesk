@@ -11,11 +11,18 @@ import { useRouter } from "next/navigation";
 import { MoreHorizontal, Plus } from "lucide-react";
 
 import {
+  createCategoryAction,
   deleteArticleAction,
   deleteCategoryAction,
-  renameCategoryAction,
+  editCategoryAction,
 } from "@/app/(console)/knowledge-base/actions";
 import { useArticleGuard } from "@/components/knowledge-base/article-guard";
+import {
+  CategoryFields,
+  EMPTY_FACE,
+  type CategoryFace,
+} from "@/components/knowledge-base/category-fields";
+import { nestCategories } from "@/components/knowledge-base/category-tree";
 import { NewArticleDialog } from "@/components/knowledge-base/new-article-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -34,8 +41,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import type { ArticleStatus, KbArticleSummary, KbCategory, KbScope } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -57,9 +62,17 @@ const shellStyles =
   "w-64 shrink-0 self-start overflow-hidden rounded-lg border border-ink-200 bg-white";
 
 type Pending =
-  | { kind: "rename"; category: KbCategory }
+  | { kind: "edit"; category: KbCategory }
+  | { kind: "sub"; parent: KbCategory }
   | { kind: "delete-category"; category: KbCategory }
   | { kind: "delete-article"; article: KbArticleSummary };
+
+/**
+ * The deepest a category may sit, matching `MAX_DEPTH` in
+ * `relaydesk.services.kb_categories`. A row already at the limit is not
+ * offered a control the API would refuse.
+ */
+const MAX_DEPTH = 2;
 
 /**
  * The persistent left-hand tree: every category in the active scope with its
@@ -119,15 +132,28 @@ export function SidebarTree({
     <>
       <nav aria-label="Knowledge base" className={shellStyles}>
         <ul className="py-1">
-          {categories.map((category) => {
+          {nestCategories(categories).map((category) => {
             const entries = articles.filter(
               (article) => article.categoryId === category.id,
             );
 
             return (
-              <li key={category.id} className="px-1 py-0.5">
+              <li
+                key={category.id}
+                className="px-1 py-0.5"
+                // Indented rather than nested in real <ul>s: the API hands
+                // back one flat list per scope, and a section's articles
+                // hang off the section itself, so what a reader needs to
+                // see here is depth, not containment.
+                style={{ paddingLeft: `${0.25 + category.depth * 0.75}rem` }}
+              >
                 <div className="group flex items-center gap-1 rounded-md px-2 py-1.5">
-                  <h2 className="min-w-0 flex-1 truncate text-[13px] font-semibold tracking-tight text-ink-900">
+                  <h2
+                    className={cn(
+                      "min-w-0 flex-1 truncate text-[13px] tracking-tight text-ink-900",
+                      category.depth === 0 ? "font-semibold" : "font-medium",
+                    )}
+                  >
                     {category.name}
                   </h2>
                   <span className="tabular shrink-0 rounded-full bg-ink-100 px-1.5 text-[11px] leading-5 text-ink-500">
@@ -136,10 +162,19 @@ export function SidebarTree({
                   {isAdmin && (
                     <RowMenu label={`${category.name} actions`}>
                       <DropdownMenuItem
-                        onSelect={() => setPending({ kind: "rename", category })}
+                        onSelect={() => setPending({ kind: "edit", category })}
                       >
-                        Rename
+                        Edit
                       </DropdownMenuItem>
+                      {category.depth < MAX_DEPTH && (
+                        <DropdownMenuItem
+                          onSelect={() =>
+                            setPending({ kind: "sub", parent: category })
+                          }
+                        >
+                          Add section inside
+                        </DropdownMenuItem>
+                      )}
                       <DropdownMenuItem
                         destructive
                         // The API refuses this with a 409 while the category
@@ -287,16 +322,26 @@ function PendingDialog({
   onClose: () => void;
   onArticleDeleted: (articleId: string) => void;
 }) {
-  const [name, setName] = useState("");
+  const [face, setFace] = useState<CategoryFace>(EMPTY_FACE);
   const [error, setError] = useState<string | null>(null);
   const [running, startTransition] = useTransition();
 
   // `pending` changing means a different menu item was picked; reset the
-  // draft name and any message left over from the last attempt.
+  // draft and any message left over from the last attempt. Editing starts
+  // from what the category already shows, so an author changing an icon
+  // does not have to retype its blurb.
   const [seen, setSeen] = useState<Pending | null>(null);
   if (pending !== seen) {
     setSeen(pending);
-    setName(pending?.kind === "rename" ? pending.category.name : "");
+    setFace(
+      pending?.kind === "edit"
+        ? {
+            name: pending.category.name,
+            description: pending.category.description,
+            icon: pending.category.icon,
+          }
+        : EMPTY_FACE,
+    );
     setError(null);
   }
 
@@ -318,7 +363,8 @@ function PendingDialog({
     });
   }
 
-  const rename = pending.kind === "rename" ? pending : null;
+  const edit = pending.kind === "edit" ? pending : null;
+  const sub = pending.kind === "sub" ? pending : null;
   const removeCategory =
     pending.kind === "delete-category" ? pending.category : null;
   const removeArticle = pending.kind === "delete-article" ? pending.article : null;
@@ -328,7 +374,8 @@ function PendingDialog({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {rename && "Rename category"}
+            {edit && "Edit category"}
+            {sub && `New section in “${sub.parent.name}”`}
             {removeCategory && "Delete category?"}
             {removeArticle && "Delete article?"}
           </DialogTitle>
@@ -354,35 +401,51 @@ function PendingDialog({
               {error}
             </p>
           )}
-          {rename && (
-            <div className="space-y-1.5">
-              <Label htmlFor="category-rename">Name</Label>
-              <Input
-                id="category-rename"
-                value={name}
-                maxLength={120}
-                autoFocus
-                onChange={(event) => setName(event.target.value)}
-              />
-              <p className="text-[12px] text-ink-500">
-                The address of its published articles does not change.
-              </p>
-            </div>
+          {(edit || sub) && (
+            <CategoryFields
+              value={face}
+              onChange={setFace}
+              idPrefix="category"
+              slugNote={Boolean(edit)}
+            />
           )}
         </DialogBody>
         <DialogFooter>
           <Button variant="ghost" disabled={running} onClick={onClose}>
             Cancel
           </Button>
-          {rename && (
+          {edit && (
             <Button
               variant="primary"
-              disabled={running || name.trim().length === 0}
+              disabled={running || face.name.trim().length === 0}
               onClick={() =>
-                run(() => renameCategoryAction(rename.category.id, name.trim()))
+                run(() =>
+                  editCategoryAction(edit.category.id, {
+                    name: face.name.trim(),
+                    description: face.description.trim(),
+                    icon: face.icon,
+                  }),
+                )
               }
             >
               {running ? "Saving…" : "Save"}
+            </Button>
+          )}
+          {sub && (
+            <Button
+              variant="primary"
+              disabled={running || face.name.trim().length === 0}
+              onClick={() =>
+                run(() =>
+                  createCategoryAction(face.name.trim(), sub.parent.scope, {
+                    parentId: sub.parent.id,
+                    description: face.description.trim(),
+                    icon: face.icon,
+                  }),
+                )
+              }
+            >
+              {running ? "Creating…" : "Create"}
             </Button>
           )}
           {removeCategory && (

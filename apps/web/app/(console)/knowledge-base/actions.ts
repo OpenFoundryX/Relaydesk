@@ -45,9 +45,10 @@ function failure(error: unknown): { ok: false; message: string } {
 export async function createCategoryAction(
   name: string,
   scope: KbScope,
+  face: { parentId?: string | null; description?: string; icon?: string } = {},
 ): Promise<KbActionResult> {
   try {
-    await createCategory(name, scope);
+    await createCategory(name, scope, face);
   } catch (error) {
     return failure(error);
   }
@@ -60,12 +61,17 @@ export async function createCategoryAction(
  * menu item that gets here for anyone else. The 403 is still handled rather
  * than assumed away, along with the duplicate-name 409.
  */
-export async function renameCategoryAction(
+/**
+ * Renaming and re-facing a category are one action because they are one
+ * dialog: a name on its own was never the whole of what a collection shows.
+ * The slug is not recomputed on rename -- it is the public URL.
+ */
+export async function editCategoryAction(
   id: string,
-  name: string,
+  patch: { name?: string; description?: string; icon?: string },
 ): Promise<KbActionResult> {
   try {
-    await updateCategory(id, { name });
+    await updateCategory(id, patch);
   } catch (error) {
     return failure(error);
   }

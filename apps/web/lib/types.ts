@@ -1,4 +1,5 @@
 import type { BrandSlug } from "@/components/brand-icons";
+import type { PublicAuthor } from "@/lib/api/public";
 
 /**
  * Domain types for the Relaydesk console.
@@ -153,6 +154,13 @@ export interface KbArticle extends KbArticleSummary {
   doc: unknown;
   /** When it first went live. Stays set after an unpublish; `status` says whether it is live now. */
   publishedAt: string | null;
+  /**
+   * Who wrote it. The preview renders the help site's own `ArticleView`,
+   * byline and all, so it needs the same author the public API sends --
+   * a preview missing the byline is previewing a different page. Null
+   * where their account has been deleted.
+   */
+  author: PublicAuthor | null;
 }
 
 export interface KbCategory {
@@ -162,6 +170,14 @@ export interface KbCategory {
   scope: KbScope;
   position: number;
   articleCount: number;
+  /** Null for a root collection. */
+  parentId: string | null;
+  /** 0 for a root, 2 at the deepest the help site renders. */
+  depth: number;
+  /** The blurb under the name on the help site's card. */
+  description: string;
+  /** A name from the fixed set in `components/portal/category-icon.tsx`. */
+  icon: string;
 }
 
 export interface Snippet {
