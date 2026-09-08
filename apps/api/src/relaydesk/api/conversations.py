@@ -198,7 +198,7 @@ async def list_activity_route(
 async def add_reply_route(
     conversation_id: uuid.UUID, payload: ReplyRequest, scope: Scope, session: DbSession
 ) -> ConversationOut:
-    conversation = await conversations.add_reply(
+    conversation, _message = await conversations.add_reply(
         session,
         scope.workspace_id,
         conversation_id,

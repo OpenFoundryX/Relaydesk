@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import sqlalchemy as sa
 
@@ -6,6 +7,7 @@ from relaydesk.models import (
     ApiKeyScope,
     DeliveryState,
     Message,
+    MessageDirection,
     MessageRole,
     Priority,
 )
@@ -271,3 +273,55 @@ async def test_replying_into_another_workspace_answers_404(client, db_session) -
     )
 
     assert response.status_code == 404
+
+
+async def test_the_reply_response_is_the_reply_not_a_future_dated_inbound(
+    client, db_session
+) -> None:
+    """The 201 body must be the message this call created.
+
+    ``Message.sent_at`` for an inbound message is the sender's own ``Date:``
+    header, which ``services/ingest`` trusts up to an hour past
+    ``received_at``. A customer whose mail client runs twenty minutes fast
+    therefore leaves a row that sorts *after* an agent reply stamped
+    ``now()``, for as long as the skew lasts. Serialising "the last message
+    by ``sent_at``" hands that customer's id, role, name and body back as
+    the reply the caller just created -- deterministically, on every reply
+    to that conversation, not as a race.
+
+    It is a scope leak as well as a wrong answer: this route requires only
+    ``messages:write``, which does not imply ``conversations:read`` (spec
+    D5), so the body of a customer message is something this principal is
+    not entitled to read at all.
+    """
+    workspace = await make_workspace(db_session)
+    conversation = await make_conversation(db_session, workspace)
+    skewed = Message(
+        workspace_id=workspace.id,
+        conversation_id=conversation.id,
+        role=MessageRole.customer,
+        direction=MessageDirection.inbound,
+        author_name="Priya Raman",
+        to_address="support@chronon.co",
+        body="Sent from a clock that runs fast.",
+        sent_at=datetime.now(UTC) + timedelta(minutes=20),
+    )
+    db_session.add(skewed)
+    await db_session.commit()
+    headers, _ = await key_for(
+        db_session, workspace, [ApiKeyScope.messages_write], name="Support bot"
+    )
+
+    response = await client.post(
+        f"/v1/conversations/{conversation.id}/messages",
+        json={"body": "We have refunded your order."},
+        headers=headers,
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["id"] != str(skewed.id)
+    assert body["role"] == "agent"
+    assert body["direction"] == "outbound"
+    assert body["author_name"] == "Support bot"
+    assert body["body"] == "We have refunded your order."

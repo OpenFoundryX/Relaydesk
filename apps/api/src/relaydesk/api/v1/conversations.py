@@ -196,18 +196,25 @@ async def create_message_route(
     Requires ``messages:write``, which ``conversations:write`` does not
     imply: this one puts mail in a customer's inbox under the workspace's
     name, and the delivery is queued the moment it returns.
+
+    The response is serialised from the object ``add_reply`` hands back, not
+    from a re-read of the thread. Taking the last row of a re-read would key
+    off ``sent_at``, which an *inbound* message can carry up to an hour into
+    the future (``ingest._MAX_FUTURE_SKEW`` trusts the sender's ``Date:``
+    header that far) -- so a customer whose clock runs fast would have
+    *their* message returned as the one this caller just created. That is
+    also a scope bypass: this route requires only ``messages:write``, which
+    does not imply ``conversations:read`` (spec D5), so a reply-only
+    integration must never be handed a customer message's body and ids.
     """
-    await conversations.add_reply(
+    _conversation, message = await conversations.add_reply(
         session,
         principal.workspace_id,
         conversation_id,
         payload.body,
         principal.actor,
     )
-    messages = await conversations.list_messages(
-        session, principal.workspace_id, conversation_id
-    )
-    return message_out(messages[-1])
+    return message_out(message)
 
 
 Labeller = Annotated[ApiPrincipal, Depends(requires(ApiKeyScope.labels_write))]

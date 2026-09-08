@@ -519,8 +519,18 @@ async def add_reply(
     conversation_id: uuid.UUID,
     body: str,
     actor: Actor,
-) -> Conversation:
-    """Append an agent reply, updating the denormalized list fields."""
+) -> tuple[Conversation, Message]:
+    """Append an agent reply, updating the denormalized list fields.
+
+    Returns ``(conversation, message)``. The message is handed back rather
+    than left for the caller to re-read, because there is no query that
+    reliably finds it: ``list_messages`` orders by ``sent_at`` alone, and an
+    *inbound* message's ``sent_at`` comes from the sender's own ``Date:``
+    header -- trusted up to an hour into the future by ``ingest``. A
+    customer whose clock runs fast leaves a message that sorts after this
+    reply for as long as the skew lasts, so "the last row by ``sent_at``" is
+    not "the row I just wrote". Returning the object removes the guess.
+    """
     conversation = await get_conversation(session, workspace_id, conversation_id)
     trimmed = body.strip()
     if not trimmed:
@@ -560,7 +570,7 @@ async def add_reply(
     await session.commit()
     await session.refresh(conversation, ["draft", "labels", "assignee"])
     queue.enqueue_reply(message.id)
-    return conversation
+    return conversation, message
 
 
 async def discard_draft(
