@@ -104,6 +104,59 @@ async def route(session: AsyncSession, message: InboundMessage) -> Route | None:
         account = await channel_accounts.find_by_token(session, token)
         if account is not None:
             return Route(account=account, address=address)
+    return await _route_by_reference(session, message)
+
+
+async def _route_by_reference(
+    session: AsyncSession, message: InboundMessage
+) -> Route | None:
+    """Find the workspace from the threading headers, for a reply that came
+    back to an address carrying no token.
+
+    This exists for one case. ``OUTBOUND_FROM_ADDRESS`` puts a plain mailbox
+    in the From while Reply-To keeps the tokenized address; a client that
+    ignores Reply-To answers the From instead, and the reply arrives with
+    nothing in its recipients for ``route`` to match on. Without this it is
+    filed ``unrouted`` and the customer is simply never answered.
+
+    **The sender check below is what makes this safe, and it is not
+    optional.** ``resolve_thread`` already matches these same headers, but
+    only *after* the workspace is known, and every query there is scoped to
+    it -- an attacker-supplied header can pick a thread inside a tenant they
+    had already reached, never the tenant itself. Here the header chooses the
+    tenant, so that reasoning does not carry over: every customer can read
+    real Message-IDs out of the mail we send them, and a leaked one would
+    otherwise be a way into that conversation from any address at all.
+    Requiring the sender to be the conversation's own contact closes it --
+    a stranger holding the id still has nowhere to put it.
+
+    Ordered like ``resolve_thread``: In-Reply-To, then References right to
+    left, nearest ancestor first.
+    """
+    recipient = next(
+        (a for a in (*message.delivered_to, *message.to, *message.cc) if a), ""
+    )
+    candidates = [message.in_reply_to, *reversed(message.references)]
+    for external_id in [c for c in candidates if c]:
+        # Not limit(1): ``messages.external_id`` carries no global unique
+        # constraint, and stopping at an arbitrary row would let one whose
+        # contact does not match hide a sibling whose contact does.
+        matches = list(
+            await session.scalars(
+                sa.select(Conversation)
+                .join(Message, Message.conversation_id == Conversation.id)
+                .where(Message.external_id == external_id)
+            )
+        )
+        for conversation in matches:
+            contact = conversation.contact
+            if contact is None or contact.email.lower() != message.from_email:
+                continue
+            accounts = await channel_accounts.list_for(
+                session, conversation.workspace_id
+            )
+            if accounts:
+                return Route(account=accounts[0], address=recipient)
     return None
 
 

@@ -127,6 +127,37 @@ worked production setup for this — Migadu for the inbound catch-all, Amazon
 SES for outbound — with the DNS records, the verification steps, and the
 operational rules the design depends on.
 
+### Outbound replies
+
+By default a reply is sent **from** the same tagged ingest address the
+customer wrote to (`<slug>-<token>+c<number>@INBOUND_DOMAIN`). That is what
+routing needs — the `+c` tag is how the answer finds its way back onto the
+same conversation — but it reads as machine-generated to a recipient, and
+spam filters agree.
+
+`OUTBOUND_FROM_ADDRESS` moves **only** the `From`:
+
+```sh
+OUTBOUND_FROM_ADDRESS=info@example.com
+```
+
+Replies then arrive as `Acme Support <info@example.com>`, with the workspace
+name still in the display name, while `Reply-To` keeps the tagged address.
+Leave it empty and nothing changes.
+
+The cost is that routing now depends on the customer's client honouring
+`Reply-To`. Every mainstream client does; one that does not answers the
+`From` instead, which carries no token. Such a reply is recovered from its
+`In-Reply-To`/`References` headers — but **only when the sender is the
+conversation's own contact**. That check is deliberate and load-bearing:
+every customer can read real `Message-ID`s out of mail you send them, so
+without it a leaked id would be a way into that conversation from any
+address at all.
+
+Worth saying plainly: this removes one spam signal. It does not substitute
+for domain reputation — SPF, DKIM and DMARC alignment, and a sending history
+Gmail has learned to trust.
+
 ### Password reset
 
 `PASSWORD_RESET_TTL_MINUTES` (default 60), `PASSWORD_RESET_IP_HOURLY_CAP`
