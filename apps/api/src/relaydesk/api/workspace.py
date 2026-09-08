@@ -31,7 +31,11 @@ async def patch_workspace(
 ) -> WorkspaceOut:
     scope.require_admin()
     workspace = await workspaces.update_workspace(
-        session, scope.workspace_id, payload.name, payload.timezone
+        session,
+        scope.workspace_id,
+        payload.name,
+        payload.timezone,
+        payload.monogram,
     )
     seats = await workspaces.active_seat_count(session, scope.workspace_id)
     return _to_workspace_out(workspace, seats)
