@@ -24,6 +24,7 @@ from relaydesk.schemas.kb import (
     PublicArticleNodeOut,
     PublicArticleOut,
     PublicArticleSummary,
+    PublicAuthorOut,
     PublicCategoryNodeOut,
     PublicCollectionOut,
     PublicCrumbOut,
@@ -62,24 +63,41 @@ async def read_workspace(slug: str, session: DbSession) -> PublicWorkspaceOut:
     return PublicWorkspaceOut(name=workspace.name, monogram=workspace.monogram)
 
 
-def _article_summary(article: KbArticle) -> PublicArticleSummary:
+def _path(ancestors: list[KbCategory], article: KbArticle) -> str:
+    return "/".join([*(c.slug for c in ancestors), article.slug])
+
+
+def _article_summary(
+    article: KbArticle, ancestors: list[KbCategory]
+) -> PublicArticleSummary:
     return PublicArticleSummary(
         id=str(article.id),
         title=article.title,
         slug=article.slug,
         excerpt=article.excerpt,
+        path=_path(ancestors, article),
     )
 
 
-def _article_out(article: KbArticle) -> PublicArticleOut:
+def _article_out(
+    article: KbArticle, ancestors: list[KbCategory]
+) -> PublicArticleOut:
     return PublicArticleOut(
         id=str(article.id),
         title=article.title,
         slug=article.slug,
         excerpt=article.excerpt,
+        path=_path(ancestors, article),
         doc=article.doc,
         published_at=article.published_at,
         updated_at=article.updated_at,
+        author=(
+            PublicAuthorOut(
+                name=article.author.name, monogram=article.author.monogram
+            )
+            if article.author is not None
+            else None
+        ),
     )
 
 
@@ -116,7 +134,11 @@ async def search_kb(
 ) -> list[PublicArticleSummary]:
     workspace = await resolve_workspace(session, slug)
     articles = await kb_public.search(session, workspace.id, q)
-    return [_article_summary(article) for article in articles]
+    ancestors = await kb_public.paths_for(session, workspace.id, articles)
+    return [
+        _article_summary(article, ancestors.get(article.id, []))
+        for article in articles
+    ]
 
 
 @router.get("/{slug}/kb/images/{image_id}")
@@ -157,7 +179,8 @@ async def read_kb_path(
     )
     if isinstance(node, kb_public.ArticleNode):
         return PublicArticleNodeOut(
-            article=_article_out(node.article), ancestors=_crumbs(node.ancestors)
+            article=_article_out(node.article, node.ancestors),
+            ancestors=_crumbs(node.ancestors),
         )
     return PublicCategoryNodeOut(
         category=_collection(
@@ -165,7 +188,10 @@ async def read_kb_path(
         ),
         ancestors=_crumbs(node.ancestors),
         collections=[_collection(c, n) for c, n in node.collections],
-        articles=[_article_summary(a) for a in node.articles],
+        articles=[
+            _article_summary(a, [*node.ancestors, node.category])
+            for a in node.articles
+        ],
     )
 
 

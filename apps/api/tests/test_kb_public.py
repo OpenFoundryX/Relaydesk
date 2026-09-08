@@ -628,3 +628,65 @@ async def test_the_kb_route_404s_on_a_path_that_names_nothing(
     response = await client.get(f"/api/public/{workspace.slug}/kb/for-spenders/nope")
 
     assert response.status_code == 404
+
+
+async def test_an_article_names_who_wrote_it(
+    client, db_session: AsyncSession
+) -> None:
+    """The byline under an article title. The real author, not a workspace-
+    wide "written by" -- there is one on every article already."""
+    workspace, category, article = await _published(db_session)
+
+    response = await client.get(
+        f"/api/public/{workspace.slug}/kb/{category.slug}/{article.slug}"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["article"]["author"] == {
+        "name": "Nilesh Pant",
+        "monogram": "NP",
+    }
+
+
+async def test_an_article_whose_author_is_gone_still_serves(
+    client, db_session: AsyncSession
+) -> None:
+    """`author_user_id` is SET NULL when a user is deleted. The article
+    outlives them, and the page has to render without a byline rather
+    than 500."""
+    workspace, category, article = await _published(db_session)
+    article.author_user_id = None
+    await db_session.flush()
+    # The route reads through this same session, so the already-loaded
+    # `author` relationship has to be re-read -- otherwise the article comes
+    # back still carrying the author its FK no longer points at. `refresh`
+    # rather than `expire`: expiring defers the reload to attribute access,
+    # which lands outside the greenlet an async session needs for IO.
+    await db_session.refresh(article, ["author"])
+
+    response = await client.get(
+        f"/api/public/{workspace.slug}/kb/{category.slug}/{article.slug}"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["article"]["author"] is None
+
+
+async def test_a_search_result_carries_the_path_that_links_to_it(
+    client, db_session: AsyncSession
+) -> None:
+    """A result is a link, and with a tree the caller cannot rebuild that
+    link from a slug alone -- it would have to fetch and walk the whole
+    index to find out where the article lives."""
+    workspace, _, _, _, _ = await _spenders_tree(db_session)
+
+    response = await client.get(
+        f"/api/public/{workspace.slug}/kb/search", params={"q": "Body"}
+    )
+
+    assert response.status_code == 200
+    # Sorted: search orders by rank, which is not this test's subject.
+    assert sorted(a["path"] for a in response.json()) == [
+        "for-spenders/expenses/add-a-receipt",
+        "for-spenders/overview",
+    ]

@@ -170,6 +170,10 @@ class KbArticle(UUIDMixin, TimestampMixin, Base):
     )
 
     category = relationship("KbCategory", lazy="selectin")
+    # Selectin rather than lazy: the help site prints a byline under every
+    # article, and a lazy load would be a query per article inside an async
+    # session that has no synchronous fallback to do it in.
+    author = relationship("User", lazy="selectin")
     images = relationship("KbImage", lazy="selectin", cascade="all, delete-orphan")
 
 

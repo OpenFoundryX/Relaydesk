@@ -91,16 +91,31 @@ class PublicWorkspaceOut(CamelModel):
 
 
 class PublicArticleSummary(CamelModel):
-    """An entry in the index or search results -- no body, no doc."""
+    """An entry in a collection listing or search results -- no body, no doc."""
 
     id: str
     title: str
     slug: str
     excerpt: str
+    #: Slash-joined, no leading slash: "for-spenders/expenses/add-a-receipt".
+    #: The href, carried with the article because a nested KB makes it
+    #: impossible to derive from the slug.
+    path: str
+
+
+class PublicAuthorOut(CamelModel):
+    """Who wrote an article, as a reader sees it. Name and monogram only --
+    an email address here would publish a staff address to the world."""
+
+    name: str
+    monogram: str
 
 
 class PublicArticleOut(PublicArticleSummary):
     doc: dict
+    #: None where the author's account has been deleted: `author_user_id`
+    #: is SET NULL, and the article outlives them.
+    author: PublicAuthorOut | None = None
     published_at: datetime | None
     #: When the article last changed. The help site prints it under the body
     #: as "Last updated", which is the one thing a reader needs to judge

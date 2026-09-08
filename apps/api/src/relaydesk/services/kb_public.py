@@ -184,6 +184,26 @@ async def _unique_article(
     return rows[0] if len(rows) == 1 else None
 
 
+async def paths_for(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    articles: Sequence[KbArticle],
+) -> dict[uuid.UUID, list[KbCategory]]:
+    """Where each of these articles lives, as a chain of categories.
+
+    Search hands back articles with no idea where they sit, and a caller
+    holding one cannot rebuild its link from the slug alone once categories
+    nest -- it would have to fetch and walk the whole index. One tree read
+    answers it for the whole result set.
+    """
+    categories, _ = await _tree(session, workspace_id)
+    by_id = {category.id: category for category in categories}
+    return {
+        article.id: _ancestors_of(article.category_id, by_id)
+        for article in articles
+    }
+
+
 async def resolve(
     session: AsyncSession, workspace_id: uuid.UUID, path: Sequence[str]
 ) -> CategoryNode | ArticleNode:
