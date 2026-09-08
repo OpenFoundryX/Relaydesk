@@ -21,11 +21,14 @@ from typing import Annotated, Any
 from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field
 
 from relaydesk.models import (
+    Channel,
     Contact,
     Conversation,
     ConversationStatus,
     Label,
     Message,
+    MessageDirection,
+    MessageRole,
     Priority,
 )
 
@@ -68,9 +71,15 @@ class ConversationOut(V1Model):
     number: int
     subject: str
     preview: str
-    status: str
-    priority: str
-    channel: str
+    # The real enums, not ``str``. The route's own query filters are already
+    # typed ``ConversationStatus`` / ``Priority``, so leaving the response
+    # fields untyped gave a generated SDK a typed filter argument and an
+    # untyped response field for the same concept. These are ``StrEnum``
+    # members, so the wire values are unchanged -- the published OpenAPI
+    # document now just enumerates them.
+    status: ConversationStatus
+    priority: Priority
+    channel: Channel
     customer: ContactOut
     assignee_id: str | None
     label_ids: list[str]
@@ -89,8 +98,10 @@ class ConversationPage(V1Model):
 class MessageOut(V1Model):
     id: str
     conversation_id: str
-    role: str
-    direction: str
+    # Enums for the same reason as ``ConversationOut`` above: ``StrEnum``
+    # members, identical on the wire, enumerated in the OpenAPI document.
+    role: MessageRole
+    direction: MessageDirection
     author_name: str
     body: str
     sent_at: datetime
@@ -182,9 +193,9 @@ def conversation_out(conversation: Conversation) -> ConversationOut:
         number=conversation.number,
         subject=conversation.subject,
         preview=conversation.preview,
-        status=conversation.status.value,
-        priority=conversation.priority.value,
-        channel=conversation.channel.value,
+        status=conversation.status,
+        priority=conversation.priority,
+        channel=conversation.channel,
         customer=contact_out(conversation.contact),
         assignee_id=(
             str(conversation.assignee_id) if conversation.assignee_id else None
@@ -203,8 +214,8 @@ def message_out(message: Message) -> MessageOut:
     return MessageOut(
         id=str(message.id),
         conversation_id=str(message.conversation_id),
-        role=message.role.value,
-        direction=message.direction.value,
+        role=message.role,
+        direction=message.direction,
         author_name=message.author_name,
         body=message.body,
         sent_at=message.sent_at,

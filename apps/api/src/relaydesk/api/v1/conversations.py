@@ -59,7 +59,26 @@ async def list_route(
     )
 
 
-@router.post("", response_model=ConversationOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=ConversationOut,
+    status_code=status.HTTP_201_CREATED,
+    # Declared, not just returned. ``status_code=201`` alone is all the
+    # OpenAPI document would say, so a generated SDK would treat the
+    # idempotent replay -- which spec section 6 makes first-class, and which
+    # is the whole reason an interrupted import is safe to re-run -- as an
+    # unexpected response.
+    responses={
+        200: {
+            "model": ConversationOut,
+            "description": (
+                "``external_id`` matched a conversation this workspace "
+                "already has; it is returned unchanged and nothing was "
+                "created."
+            ),
+        }
+    },
+)
 async def create_route(
     payload: ConversationCreate,
     principal: Writer,
