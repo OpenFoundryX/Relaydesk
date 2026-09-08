@@ -45,6 +45,16 @@ class Window:
     ``end`` is the start of the bucket *after* the one containing "now", so
     the current partial day (or week, or month) is inside the window and
     shows up as the last point.
+
+    ``previous_start`` is ``count`` buckets before ``start`` — bucket-aligned,
+    *not* ``start - (end - start)``. For day and week buckets those two are
+    the same thing, but months have unequal lengths, so counting buckets and
+    subtracting a duration diverge for ``m12`` (e.g. 12 months back from an
+    April 1st can land on March 31st by duration, but bucket counting always
+    lands on the 1st). Alignment is not optional: ``previous_start`` is
+    itself fed back into ``bucket_starts``, whose month step assumes a
+    day-1 start, and it has to join against Postgres ``date_trunc`` output,
+    which is always aligned too.
     """
 
     start: datetime
@@ -68,7 +78,13 @@ def _truncate(moment: datetime, bucket: Bucket) -> datetime:
 def _step_back(start: datetime, bucket: Bucket, count: int) -> datetime:
     """Step ``start`` back by ``count`` buckets. A negative ``count`` steps
     forward instead, which is how ``resolve_window`` finds the window's
-    exclusive end and ``bucket_starts`` walks forward through it."""
+    exclusive end and ``bucket_starts`` walks forward through it.
+
+    The month branch assumes ``start.day == 1``: every caller only ever
+    passes a bucket-truncated value, and ``.replace(month=...)`` raises for
+    an unaligned day that doesn't exist in the target month (e.g. the 31st
+    stepped into April).
+    """
     if bucket is Bucket.day:
         return start - timedelta(days=count)
     if bucket is Bucket.week:
