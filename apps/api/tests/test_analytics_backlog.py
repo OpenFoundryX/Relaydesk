@@ -129,6 +129,42 @@ async def test_a_status_event_with_no_status_is_ignored(
     assert since_creation == {1}
 
 
+async def test_a_null_status_event_does_not_break_the_lag_chain(
+    db_session: AsyncSession,
+) -> None:
+    """The null-status row must be invisible to `lag()`, not merely excluded
+    from entry/exit counting. If it stayed in the partition, the next real
+    event's `from_status` would read back the delivery failure's NULL --
+    coalesced to 'open' -- instead of the true prior status 'resolved',
+    turning a real exit-then-entry into a phantom no-op and leaving a stale
+    extra ticket in every earlier bucket."""
+    workspace = await make_workspace(db_session)
+    user = await make_member(db_session, workspace)
+    conversation = await make_conversation(db_session, workspace)
+    conversation.created_at = NOW - timedelta(days=5)
+    await db_session.flush()
+    await add_status(
+        db_session, workspace, conversation, "resolved", NOW - timedelta(days=4), user
+    )
+    await add_status(
+        db_session, workspace, conversation, None, NOW - timedelta(days=3), user
+    )
+    await add_status(
+        db_session, workspace, conversation, "open", NOW - timedelta(days=2), user
+    )
+
+    series = await analytics.backlog(
+        db_session, workspace.id, resolve_window(Range.d7, NOW), NO_FILTER
+    )
+
+    assert series[TODAY] == 1
+    # Reopened 2 days ago.
+    assert series[datetime(2026, 8, 28, tzinfo=UTC)] == 1
+    # Still resolved on the day of the ignored event and the day before.
+    assert series[datetime(2026, 8, 27, tzinfo=UTC)] == 0
+    assert series[datetime(2026, 8, 26, tzinfo=UTC)] == 0
+
+
 async def test_todays_value_is_counted_not_replayed(
     db_session: AsyncSession,
 ) -> None:
