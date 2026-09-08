@@ -1,6 +1,13 @@
 from datetime import UTC, datetime, timedelta
 
-from relaydesk.models import ApiKeyScope, ConversationStatus, Priority
+from relaydesk.models import (
+    ApiKeyScope,
+    ConversationStatus,
+    Message,
+    MessageDirection,
+    MessageRole,
+    Priority,
+)
 from relaydesk.services import api_keys
 from tests.factories import make_conversation, make_label, make_workspace
 
@@ -216,7 +223,9 @@ async def test_messages_are_returned_oldest_first(client, db_session) -> None:
     )
 
     assert response.status_code == 200
-    messages = response.json()
+    page = response.json()
+    assert page["next_cursor"] is None
+    messages = page["data"]
     assert len(messages) == 1
     assert messages[0]["role"] == "customer"
     assert messages[0]["direction"] == "inbound"
@@ -234,3 +243,114 @@ async def test_messages_for_another_workspace_answer_404(client, db_session) -> 
     )
 
     assert response.status_code == 404
+
+
+async def test_messages_paginate_by_cursor_oldest_first(client, db_session) -> None:
+    """Paged, and paged *forwards* through the thread.
+
+    Unlike ``/v1/conversations`` and ``/v1/contacts``, which are newest-first,
+    a thread reads oldest-first -- so the keyset comparison runs ``>`` rather
+    than ``<`` and the cursor names the newest row of the page. Getting that
+    backwards would return the first page forever, or skip the tail of the
+    thread; asserting the ids arrive in ascending ``sent_at`` order across
+    two pages is what catches it.
+    """
+    workspace = await make_workspace(db_session)
+    conversation = await make_conversation(db_session, workspace)
+    base = datetime.now(UTC) - timedelta(hours=1)
+    for index in range(4):
+        db_session.add(
+            Message(
+                workspace_id=workspace.id,
+                conversation_id=conversation.id,
+                role=MessageRole.agent,
+                direction=MessageDirection.outbound,
+                author_name="Agent",
+                to_address="priya@northwind.io",
+                body=f"Reply {index}",
+                sent_at=base + timedelta(minutes=index),
+            )
+        )
+    await db_session.commit()
+    headers = await setup_key(db_session, workspace)
+
+    first = (
+        await client.get(
+            f"/v1/conversations/{conversation.id}/messages",
+            params={"limit": 2},
+            headers=headers,
+        )
+    ).json()
+    assert first["next_cursor"] is not None
+    assert len(first["data"]) == 2
+
+    second = (
+        await client.get(
+            f"/v1/conversations/{conversation.id}/messages",
+            params={"limit": 2, "cursor": first["next_cursor"]},
+            headers=headers,
+        )
+    ).json()
+
+    stamps = [item["sent_at"] for item in first["data"] + second["data"]]
+    assert stamps == sorted(stamps)
+    ids = [item["id"] for item in first["data"] + second["data"]]
+    assert len(ids) == len(set(ids)) == 4
+
+
+async def test_walking_every_message_page_visits_the_whole_thread(
+    client, db_session
+) -> None:
+    workspace = await make_workspace(db_session)
+    conversation = await make_conversation(db_session, workspace)
+    base = datetime.now(UTC) - timedelta(hours=1)
+    for index in range(4):
+        db_session.add(
+            Message(
+                workspace_id=workspace.id,
+                conversation_id=conversation.id,
+                role=MessageRole.agent,
+                direction=MessageDirection.outbound,
+                author_name="Agent",
+                to_address="priya@northwind.io",
+                body=f"Reply {index}",
+                sent_at=base + timedelta(minutes=index),
+            )
+        )
+    await db_session.commit()
+    headers = await setup_key(db_session, workspace)
+
+    seen: list[str] = []
+    cursor = None
+    for _ in range(10):
+        params = {"limit": 2}
+        if cursor:
+            params["cursor"] = cursor
+        page = (
+            await client.get(
+                f"/v1/conversations/{conversation.id}/messages",
+                params=params,
+                headers=headers,
+            )
+        ).json()
+        seen.extend(item["id"] for item in page["data"])
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+
+    # make_conversation seeds one inbound message, plus the four above.
+    assert len(seen) == len(set(seen)) == 5
+
+
+async def test_a_malformed_message_cursor_is_refused(client, db_session) -> None:
+    workspace = await make_workspace(db_session)
+    conversation = await make_conversation(db_session, workspace)
+    headers = await setup_key(db_session, workspace)
+
+    response = await client.get(
+        f"/v1/conversations/{conversation.id}/messages",
+        params={"cursor": "not-a-cursor"},
+        headers=headers,
+    )
+
+    assert response.status_code == 422

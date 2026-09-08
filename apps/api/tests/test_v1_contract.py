@@ -70,13 +70,14 @@ async def test_the_message_shape_is_exactly_this(client, db_session) -> None:
     conversation = await make_conversation(db_session, workspace)
     headers = await all_scopes_key(db_session, workspace)
 
-    messages = (
+    page = (
         await client.get(
             f"/v1/conversations/{conversation.id}/messages", headers=headers
         )
     ).json()
 
-    assert set(messages[0]) == MESSAGE_FIELDS
+    assert set(page) == {"data", "next_cursor"}
+    assert set(page["data"][0]) == MESSAGE_FIELDS
 
 
 async def test_the_label_shape_is_exactly_this(client, db_session) -> None:

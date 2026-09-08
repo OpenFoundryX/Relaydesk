@@ -14,6 +14,7 @@ from relaydesk.schemas.v1 import (
     ConversationUpdate,
     MessageCreate,
     MessageOut,
+    MessagePage,
     conversation_out,
     message_out,
 )
@@ -98,14 +99,29 @@ async def get_route(
     return conversation_out(conversation)
 
 
-@router.get("/{conversation_id}/messages", response_model=list[MessageOut])
+@router.get("/{conversation_id}/messages", response_model=MessagePage)
 async def list_messages_route(
-    conversation_id: uuid.UUID, principal: Reader, session: DbSession
-) -> list[MessageOut]:
-    rows = await conversations.list_messages(
-        session, principal.workspace_id, conversation_id
+    conversation_id: uuid.UUID,
+    principal: Reader,
+    session: DbSession,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    cursor: str | None = None,
+) -> MessagePage:
+    """A conversation's thread, oldest first.
+
+    Paged like ``/v1/conversations`` and ``/v1/contacts``, not returned as a
+    bare array: a thread is unbounded and each message carries a full body,
+    so a hundred-message ticket would otherwise be one enormous response
+    with no way to add paging later without a v2.
+
+    The order is oldest-first -- the reverse of the two other paged lists --
+    because that is the order a thread is read in, and callers will depend
+    on it.
+    """
+    rows, next_cursor = await conversations.list_messages(
+        session, principal.workspace_id, conversation_id, limit=limit, cursor=cursor
     )
-    return [message_out(row) for row in rows]
+    return MessagePage(data=[message_out(row) for row in rows], next_cursor=next_cursor)
 
 
 Replier = Annotated[ApiPrincipal, Depends(requires(ApiKeyScope.messages_write))]

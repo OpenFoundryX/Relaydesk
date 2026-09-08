@@ -96,6 +96,21 @@ class MessageOut(V1Model):
     sent_at: datetime
 
 
+class MessagePage(V1Model):
+    """A page of one conversation's thread.
+
+    An object rather than a bare array, and from the first release: messages
+    per conversation are unbounded -- a long email thread runs to hundreds,
+    each carrying a full body -- so this list will need paging. Had it
+    shipped as a JSON array, adding ``next_cursor`` later would change the
+    top-level type and require a v2. ``GET /v1/labels`` stays a bare array
+    on purpose; labels are genuinely bounded per workspace.
+    """
+
+    data: list[MessageOut]
+    next_cursor: str | None = None
+
+
 class ConversationCreate(V1Model):
     """The body ``components/settings/code-sample.tsx`` publishes.
 

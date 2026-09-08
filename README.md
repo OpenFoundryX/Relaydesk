@@ -241,6 +241,16 @@ Conversations, messages, labels and contacts are covered. The full route
 list with request and response shapes is at
 http://localhost:8000/docs under the `v1:` tags.
 
+### Pagination
+
+Every unbounded list — conversations, a conversation's messages, and
+contacts — answers `{"data": [...], "next_cursor": "..."}` and takes `limit`
+(1–100, default 50) and `cursor`. Walk a list by passing the previous
+response's `next_cursor` until it comes back `null`. Conversations and
+contacts are newest-first; a conversation's messages are oldest-first,
+because that is the order a thread reads in. `GET /v1/labels` is a bare
+array — labels are bounded per workspace and are not paged.
+
 ### Scopes
 
 A key carries only the scopes it is given, and a write scope does not imply

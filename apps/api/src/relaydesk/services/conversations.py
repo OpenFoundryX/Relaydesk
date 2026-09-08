@@ -212,19 +212,52 @@ async def get_conversation(
 
 
 async def list_messages(
-    session: AsyncSession, workspace_id: uuid.UUID, conversation_id: uuid.UUID
-) -> list[Message]:
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    *,
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> tuple[list[Message], str | None]:
+    """A conversation's thread, **oldest first**, keyset-paginated.
+
+    The order is deliberately the opposite of ``list_conversations`` and
+    ``list_contacts``, which are newest-first: a thread is read top to
+    bottom, and the console renders it that way. The keyset comparison
+    therefore runs the other way too -- ``>`` rather than ``<`` -- and the
+    cursor names the *last* row of the page rather than the oldest.
+
+    ``limit=None`` means "the whole thread, no cursor", which is what the
+    console's detail pane has always got and must keep getting: a message
+    list silently truncated at fifty would drop the end of a long thread out
+    of the UI. v1 passes an explicit limit and pages.
+    """
     await get_conversation(session, workspace_id, conversation_id)
-    return list(
-        await session.scalars(
-            sa.select(Message)
-            .where(
-                Message.conversation_id == conversation_id,
-                Message.workspace_id == workspace_id,
-            )
-            .order_by(Message.sent_at)
-        )
+    query = sa.select(Message).where(
+        Message.conversation_id == conversation_id,
+        Message.workspace_id == workspace_id,
     )
+
+    if cursor:
+        try:
+            moment, identifier = pagination.decode(cursor)
+        except ValueError as error:
+            raise Invalid("Invalid cursor.") from error
+        query = query.where(
+            sa.tuple_(Message.sent_at, Message.id) > (moment, identifier)
+        )
+
+    query = query.order_by(Message.sent_at, Message.id)
+    if limit is None:
+        return list(await session.scalars(query)), None
+
+    rows = list(await session.scalars(query.limit(limit + 1)))
+    next_cursor = (
+        pagination.encode(rows[limit - 1].sent_at, rows[limit - 1].id)
+        if len(rows) > limit
+        else None
+    )
+    return rows[:limit], next_cursor
 
 
 async def get_draft(

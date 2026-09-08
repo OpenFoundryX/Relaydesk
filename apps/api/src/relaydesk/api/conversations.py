@@ -166,7 +166,10 @@ async def patch_conversation(
 async def list_messages_route(
     conversation_id: uuid.UUID, scope: Scope, session: DbSession
 ) -> list[MessageOut]:
-    messages = await conversations.list_messages(
+    # No ``limit``: the detail pane renders the whole thread, so this
+    # keeps ``list_messages``'s unpaged default. The second element is the
+    # next cursor, which is always ``None`` in that mode.
+    messages, _ = await conversations.list_messages(
         session, scope.workspace_id, conversation_id
     )
     return [message_out(message, scope.workspace.timezone) for message in messages]
