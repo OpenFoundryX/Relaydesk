@@ -452,7 +452,14 @@ async def backlog(
     for start in reversed(bucket_starts(window)):
         series[start] = running
         entries, exits = deltas.get(start, (0, 0))
-        running = running - (entries + opened.get(start, 0)) + exits
+        # Floored: the event trail has unrecoverable gaps (see the design's
+        # section 11 -- a status change nothing recorded), and a walk-back
+        # that subtracts a creation whose matching exit was never written
+        # runs straight past zero. A backlog of -4 is not a number any
+        # reader can interpret, and the card turns it into a -250% delta.
+        # Clamping keeps an incomplete trail merely approximate instead of
+        # visibly impossible.
+        running = max(running - (entries + opened.get(start, 0)) + exits, 0)
     return series
 
 

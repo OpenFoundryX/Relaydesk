@@ -207,3 +207,27 @@ async def test_a_ticket_created_and_resolved_in_the_same_bucket_nets_to_zero(
 
     assert series[TODAY] == 0
     assert set(series.values()) == {0}
+
+
+async def test_an_unrecorded_close_never_drives_a_bucket_negative(
+    db_session: AsyncSession,
+) -> None:
+    """The event trail has unrecoverable gaps (design section 11), and the
+    walk-back subtracts a creation it can see from an anchor that has
+    already excluded the ticket. A conversation created inside the window
+    and closed without a `kind='status'` event is exactly that gap: the
+    anchor counts 0, the creation subtracts 1, and every earlier bucket
+    reads -1. A backlog cannot be negative, and the card turns one into a
+    nonsense percentage delta -- so the walk is floored."""
+    workspace = await make_workspace(db_session)
+    conversation = await make_conversation(db_session, workspace)
+    conversation.created_at = NOW - timedelta(days=3)
+    conversation.status = ConversationStatus.resolved
+    await db_session.flush()
+
+    series = await analytics.backlog(
+        db_session, workspace.id, resolve_window(Range.d7, NOW), NO_FILTER
+    )
+
+    assert min(series.values()) >= 0, series
+    assert series[TODAY] == 0
