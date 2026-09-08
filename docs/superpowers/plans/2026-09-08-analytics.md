@@ -173,7 +173,7 @@ Pure arithmetic, no database. Everything else depends on it.
 - Produces:
   - `class Range(StrEnum)`: `d7 = "7d"`, `d30 = "30d"`, `d90 = "90d"`, `m12 = "12m"`
   - `class Bucket(StrEnum)`: `day`, `week`, `month` — the value is passed straight to `date_trunc`.
-  - `@dataclass(frozen=True) Window(start, end, bucket, previous_start)` — `start` inclusive, `end` exclusive, both `datetime` (UTC, tz-aware). `previous_start` is `start - (end - start)`.
+  - `@dataclass(frozen=True) Window(start, end, bucket, previous_start)` — `start` inclusive, `end` exclusive, both `datetime` (UTC, tz-aware). `previous_start` is the same **number of buckets** before `start`, and is itself bucket-aligned — not the literal `start - (end - start)`. For day and week buckets the two are identical; for months they diverge whenever a leap day falls in one period and not the other. Bucket alignment is the load-bearing property: Task 8 wraps `previous_start` in a `Window` and calls `bucket_starts()` on it, and an unaligned month start (say the 31st) makes `_step_back`'s `.replace(month=...)` raise `ValueError: day is out of range for month`. It also has to line up with `date_trunc` output or the previous period's join matches nothing and every delta reads `null`.
   - `resolve_window(range_: Range, now: datetime) -> Window`
   - `bucket_starts(window: Window) -> list[datetime]`
 
