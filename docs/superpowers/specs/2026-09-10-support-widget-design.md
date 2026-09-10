@@ -246,6 +246,15 @@ hang off the `WidgetKey`. A workspace running a marketing site and a
 logged-in app can then embed two keys with different settings and revoke one
 without touching the other.
 
+*Deferred, not shipped, as of this slice.* The `settings` column exists and
+`POST`/`PATCH /api/widget-keys` accept and store it, but nothing renders it:
+the loader hard-codes the launcher's colour and position, the panel never
+reads its own `settings` prop, and the console has no editor for it. The
+column is kept anyway rather than dropped, because storing an unread JSONB
+blob costs nothing today and its absence would be a migration later, once
+an editor exists, on a table a live production install by then owns rows
+in.
+
 ## 4. Schema
 
 Two tables.
