@@ -77,6 +77,9 @@ class Settings(BaseSettings):
     # Portal ticket submissions allowed from one address per hour. Low on
     # purpose: a genuine customer opens one ticket, not five.
     ticket_ip_hourly_cap: int = 5
+    # Submissions one embed may accept per hour, on top of the per-IP cap. An
+    # abused embed exhausts this before it touches the workspace's own budget.
+    widget_key_hourly_cap: int = 60
     ticket_message_max_chars: int = 10000
     ticket_attachment_max_count: int = 5
 

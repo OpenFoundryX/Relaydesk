@@ -15,18 +15,26 @@ fixed segment must be declared above the `{path:path}` catch-all or it is
 swallowed as an article path.
 """
 
-from fastapi import APIRouter
+from datetime import timedelta
+from typing import Annotated
+
+from fastapi import APIRouter, File, Form, Request, UploadFile
+from pydantic import EmailStr
 
 from relaydesk.api import public
 from relaydesk.api.deps import DbSession
+from relaydesk.config import get_settings
+from relaydesk.email_parse.normalize import ParsedAttachment
+from relaydesk.errors import Invalid, TooManyRequests
 from relaydesk.schemas.kb import (
     PublicArticleSummary,
     PublicCollectionOut,
     PublicNodeOut,
     PublicSearchEntryOut,
+    TicketSubmittedOut,
 )
 from relaydesk.schemas.widget import WidgetBootstrapOut
-from relaydesk.services import kb_public, widget_keys
+from relaydesk.services import client_ip, kb_public, ratelimit, tickets, widget_keys
 
 router = APIRouter()
 
@@ -85,6 +93,90 @@ async def kb_search(
     """Server-side search, for indexes too large to ship whole (spec D8)."""
     widget_key = await widget_keys.resolve(session, key)
     return await public.search_kb(slug=widget_key.workspace.slug, session=session, q=q)
+
+
+@router.post("/{key}/tickets", response_model=TicketSubmittedOut, status_code=201)
+async def submit(
+    key: str,
+    session: DbSession,
+    request: Request,
+    email: Annotated[EmailStr, Form()],
+    message: Annotated[str, Form()],
+    name: Annotated[str, Form()] = "",
+    subject: Annotated[str, Form()] = "",
+    company: Annotated[str, Form()] = "",
+    files: Annotated[list[UploadFile] | None, File()] = None,
+) -> TicketSubmittedOut:
+    widget_key = await widget_keys.resolve(session, key)
+
+    uploads = files or []
+    if len(uploads) > get_settings().ticket_attachment_max_count:
+        raise Invalid("Too many attachments.")
+
+    parsed = [
+        ParsedAttachment(
+            filename=upload.filename or "attachment",
+            content_type=upload.content_type or "application/octet-stream",
+            content=await upload.read(),
+            inline=False,
+            content_id=None,
+        )
+        for upload in uploads
+    ]
+
+    tickets.validate(message, parsed)
+
+    within_ip = await ratelimit.check(
+        session,
+        "tickets",
+        client_ip.resolve(request),
+        limit=get_settings().ticket_ip_hourly_cap,
+        window=timedelta(hours=1),
+    )
+    if not within_ip:
+        raise TooManyRequests("We could not accept that just now.")
+
+    # The per-embed cap, on the same exception and message as the one above:
+    # a caller who can tell which fired learns how to route around it.
+    within_key = await ratelimit.check(
+        session,
+        "widget",
+        str(widget_key.id),
+        limit=get_settings().widget_key_hourly_cap,
+        window=timedelta(hours=1),
+    )
+    if not within_key:
+        raise TooManyRequests("We could not accept that just now.")
+
+    # The per-email cap, on the same exception and message again.
+    if await tickets.over_email_cap(session, widget_key.workspace_id, str(email)):
+        raise TooManyRequests("We could not accept that just now.")
+
+    # The honeypot, last -- after every control above has run identically
+    # for this caller and a real one. `company` is hidden by the form's
+    # stylesheet, so anything in it came from something filling fields
+    # blindly. Answered with the same 201 a real submission gets: the only
+    # difference is whether rows get written, which is the one thing the
+    # caller cannot observe.
+    if company.strip():
+        return TicketSubmittedOut(received=True)
+
+    await tickets.submit(
+        session,
+        widget_key.workspace_id,
+        email=str(email),
+        name=name,
+        subject=subject,
+        message=message,
+        attachments=parsed,
+    )
+    # Required, and easy to miss: `get_session` has no commit-on-exit and
+    # there is no commit-on-success middleware, so an uncommitted flush is
+    # rolled back by `AsyncSession.close()` when the request ends and the
+    # ticket silently never exists. `public.py:332` does exactly this, for
+    # exactly this reason.
+    await session.commit()
+    return TicketSubmittedOut(received=True)
 
 
 # Declared last: `{path:path}` matches anything, including the fixed
