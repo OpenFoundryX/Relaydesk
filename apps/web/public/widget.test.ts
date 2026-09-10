@@ -76,6 +76,10 @@ describe("loader behaviour", () => {
     }
     registered = [];
     document.body.innerHTML = "";
+    // Each load appends its own <style> tag to <head> (the mobile-takeover
+    // breakpoint) -- clear it too, or later tests see every earlier test's
+    // copy as well as their own.
+    document.head.innerHTML = "";
     Object.defineProperty(document, "currentScript", { value: null, configurable: true });
     // The re-entry guard is deliberately global (window.__relaydeskWidget)
     // so a real duplicate <script> tag is a no-op; reset it between tests
@@ -166,6 +170,36 @@ describe("loader behaviour", () => {
     loadWidget({});
 
     expect(document.querySelector("button")).toBeNull();
+  });
+
+  it("waits for DOMContentLoaded to mount if <body> doesn't exist yet", () => {
+    // <script async> can execute before <body> exists (e.g. placed in
+    // <head>); appendChild on a null <body> throws and no launcher is ever
+    // drawn. Simulated here by nulling document.body for the load itself.
+    const realBody = document.body;
+    Object.defineProperty(document, "body", { value: null, configurable: true });
+
+    expect(() => loadWidget({ "data-key": "rdw_test" })).not.toThrow();
+    expect(realBody.querySelector("button")).toBeNull();
+
+    Object.defineProperty(document, "body", { value: realBody, configurable: true });
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+
+    expect(realBody.querySelector("button")).not.toBeNull();
+  });
+
+  it("ships a <style> tag carrying the mobile full-screen takeover breakpoint", () => {
+    // Spec 7: below ~480px the panel is a full-screen takeover, not a
+    // floating 380x600 card. An inline style can't hold a media query, so
+    // this is what carries it -- and it is what makes resize and
+    // orientation change correct with nothing for the loader to recompute.
+    loadWidget({ "data-key": "rdw_test" });
+
+    const style = document.head.querySelector("style");
+    expect(style).not.toBeNull();
+    expect(style!.textContent).toContain("@media(max-width:480px)");
+    expect(style!.textContent).toContain("width:100%");
+    expect(style!.textContent).toContain("height:100%");
   });
 
   it("does not let a keyless tag block a later, correctly configured one", () => {

@@ -3,22 +3,25 @@
   var key = tag && tag.getAttribute("data-key");
   if (!key) return;
 
-  // The <script> tag's shape is frozen once pasted, but this file is not --
-  // a re-run guard here stops a duplicate paste, a tag-manager duplicate,
-  // or an SPA re-injection drawing a second launcher. Claimed only once a
-  // key is confirmed, so a keyless tag is a no-op, not a block on a later
-  // valid one.
+  // Stops a duplicate tag drawing a second launcher; claimed only once
+  // the key is valid, so a bad tag never blocks a later good one.
   if (window.__relaydeskWidget) return;
   window.__relaydeskWidget = true;
 
   var origin = new URL(tag.src).origin;
-  // Prefill only. Nothing can be read with an address, because the widget
-  // never reads a conversation (spec D4) -- so this is not an
-  // authentication claim and needs no signature.
+  // Prefill only -- the widget never reads a conversation (spec D4).
   var email = tag.getAttribute("data-email") || "";
   var person = tag.getAttribute("data-name") || "";
   var frame = null;
   var open = false;
+
+  // <script async> may run before <body> exists; defer to DOMContentLoaded.
+  function mount(el) {
+    if (document.body) document.body.appendChild(el);
+    else document.addEventListener("DOMContentLoaded", function () {
+      document.body.appendChild(el);
+    });
+  }
 
   var launcher = document.createElement("button");
   launcher.setAttribute("aria-label", "Help");
@@ -32,9 +35,20 @@
     'stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.7 8.7 0 ' +
     '0 1-3.8-.9L3 20.5l1.6-4.9A8.4 8.4 0 0 1 12 3.1a8.4 8.4 0 0 1 9 8.4Z"/></svg>';
 
+  // Below ~480px: a full-screen takeover (spec 7), via a <style> tag since
+  // an inline style can't carry the media query it takes to express one.
+  var style = document.createElement("style");
+  style.textContent =
+    "#rdw{position:fixed;right:24px;bottom:96px;width:380px;height:600px;" +
+    "border:0;border-radius:16px;z-index:2147480000;box-shadow:0 10px 38px" +
+    " -10px rgba(9,9,11,.2)}@media(max-width:480px){#rdw{inset:0;" +
+    "width:100%;height:100%;border-radius:0}}";
+  document.head.appendChild(style);
+
   function panel() {
     if (frame) return frame;
     frame = document.createElement("iframe");
+    frame.id = "rdw";
     frame.title = "Help";
     frame.src =
       origin +
@@ -42,19 +56,11 @@
       encodeURIComponent(key) +
       (email ? "&email=" + encodeURIComponent(email) : "") +
       (person ? "&name=" + encodeURIComponent(person) : "");
-    frame.style.cssText =
-      "position:fixed;right:24px;bottom:96px;width:380px;height:600px;border:0;" +
-      "border-radius:16px;z-index:2147480000;" +
-      "box-shadow:0 10px 38px -10px rgba(9,9,11,.20)";
-    document.body.appendChild(frame);
+    mount(frame);
     return frame;
   }
 
-  // Closing by any of the three paths (launcher toggle, Esc inside the
-  // frame, or the frame's close button) hides the same element, so a single
-  // function is the one place focus returns to the launcher -- the frame is
-  // a separate cross-origin document and cannot move focus in this page
-  // itself.
+  // The one place focus returns to the launcher, for all three close paths.
   function hide() {
     open = false;
     if (frame) frame.style.display = "none";
@@ -62,10 +68,7 @@
   }
 
   launcher.addEventListener("click", function () {
-    if (open) {
-      hide();
-      return;
-    }
+    if (open) return hide();
     open = true;
     panel().style.display = "block";
   });
@@ -75,5 +78,5 @@
     if (open) hide();
   });
 
-  document.body.appendChild(launcher);
+  mount(launcher);
 })();
