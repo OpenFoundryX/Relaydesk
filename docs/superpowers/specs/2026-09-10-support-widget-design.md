@@ -233,7 +233,7 @@ without touching the other.
 
 ## 4. Schema
 
-One table.
+Two tables.
 
 ```
 widget_keys
@@ -265,6 +265,43 @@ and all of it is presentational (D10).
 `revoked_at` is deliberately absent. Unlike a bearer token, a widget key
 carries no history worth auditing after revocation — deleting the row is the
 revocation, and the embed then fails closed.
+
+The second table is what makes §1's deflection claim real.
+
+```
+widget_sessions
+  id             uuid, pk            -- minted by the frame, opaque
+  workspace_id   uuid, fk -> workspaces, on delete cascade, indexed
+  widget_key_id  uuid, fk -> widget_keys, on delete cascade
+  searched       boolean, not null, default false
+  read_article   boolean, not null, default false
+  submitted      boolean, not null, default false
+  started_at     timestamptz, not null
+  updated_at     timestamptz, not null
+```
+
+One row per panel open, with flags raised as the session progresses, rather
+than one row per event. A visitor who searches four times writes one row, the
+ratio is a single query, and there is no event stream to prune.
+
+It exists because deflection cannot be measured retroactively. A workspace
+that installs the widget in March and adds an AI slice in June can only
+compare the two if March was instrumented, and the whole argument for
+building this before the AI work is that it produces a baseline the customer
+observed rather than one a vendor published.
+
+The honest ratio is: of sessions that tried to self-serve — `searched or
+read_article` — the share that did not go on to `submit`. Sessions that did
+neither are not deflection either way and are excluded from the denominator.
+
+`ActivityEvent` was the obvious home and cannot serve: its `conversation_id`
+is `NOT NULL`, and the sessions worth counting are precisely the ones that
+never produced a conversation.
+
+The row holds no address, no email, no query text and no article content —
+only three booleans and an opaque id the frame mints. There is nothing here
+to attribute to a person, which is what keeps a table recording the behaviour
+of other companies' customers proportionate.
 
 ## 5. API surface
 
