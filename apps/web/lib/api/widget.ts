@@ -109,6 +109,34 @@ export async function getWidgetArticle(
   }
 }
 
+/**
+ * One of "searched", "read" or "submitted" -- what a widget session flag
+ * `POST /widget/{key}/sessions/{sessionId}` raises. Matches the API's own
+ * closed set in `relaydesk.services.widget_sessions`.
+ */
+export type WidgetSessionEventKind = "searched" | "read" | "submitted";
+
+/**
+ * `POST /widget/{key}/sessions/{sessionId}`. The deflection baseline: how
+ * far one panel open got, never what was searched, read or sent.
+ *
+ * Idempotent server-side (flags only ever go up), but callers still fire
+ * each kind at most once per session -- see `panel.tsx`. Nothing here
+ * catches a failure: the caller (`app/(widget)/widget/session/route.ts`)
+ * is the layer that must swallow one, so a counter can never break a
+ * support request.
+ */
+export async function recordWidgetSessionEvent(
+  key: string,
+  sessionId: string,
+  kind: WidgetSessionEventKind,
+): Promise<void> {
+  await apiFetch<void>(
+    `/widget/${encodeURIComponent(key)}/sessions/${encodeURIComponent(sessionId)}`,
+    { method: "POST", auth: false, body: JSON.stringify({ kind }) },
+  );
+}
+
 /** The API's answer to a ticket submission -- a real one or a caught honeypot look identical. */
 export interface WidgetTicketSubmitted {
   received: boolean;

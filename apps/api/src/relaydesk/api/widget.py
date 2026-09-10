@@ -15,10 +15,11 @@ fixed segment must be declared above the `{path:path}` catch-all or it is
 swallowed as an article path.
 """
 
+import uuid
 from datetime import timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi import APIRouter, File, Form, Request, UploadFile, status
 from fastapi.responses import PlainTextResponse
 from pydantic import EmailStr
 
@@ -34,7 +35,7 @@ from relaydesk.schemas.kb import (
     PublicSearchEntryOut,
     TicketSubmittedOut,
 )
-from relaydesk.schemas.widget import WidgetBootstrapOut
+from relaydesk.schemas.widget import WidgetBootstrapOut, WidgetEventIn
 from relaydesk.services import (
     client_ip,
     kb_public,
@@ -42,6 +43,7 @@ from relaydesk.services import (
     tickets,
     widget_keys,
     widget_origins,
+    widget_sessions,
 )
 
 router = APIRouter()
@@ -201,6 +203,21 @@ async def embed_policy(key: str, session: DbSession) -> str:
     except NotFound:
         return "frame-ancestors 'none'"
     return widget_origins.frame_ancestors(widget_key.allowed_origins)
+
+
+@router.post("/{key}/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def record_event(
+    key: str, session_id: uuid.UUID, body: WidgetEventIn, session: DbSession
+) -> None:
+    """Record how far one panel open got. Never fails visibly to the visitor."""
+    widget_key = await widget_keys.resolve(session, key)
+    await widget_sessions.record(session, widget_key, session_id, body.kind)
+    # `get_session` has no commit-on-exit and nothing commits on success, so
+    # an uncommitted flush is rolled back by `AsyncSession.close()` when the
+    # request ends and the counter silently never moves. Two earlier routes
+    # in this slice shipped exactly that defect; `public.py:332` is the
+    # pattern every mutating route here follows.
+    await session.commit()
 
 
 # Declared last: `{path:path}` matches anything, including the fixed

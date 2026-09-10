@@ -10,6 +10,7 @@ import { Home } from "@/components/widget/home";
 import { Results } from "@/components/widget/results";
 import { Sent } from "@/components/widget/sent";
 import type { SubmitWidgetTicketResult } from "@/app/(widget)/widget/frame/actions";
+import type { WidgetSessionEventKind } from "@/lib/api/widget";
 
 export type PanelProps = {
   workspaceName: string;
@@ -84,6 +85,39 @@ export function Panel({
   );
 
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Minted once, for the life of the panel -- not persisted, not sent
+  // anywhere but the counter below. A lazy `useState` initialiser rather
+  // than a ref: it runs exactly once, on first render, without ever
+  // reading a ref's value during render (which `react-hooks/refs` forbids
+  // here). `undefined` when there is no `widgetKey` at all -- the test that
+  // renders a bare `Panel` reaches the network for nothing either way.
+  const [sessionId] = useState<string | undefined>(() =>
+    widgetKey ? crypto.randomUUID() : undefined,
+  );
+
+  // Each kind fires at most once per session (spec §1, §4): the deflection
+  // baseline counts sessions, not events, so a search box firing on every
+  // keystroke or an article re-opened twice must not inflate it.
+  const firedRef = useRef<Set<WidgetSessionEventKind>>(new Set());
+
+  // The counter side of the deflection baseline (task 11). Posted to the
+  // frame's own `/widget/session` route -- see that file for why a Client
+  // Component cannot call the API directly -- and never awaited: a support
+  // request must never be able to fail, slow down, or even notice that this
+  // call happened. Failures are swallowed here a second time even though
+  // the route already swallows its own, because `fetch` itself can reject
+  // (offline, blocked by an extension) before the route ever sees it.
+  function recordEvent(kind: WidgetSessionEventKind) {
+    if (!widgetKey || !sessionId) return;
+    if (firedRef.current.has(kind)) return;
+    firedRef.current.add(kind);
+    fetch("/widget/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: widgetKey, sessionId, kind }),
+    }).catch(() => {});
+  }
 
   // Tell the loader to hide the frame. The loader (public/widget.js) only
   // ever hides on receipt of this exact string from this exact origin --
@@ -160,7 +194,10 @@ export function Panel({
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         {view.name === "home" && (
           <Home
-            onSearch={(query) => setView({ name: "results", query })}
+            onSearch={(query) => {
+              recordEvent("searched");
+              setView({ name: "results", query });
+            }}
             onCompose={() => setView({ name: "compose" })}
           />
         )}
@@ -169,7 +206,10 @@ export function Panel({
             key={view.query}
             widgetKey={widgetKey}
             query={view.query}
-            onOpen={(path) => setView({ name: "article", path })}
+            onOpen={(path) => {
+              recordEvent("read");
+              setView({ name: "article", path });
+            }}
             onCompose={() => setView({ name: "compose" })}
           />
         )}
@@ -185,7 +225,10 @@ export function Panel({
           <Compose
             showBack={!empty}
             onBack={goHome}
-            onSent={() => setView({ name: "sent" })}
+            onSent={() => {
+              recordEvent("submitted");
+              setView({ name: "sent" });
+            }}
             onSubmit={onSubmit}
             initialEmail={email}
             initialName={name}
