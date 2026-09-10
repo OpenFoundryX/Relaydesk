@@ -217,6 +217,34 @@ async def test_bad_position_is_rejected(client, db_session) -> None:
     assert response.status_code == 422, response.text
 
 
+async def test_patch_with_bad_settings_is_rejected(client, db_session) -> None:
+    """`create` and `update` share `_clean_settings`, so this is near-certain
+    to already hold -- but "validated on every write path" should be proven
+    at this layer too, not just at the service layer the two tests above
+    stop at."""
+    workspace = await make_workspace(db_session)
+    headers = await admin_headers(client, db_session, workspace)
+
+    created = await client.post(
+        "/api/widget-keys", json={"name": "Site"}, headers=headers
+    )
+    key_id = created.json()["id"]
+
+    bad_colour = await client.patch(
+        f"/api/widget-keys/{key_id}",
+        json={"settings": {"accentColour": "not-a-colour"}},
+        headers=headers,
+    )
+    assert bad_colour.status_code == 422, bad_colour.text
+
+    bad_position = await client.patch(
+        f"/api/widget-keys/{key_id}",
+        json={"settings": {"position": "top"}},
+        headers=headers,
+    )
+    assert bad_position.status_code == 422, bad_position.text
+
+
 async def test_delete_removes_the_embed(client, db_session) -> None:
     workspace = await make_workspace(db_session)
     headers = await admin_headers(client, db_session, workspace)

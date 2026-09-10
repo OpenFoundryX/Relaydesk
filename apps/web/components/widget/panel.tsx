@@ -15,16 +15,15 @@ import type { WidgetSessionEventKind } from "@/lib/api/widget";
 /**
  * The per-key branding blob (spec D10, un-deferred). Every field is
  * optional and validated server-side (`services/widget_keys.py`); an
- * absent field means today's unbranded behaviour, unchanged. `iconUrl` is
- * validated on write but deliberately not rendered here yet -- see this
- * slice's report for why.
+ * absent field means today's unbranded behaviour, unchanged. No `iconUrl`
+ * yet -- the API refuses it as an unknown setting until there is
+ * somewhere to serve an icon from; see this slice's report.
  */
 type WidgetBrandingSettings = {
   name?: string;
   greeting?: string;
   accentColour?: string;
   position?: "left" | "right";
-  iconUrl?: string;
 };
 
 export type PanelProps = {

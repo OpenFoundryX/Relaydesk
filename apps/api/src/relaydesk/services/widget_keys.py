@@ -21,12 +21,20 @@ _TOUCH_EVERY = timedelta(minutes=1)
 # absent key means today's unbranded behaviour, unchanged. Kept as a plain
 # dict on the model rather than columns because none of it is queried and
 # all of it is presentational -- see the model's docstring.
-_SETTINGS_KEYS = {"name", "greeting", "accentColour", "position", "iconUrl"}
-_HEX_COLOUR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+#
+# No `iconUrl` yet: an icon has nowhere to be served from (reusing the KB
+# image pipeline would need a nullable `KbImage.article_id` or a sibling
+# model, a new upload endpoint, and a new serving route -- see this slice's
+# report), and a settable field nothing renders is the exact defect D10
+# already shipped once. Add it back deliberately, alongside its upload and
+# serving path, not as a value with nowhere to go.
+_SETTINGS_KEYS = {"name", "greeting", "accentColour", "position"}
+# `re.fullmatch` (not `^...$`) so a trailing "\n" cannot sneak past the
+# anchor -- Python's `$` matches immediately before a trailing newline.
+_HEX_COLOUR_RE = re.compile(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})")
 _POSITIONS = {"left", "right"}
 _NAME_MAX = 60
 _GREETING_MAX = 200
-_ICON_URL_MAX = 2048
 
 
 def _clean_string(raw: object, field: str, *, max_length: int) -> str:
@@ -70,21 +78,15 @@ def _clean_settings(raw: dict | None) -> dict:
 
     if "accentColour" in raw:
         accent = raw["accentColour"]
-        if not isinstance(accent, str) or not _HEX_COLOUR_RE.match(accent):
+        if not isinstance(accent, str) or not _HEX_COLOUR_RE.fullmatch(accent.strip()):
             raise Invalid("Accent colour must be a hex colour, like #4F46E5.")
-        cleaned["accentColour"] = accent
+        cleaned["accentColour"] = accent.strip()
 
     if "position" in raw:
         position = raw["position"]
         if position not in _POSITIONS:
             raise Invalid("Position must be 'left' or 'right'.")
         cleaned["position"] = position
-
-    if "iconUrl" in raw:
-        icon_url = _clean_string(raw["iconUrl"], "Icon URL", max_length=_ICON_URL_MAX)
-        if not (icon_url.startswith("https://") or icon_url.startswith("http://")):
-            raise Invalid("Icon URL must be an http(s) URL.")
-        cleaned["iconUrl"] = icon_url
 
     return cleaned
 

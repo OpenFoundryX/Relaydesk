@@ -259,12 +259,15 @@ read from the tag itself, not the bootstrap call, so the launcher's first
 paint still costs no request (D6). The console says plainly that changing
 either one means re-pasting the snippet.
 
-`iconUrl` is validated the same way but not rendered anywhere yet: reusing
-the knowledge-base image pipeline (`services/blobs.py`, `KbImage`) would
-need a new upload endpoint, a nullable `article_id` or a sibling model, and
-a new serving route, which is more than this pass added -- see that
-slice's report. Whether the message form itself can be disabled per key
-remains deferred, unchanged.
+An icon is not part of `settings` yet, and is refused as an unknown key if
+sent. Reusing the knowledge-base image pipeline (`services/blobs.py`,
+`KbImage`) would need a new upload endpoint, a nullable `article_id` or a
+sibling model, and a new serving route, which is more than this pass added
+-- see that slice's report. A settable field with nowhere to render is the
+exact defect this decision already shipped once; the fix is to not accept
+it yet, not to accept-and-hide it, so it is added back only once it has
+somewhere to be served from and rendered. Whether the message form itself
+can be disabled per key remains deferred, unchanged.
 
 ## 4. Schema
 

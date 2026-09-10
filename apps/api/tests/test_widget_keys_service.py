@@ -98,7 +98,6 @@ class TestSettingsValidation:
                 "greeting": "Hi! Need a hand?",
                 "accentColour": "#4F46E5",
                 "position": "left",
-                "iconUrl": "https://acme.com/icon.png",
             },
         )
 
@@ -107,7 +106,6 @@ class TestSettingsValidation:
             "greeting": "Hi! Need a hand?",
             "accentColour": "#4F46E5",
             "position": "left",
-            "iconUrl": "https://acme.com/icon.png",
         }
 
     async def test_create_defaults_settings_to_an_empty_object(self, db_session):
@@ -171,15 +169,35 @@ class TestSettingsValidation:
                 db_session, workspace.id, "Site", settings={"name": 123}
             )
 
-    async def test_create_refuses_a_javascript_icon_url(self, db_session):
+    async def test_create_refuses_icon_url_as_an_unknown_setting(self, db_session):
+        """Not yet accepted: an icon has nowhere to be served from (see this
+        slice's report), and a settable field nothing renders is the exact
+        defect D10 already shipped once. Pinned so a future change that adds
+        `iconUrl` back has to do so deliberately, alongside where it renders,
+        rather than by accident."""
         workspace = await make_workspace(db_session)
         with pytest.raises(Invalid):
             await widget_keys.create(
                 db_session,
                 workspace.id,
                 "Site",
-                settings={"iconUrl": "javascript:alert(1)"},
+                settings={"iconUrl": "https://acme.com/icon.png"},
             )
+
+    async def test_create_strips_trailing_whitespace_from_accent_colour(
+        self, db_session
+    ):
+        """`_HEX_COLOUR_RE` used to anchor with `^...$`, and Python's `$`
+        matches immediately before a trailing newline, so "#4F46E5\\n" would
+        pass and be stored unstripped -- inconsistent with `name`/`greeting`,
+        which are always stripped. `fullmatch` plus an explicit `.strip()`
+        closes that."""
+        workspace = await make_workspace(db_session)
+        created = await widget_keys.create(
+            db_session, workspace.id, "Site", settings={"accentColour": "#4F46E5\n"}
+        )
+
+        assert created.settings["accentColour"] == "#4F46E5"
 
     async def test_update_validates_settings_the_same_way(self, db_session):
         workspace = await make_workspace(db_session)

@@ -10,17 +10,16 @@ import { apiFetch } from "./client";
  * `services/widget_keys.py`, which is the one place that matters -- this
  * type only shapes what the console reads and writes.
  *
- * `iconUrl` is accepted and validated by the API but not exposed here: an
- * icon is not rendered anywhere yet (see this slice's report), and a
- * console field for a setting nothing shows would be a silent trap for an
- * admin who sets it and never sees it appear.
+ * No `iconUrl` yet: the API rejects it as an unknown setting. An icon has
+ * nowhere to be served from today -- see this slice's report -- and a
+ * field for a setting nothing renders would be a silent trap for an admin
+ * who sets it and never sees it appear.
  */
 export interface WidgetKeySettings {
   name?: string;
   greeting?: string;
   accentColour?: string;
   position?: "left" | "right";
-  iconUrl?: string;
 }
 
 /**
