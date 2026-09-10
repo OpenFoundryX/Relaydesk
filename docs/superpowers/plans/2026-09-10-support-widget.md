@@ -1394,6 +1394,12 @@ async def submit(
         message=message,
         attachments=parsed,
     )
+    # Required, and easy to miss: `get_session` has no commit-on-exit and
+    # there is no commit-on-success middleware, so an uncommitted flush is
+    # rolled back by `AsyncSession.close()` when the request ends and the
+    # ticket silently never exists. `public.py:332` does exactly this, for
+    # exactly this reason.
+    await session.commit()
     return TicketSubmittedOut(received=True)
 ```
 
