@@ -84,7 +84,10 @@ async def test_the_route_commits_the_flag(client, db_session, commit_spy):
     )
 
     assert response.status_code == 204
-    assert len(commit_spy) == 1
+    # >= rather than ==: the route now also runs through ratelimit.check,
+    # which commits on its own (see that function's docstring) before the
+    # route's own commit below it.
+    assert len(commit_spy) >= 1
     row = await db_session.scalar(
         sa.select(WidgetSession).where(WidgetSession.id == session_id)
     )
@@ -102,6 +105,42 @@ async def test_the_route_refuses_an_unknown_kind(client, db_session):
     )
 
     assert response.status_code == 422
+
+
+async def test_the_route_is_rate_limited_per_key_and_stays_silent_about_it(
+    client, db_session, monkeypatch
+):
+    """Uncapped, this route is anonymous row creation on the table that is
+    supposed to be an honest deflection baseline -- a caller who can read
+    the customer's page source could otherwise poison it for free. The cap
+    refusal must not surface to the visitor: a 204 either way, silently
+    fewer rows written."""
+    from relaydesk.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("WIDGET_SESSION_HOURLY_CAP", "1")
+
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
+    await db_session.commit()
+
+    first = await client.post(
+        f"/api/widget/{key.key}/sessions/{uuid.uuid4()}", json={"kind": "searched"}
+    )
+    assert first.status_code == 204
+
+    over_cap_id = uuid.uuid4()
+    second = await client.post(
+        f"/api/widget/{key.key}/sessions/{over_cap_id}", json={"kind": "searched"}
+    )
+    assert second.status_code == 204  # Silent, exactly like the first.
+
+    row = await db_session.scalar(
+        sa.select(WidgetSession).where(WidgetSession.id == over_cap_id)
+    )
+    assert row is None
+
+    get_settings.cache_clear()
 
 
 async def test_the_route_404s_for_an_unknown_key(client, db_session):

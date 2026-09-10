@@ -215,6 +215,37 @@ async def _unique_article(
     return rows[0] if len(rows) == 1 else None
 
 
+async def count(session: AsyncSession, workspace_id: uuid.UUID) -> int:
+    """How many published articles this workspace has, without building them.
+
+    `bootstrap()` (`api/widget.py`) is the one endpoint every widget panel
+    open hits, and it needs only this number compared against zero -- it
+    used to call `searchable()` and take `len(...)`, which built every
+    published article's row *and* walked the category tree for each one's
+    ancestor chain, purely to throw all of it away but a count.
+
+    Built on the same `_visible()` predicate as `searchable()`, joined to
+    `KbCategory` the same explicit way, so "the knowledge base is empty"
+    still means exactly "search would find nothing", by construction rather
+    than by two queries agreeing. An earlier attempt at a count function was
+    rejected for filtering on `KbCategory` while selecting only from
+    `KbArticle` with no join between them -- a cartesian product. That was
+    wrong about the join, not about the idea of a count; this one joins the
+    way every other query in this module does.
+    """
+    total = await session.scalar(
+        _visible(
+            sa.select(sa.func.count(KbArticle.id))
+            .join(KbCategory, KbCategory.id == KbArticle.category_id)
+            .where(
+                KbArticle.workspace_id == workspace_id,
+                KbCategory.workspace_id == workspace_id,
+            )
+        )
+    )
+    return int(total or 0)
+
+
 async def searchable(
     session: AsyncSession, workspace_id: uuid.UUID
 ) -> list[tuple[KbArticle, list[KbCategory]]]:

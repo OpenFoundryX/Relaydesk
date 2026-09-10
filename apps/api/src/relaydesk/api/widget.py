@@ -58,21 +58,24 @@ async def bootstrap(key: str, session: DbSession) -> WidgetBootstrapOut:
     a different state of the same one -- fetching it later would show a
     search field for one frame and then take it away.
 
-    It is the length of ``searchable()`` rather than its own COUNT query so
-    that "the knowledge base is empty" means exactly "search would find
-    nothing", by construction rather than by two queries agreeing.
+    It comes from ``kb_public.count()``, built on the same ``_visible()``
+    predicate ``searchable()`` uses, so "the knowledge base is empty" still
+    means exactly "search would find nothing", by construction rather than
+    by two queries agreeing -- without paying to materialise every
+    published article and its ancestor chain on the one endpoint every
+    panel open hits, which is all the frame ever did with that result.
     """
     widget_key = await widget_keys.resolve(session, key)
     await widget_keys.touch(session, widget_key)
     await session.commit()
     workspace = widget_key.workspace
-    entries = await kb_public.searchable(session, workspace.id)
+    article_count = await kb_public.count(session, workspace.id)
 
     return WidgetBootstrapOut(
         workspace_name=workspace.name,
         monogram=workspace.monogram,
         settings=widget_key.settings,
-        article_count=len(entries),
+        article_count=article_count,
     )
 
 
@@ -84,11 +87,18 @@ async def kb_index(key: str, session: DbSession) -> list[PublicCollectionOut]:
 
 @router.get("/{key}/kb/search/index", response_model=list[PublicSearchEntryOut])
 async def kb_search_index(key: str, session: DbSession) -> list[PublicSearchEntryOut]:
-    """The whole searchable set, fetched once and searched in the browser.
+    """The whole searchable set, for scoring in the browser.
 
-    This is what removes search from the rate-limit surface entirely (spec
-    D8). It discloses nothing new -- every entry is a published,
-    externally-scoped article already served in full on the public help site.
+    Unused by the frame today: D8 reversed an earlier draft of that
+    decision once instant search here was weighed against the loader's
+    under-3-KB pitch (spec D6) -- the frame instead submits each query to
+    `kb_search` below, server-side, so there is no per-keystroke request to
+    avoid in the first place. This route is retained because the public
+    help site already calls it, and because it is what a future
+    instant-search pass over the frame would adopt for workspaces whose
+    index is small enough to be worth shipping whole. It discloses nothing
+    new either way -- every entry is a published, externally-scoped article
+    already served in full on the public help site.
     """
     widget_key = await widget_keys.resolve(session, key)
     return await public.read_kb_search_index(
@@ -209,8 +219,27 @@ async def embed_policy(key: str, session: DbSession) -> str:
 async def record_event(
     key: str, session_id: uuid.UUID, body: WidgetEventIn, session: DbSession
 ) -> None:
-    """Record how far one panel open got. Never fails visibly to the visitor."""
+    """Record how far one panel open got. Never fails visibly to the visitor.
+
+    Rate-limited on the widget key, the way `submit` below is: this is
+    otherwise uncapped, unauthenticated row creation, and the row being
+    created is the one this whole feature exists to trust -- a caller who
+    can read the customer's page source can poison the deflection baseline
+    for free. A refusal here stays as silent as any other failure on this
+    route; the visitor must never learn a cap exists.
+    """
     widget_key = await widget_keys.resolve(session, key)
+
+    within_key = await ratelimit.check(
+        session,
+        "widget_sessions",
+        str(widget_key.id),
+        limit=get_settings().widget_session_hourly_cap,
+        window=timedelta(hours=1),
+    )
+    if not within_key:
+        return
+
     await widget_sessions.record(session, widget_key, session_id, body.kind)
     # `get_session` has no commit-on-exit and nothing commits on success, so
     # an uncommitted flush is rolled back by `AsyncSession.close()` when the

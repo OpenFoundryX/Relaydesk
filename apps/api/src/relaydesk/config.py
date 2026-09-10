@@ -80,6 +80,15 @@ class Settings(BaseSettings):
     # Submissions one embed may accept per hour, on top of the per-IP cap. An
     # abused embed exhausts this before it touches the workspace's own budget.
     widget_key_hourly_cap: int = 60
+    # Session-flag events (`POST /widget/{key}/sessions/{id}`) one embed may
+    # accept per hour. Deliberately far above `widget_key_hourly_cap`: unlike
+    # a ticket, an event costs an upsert, a real visitor can fire up to three
+    # per session, and a busy embed's genuine traffic must not trip this
+    # before an abuser does. Uncapped, this route is anonymous, unauthenticated
+    # row creation on the one table that exists to be an honest deflection
+    # baseline -- a caller who can read the customer's page source can poison
+    # that baseline for free.
+    widget_session_hourly_cap: int = 600
     ticket_message_max_chars: int = 10000
     ticket_attachment_max_count: int = 5
 

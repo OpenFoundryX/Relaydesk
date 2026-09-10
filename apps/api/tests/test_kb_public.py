@@ -739,6 +739,47 @@ async def test_the_search_index_lists_every_published_article_once(
     assert sorted(a.title for a, _ in rows) == ["Add a receipt", "Overview"]
 
 
+async def test_count_matches_searchable_without_materialising_it(
+    db_session: AsyncSession,
+) -> None:
+    """`count()` is `bootstrap()`'s cheaper substitute for
+    `len(searchable())` -- the two must agree, since "the knowledge base is
+    empty" is defined by whichever one is asked."""
+    workspace, _, _, overview, receipts = await _spenders_tree(db_session)
+
+    rows = await kb_public.searchable(db_session, workspace.id)
+    total = await kb_public.count(db_session, workspace.id)
+
+    assert total == len(rows) == 2
+
+
+async def test_count_is_zero_for_a_fresh_workspace(db_session: AsyncSession) -> None:
+    workspace = await make_workspace(db_session, slug="empty")
+
+    assert await kb_public.count(db_session, workspace.id) == 0
+
+
+async def test_count_excludes_hidden_and_internal_articles(
+    db_session: AsyncSession,
+) -> None:
+    """Same predicate as everything else in this module -- a draft or an
+    internal-scope article must not tip the empty/non-empty boundary
+    `bootstrap()` decides its whole first screen on."""
+    workspace, collection, article = await _published(db_session)
+    author = await make_member(db_session, workspace, email="b@acme.dev")
+    await kb_articles.create(db_session, workspace.id, collection.id, "Draft", author)
+    internal = await kb_categories.create(
+        db_session, workspace.id, "Runbooks", KbScope.internal
+    )
+    published_but_internal = await kb_articles.create(
+        db_session, workspace.id, internal.id, "Staff only", author
+    )
+    published_but_internal.status = ArticleStatus.published
+    await db_session.flush()
+
+    assert await kb_public.count(db_session, workspace.id) == 1
+
+
 async def test_the_search_index_never_carries_a_hidden_article(
     db_session: AsyncSession,
 ) -> None:
