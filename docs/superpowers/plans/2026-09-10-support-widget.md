@@ -21,7 +21,10 @@
 - **The loader must stay under 3 KB** and must draw only the launcher (spec D6). This is a requirement, not an aspiration.
 - **Copy is en-GB.** The codebase says "colour", "behaviour", "help centre", "cancelling". Match it.
 - **UI colours come from `apps/web/tailwind.config.ts`** — `ink` for every neutral, `accent` citron only for focus rings, marks and active states.
-- Run API tests with `cd apps/api && uv run pytest`; web tests with `cd apps/web && pnpm vitest run`.
+- **Run API tests inside the compose network**: `docker compose exec -T api pytest …`. `.env` points `DATABASE_URL` at host `postgres`, which does not resolve from the host, and `conftest.py` drops and recreates `relaydesk_test` over that connection. Web tests run on the host: `cd apps/web && pnpm vitest run`.
+- **Every new schema inherits `CamelModel`** (`relaydesk.schemas.base`), never `BaseModel` — Python stays snake_case, the wire is camelCase, matching the console's TypeScript field for field.
+- **`TicketSubmittedOut` is `{received: bool}` and stays that way.** Never return a conversation id or number to an anonymous submitter: its docstring records the decision, and per-workspace numbers are sequential, so returning one leaks a workspace's ticket volume.
+- **In `api/widget.py`, declare every fixed-segment route above the `GET /{key}/kb/{path:path}` catch-all.** FastAPI matches in declaration order; anything below it is swallowed as an article path.
 
 ## File Structure
 
@@ -107,7 +110,7 @@ async def test_key_is_unique_across_workspaces(session):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd apps/api && uv run pytest tests/test_widget_key_model.py -v`
+Run: `docker compose exec -T api pytest tests/test_widget_key_model.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'relaydesk.models.widget_key'`
 
 - [ ] **Step 3: Write the model**
@@ -269,7 +272,7 @@ def downgrade() -> None:
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `cd apps/api && uv run pytest tests/test_widget_key_model.py -v`
+Run: `docker compose exec -T api pytest tests/test_widget_key_model.py -v`
 Expected: PASS (3 tests). The suite runs Alembic to build the test database, so a broken migration fails here.
 
 - [ ] **Step 7: Commit**
@@ -372,7 +375,7 @@ def test_frame_ancestors_lists_origins():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd apps/api && uv run pytest tests/test_widget_origins.py -v`
+Run: `docker compose exec -T api pytest tests/test_widget_origins.py -v`
 Expected: FAIL — `ImportError: cannot import name 'widget_origins'`
 
 - [ ] **Step 3: Write the implementation**
@@ -459,7 +462,7 @@ def frame_ancestors(origins: list[str]) -> str:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd apps/api && uv run pytest tests/test_widget_origins.py -v`
+Run: `docker compose exec -T api pytest tests/test_widget_origins.py -v`
 Expected: PASS (all parametrised cases)
 
 - [ ] **Step 5: Commit**
@@ -578,7 +581,7 @@ async def test_touch_writes_at_most_once_a_minute(session):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd apps/api && uv run pytest tests/test_widget_keys_service.py -v`
+Run: `docker compose exec -T api pytest tests/test_widget_keys_service.py -v`
 Expected: FAIL — `ImportError: cannot import name 'widget_keys'`
 
 - [ ] **Step 3: Write the implementation**
@@ -741,7 +744,7 @@ async def touch(session: AsyncSession, widget_key: WidgetKey) -> None:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd apps/api && uv run pytest tests/test_widget_keys_service.py -v`
+Run: `docker compose exec -T api pytest tests/test_widget_keys_service.py -v`
 Expected: PASS (7 tests)
 
 - [ ] **Step 5: Commit**
@@ -836,13 +839,14 @@ async def test_delete_removes_the_embed(client, session):
 
     deleted = await client.delete(f"/widget-keys/{key_id}", headers=headers)
     assert deleted.status_code == 204
-    assert await client.get("/widget-keys", headers=headers) is not None
-    assert (await client.get("/widget-keys", headers=headers)).json() == []
+
+    remaining = await client.get("/widget-keys", headers=headers)
+    assert remaining.json() == []
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd apps/api && uv run pytest tests/test_widget_keys_api.py -v`
+Run: `docker compose exec -T api pytest tests/test_widget_keys_api.py -v`
 Expected: FAIL — 404 on `/widget-keys`, the router does not exist
 
 - [ ] **Step 3: Write the schemas**
@@ -852,23 +856,25 @@ Expected: FAIL — 404 on `/widget-keys`, the router does not exist
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from relaydesk.schemas.base import CamelModel
 
 
-class WidgetKeyCreate(BaseModel):
+class WidgetKeyCreate(CamelModel):
     name: str = Field(min_length=1, max_length=120)
     allowed_origins: list[str] = Field(default_factory=list)
     settings: dict = Field(default_factory=dict)
 
 
-class WidgetKeyUpdate(BaseModel):
+class WidgetKeyUpdate(CamelModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     allowed_origins: list[str] | None = None
     settings: dict | None = None
     active: bool | None = None
 
 
-class WidgetKeyOut(BaseModel):
+class WidgetKeyOut(CamelModel):
     id: uuid.UUID
     name: str
     # Returned in full on every read, unlike ApiKey's one-time secret: this
@@ -974,7 +980,7 @@ api_router.include_router(widget_keys_router, prefix="/widget-keys", tags=["widg
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `cd apps/api && uv run pytest tests/test_widget_keys_api.py -v`
+Run: `docker compose exec -T api pytest tests/test_widget_keys_api.py -v`
 Expected: PASS (4 tests)
 
 - [ ] **Step 7: Commit**
@@ -1048,7 +1054,7 @@ async def test_bootstrap_records_that_the_embed_is_installed(client, session):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd apps/api && uv run pytest tests/test_widget_api.py -v`
+Run: `docker compose exec -T api pytest tests/test_widget_api.py -v`
 Expected: FAIL — 404 from the app itself; the router does not exist
 
 - [ ] **Step 3: Write the router**
@@ -1152,10 +1158,10 @@ with `from sqlalchemy.orm import Mapped, mapped_column, relationship` and a `TYP
 
 ```python
 # apps/api/src/relaydesk/schemas/widget.py
-from pydantic import BaseModel
+from relaydesk.schemas.base import CamelModel
 
 
-class WidgetBootstrapOut(BaseModel):
+class WidgetBootstrapOut(CamelModel):
     workspace_name: str
     monogram: str
     settings: dict
@@ -1191,7 +1197,7 @@ api_router.include_router(widget_router, prefix="/widget", tags=["widget"])
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `cd apps/api && uv run pytest tests/test_widget_api.py tests/test_kb_articles.py -v`
+Run: `docker compose exec -T api pytest tests/test_widget_api.py tests/test_kb_articles.py -v`
 Expected: PASS — including the existing KB tests, which must not regress
 
 - [ ] **Step 7: Commit**
@@ -1276,7 +1282,7 @@ async def test_per_key_cap_refuses_beyond_its_budget(client, session, monkeypatc
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd apps/api && uv run pytest tests/test_widget_tickets.py -v`
+Run: `docker compose exec -T api pytest tests/test_widget_tickets.py -v`
 Expected: FAIL — 404, the route does not exist
 
 - [ ] **Step 3: Add the setting**
@@ -1380,9 +1386,9 @@ async def submit(
     # difference is whether rows get written, which is the one thing the
     # caller cannot observe.
     if company.strip():
-        return TicketSubmittedOut(number=0)
+        return TicketSubmittedOut(received=True)
 
-    conversation = await tickets.submit(
+    await tickets.submit(
         session,
         widget_key.workspace_id,
         email=str(email),
@@ -1391,7 +1397,7 @@ async def submit(
         message=message,
         attachments=parsed,
     )
-    return TicketSubmittedOut(number=conversation.number)
+    return TicketSubmittedOut(received=True)
 ```
 
 `tickets.submit` already exists at `services/tickets.py:82` with exactly this
@@ -1401,13 +1407,17 @@ rather than redundant — the router's copies exist to fix the *ordering* a
 caller can observe, and the service's exist so a future caller cannot skip
 them.
 
-Check `TicketSubmittedOut`'s field in `schemas/kb.py` before writing the two
-returns above and match it; the honeypot branch must return the same shape as
-the real one, or the difference is observable.
+**Do not return the conversation's number.** `TicketSubmittedOut` is
+`{received: bool}` and its docstring records why: *"Deliberately says nothing
+but 'received'. No id, no number: the submitter is anonymous and must not be
+handed a handle to the inbox."* Per-workspace numbers are sequential, so
+returning one would also tell any anonymous submitter how many tickets that
+workspace has ever received. The honeypot branch and the real branch return
+the identical object, or the difference is observable.
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `cd apps/api && uv run pytest tests/test_widget_tickets.py tests/test_public_tickets.py -v`
+Run: `docker compose exec -T api pytest tests/test_widget_tickets.py tests/test_public_tickets.py -v`
 Expected: PASS — including the existing public submission tests
 
 - [ ] **Step 6: Commit**
@@ -1571,10 +1581,10 @@ Expected: FAIL — cannot resolve `@/components/widget/panel`
 
 - [ ] **Step 3: Build the panel**
 
-The API answers in snake_case; `lib/api/widget.ts` maps it to camelCase, so
-`Panel`'s props are `workspaceName`, `monogram`, `settings`, `articleCount` —
-matching the test above. Follow the mapping style already used in
-`apps/web/lib/api/public.ts`.
+`WidgetBootstrapOut` inherits `CamelModel`, so the API already answers in
+camelCase — `workspaceName`, `articleCount` — matching the console's
+TypeScript field for field. `lib/api/widget.ts` needs no mapping layer; it
+fetches and types the response. Follow `apps/web/lib/api/public.ts`.
 
 ```tsx
 // apps/web/components/widget/panel.tsx
@@ -1596,7 +1606,7 @@ type View =
   | { name: "results"; query: string }
   | { name: "article"; path: string }
   | { name: "compose" }
-  | { name: "sent"; number: number };
+  | { name: "sent" };
 
 export function Panel({ workspaceName, monogram, articleCount }: PanelProps) {
   // The day-one state for every new customer. Deciding it from articleCount
@@ -1626,12 +1636,10 @@ export function Panel({ workspaceName, monogram, articleCount }: PanelProps) {
       {view.name === "compose" && (
         <Compose
           showBack={!empty}
-          onSent={(number) => setView({ name: "sent", number })}
+          onSent={() => setView({ name: "sent" })}
         />
       )}
-      {view.name === "sent" && (
-        <Sent number={view.number} onHome={() => setView({ name: "home" })} />
-      )}
+      {view.name === "sent" && <Sent onHome={() => setView({ name: "home" })} />}
       <Footer />
     </div>
   );
@@ -1745,7 +1753,7 @@ async def test_embed_policy_answers_none_for_an_unknown_key(client, session):
     assert response.text == "frame-ancestors 'none'"
 ```
 
-Run: `cd apps/api && uv run pytest tests/test_widget_api.py -v`
+Run: `docker compose exec -T api pytest tests/test_widget_api.py -v`
 Expected: PASS
 
 - [ ] **Step 6: Run the panel tests**
@@ -2012,7 +2020,7 @@ Expected: PASS (2 tests)
 
 - [ ] **Step 6: Run the whole suite**
 
-Run: `cd apps/api && uv run pytest` then `cd apps/web && pnpm vitest run`
+Run: `docker compose exec -T api pytest` then `cd apps/web && pnpm vitest run`
 Expected: PASS — nothing above may regress the portal or the public API
 
 - [ ] **Step 7: Commit**
@@ -2116,7 +2124,7 @@ async def test_an_unknown_kind_is_refused(session):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd apps/api && uv run pytest tests/test_widget_sessions.py -v`
+Run: `docker compose exec -T api pytest tests/test_widget_sessions.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'relaydesk.models.widget_session'`
 
 - [ ] **Step 3: Write the model**
@@ -2316,7 +2324,7 @@ async def record_event(
     await widget_sessions.record(session, widget_key, session_id, body.kind)
 ```
 
-with `class WidgetEventIn(BaseModel): kind: str` in `schemas/widget.py`.
+with `class WidgetEventIn(CamelModel): kind: str` in `schemas/widget.py`.
 
 The frame mints a session id with `crypto.randomUUID()` on open, holds it for
 the life of the panel, and posts `searched` on the first search, `read` on the
@@ -2325,12 +2333,12 @@ in the frame: a counter must never be able to break a support request.
 
 - [ ] **Step 7: Run tests to verify they pass**
 
-Run: `cd apps/api && uv run pytest tests/test_widget_sessions.py -v`
+Run: `docker compose exec -T api pytest tests/test_widget_sessions.py -v`
 Expected: PASS (4 tests)
 
 - [ ] **Step 8: Run the whole suite**
 
-Run: `cd apps/api && uv run pytest` then `cd apps/web && pnpm vitest run`
+Run: `docker compose exec -T api pytest` then `cd apps/web && pnpm vitest run`
 Expected: PASS
 
 - [ ] **Step 9: Commit**
