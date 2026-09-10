@@ -17,9 +17,9 @@ import { getWidgetBootstrap } from "@/lib/api/widget";
 export default async function WidgetFramePage({
   searchParams,
 }: {
-  searchParams: Promise<{ key?: string }>;
+  searchParams: Promise<{ key?: string; email?: string; name?: string }>;
 }) {
-  const { key } = await searchParams;
+  const { key, email, name } = await searchParams;
   if (!key) notFound();
 
   const bootstrap = await getWidgetBootstrap(key);
@@ -29,6 +29,11 @@ export default async function WidgetFramePage({
     <Panel
       {...bootstrap}
       widgetKey={key}
+      // Prefill only (spec §6) -- the loader (public/widget.js) sends these
+      // from its own `data-email`/`data-name` attributes, URL-encoded and
+      // unsigned; see widget.js for why that needs no signature.
+      email={email}
+      name={name}
       onSubmit={submitWidgetTicketAction.bind(null, key)}
     />
   );

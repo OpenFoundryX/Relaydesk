@@ -19,6 +19,21 @@ describe("Panel", () => {
     expect(screen.getByLabelText("Your message")).toBeTruthy();
   });
 
+  it("prefills the compose form from the loader's data-email/data-name, when given", () => {
+    // Regression for a plan defect spanning tasks 8 and 9: the loader
+    // (public/widget.js) has always sent these as query params, but
+    // nothing downstream read them until now.
+    render(<Panel {...workspace} articleCount={0} email="ada@example.com" name="Ada" />);
+    expect((screen.getByLabelText("Email") as HTMLInputElement).value).toBe("ada@example.com");
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Ada");
+  });
+
+  it("leaves the compose form empty when no prefill is given", () => {
+    render(<Panel {...workspace} articleCount={0} />);
+    expect((screen.getByLabelText("Email") as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("");
+  });
+
   it("still has nowhere to search after Sent sends an empty-knowledge-base visitor home", async () => {
     // Regression for a Critical finding: `empty` gated only the panel's
     // *initial* view, not the "go home" transition every one of Header's

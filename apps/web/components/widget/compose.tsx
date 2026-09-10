@@ -28,15 +28,26 @@ export function Compose({
   onBack,
   onSent,
   onSubmit,
+  initialEmail,
+  initialName,
 }: {
   showBack: boolean;
   onBack: () => void;
   onSent: () => void;
   onSubmit?: (formData: FormData) => Promise<SubmitWidgetTicketResult>;
+  /**
+   * Prefill from the loader's `data-email` / `data-name` attributes (spec
+   * §6), threaded down through Panel from the frame page's query string.
+   * Read once as the field's initial value, exactly like any other
+   * uncontrolled-default prop -- a visitor is free to edit either field
+   * afterwards, and an absent value leaves the field empty as before.
+   */
+  initialEmail?: string;
+  initialName?: string;
 }) {
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(initialEmail ?? "");
   const [message, setMessage] = useState("");
 
   const canSubmit = email.includes("@") && message.trim().length > 0;
@@ -112,6 +123,7 @@ export function Compose({
           <input
             id="widget-name"
             name="name"
+            defaultValue={initialName}
             placeholder="Your name (optional)"
             className="h-9 rounded-md border border-ink-200 bg-white px-3 text-[13px] text-ink-900 placeholder:text-ink-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 dark:border-ink-700 dark:bg-ink-800 dark:text-white"
           />

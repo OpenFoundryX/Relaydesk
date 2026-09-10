@@ -23,6 +23,15 @@ export type PanelProps = {
    */
   widgetKey?: string;
   /**
+   * Prefill only (spec §6), forwarded from the loader's `data-email` /
+   * `data-name` attributes via the frame page's query string. Absent
+   * whenever the customer didn't set the attribute -- an absent value must
+   * leave Compose's field empty exactly as it was before this existed, so
+   * both stay optional all the way down.
+   */
+  email?: string;
+  name?: string;
+  /**
    * The ticket-submission server action, already bound to `widgetKey` by
    * the frame page. A prop rather than an import here: a Client Component
    * may take a Server Action as a prop, but importing the module that
@@ -62,6 +71,8 @@ export function Panel({
   monogram,
   articleCount,
   widgetKey,
+  email,
+  name,
   onSubmit,
 }: PanelProps) {
   // The day-one state for every new customer (spec D7). Deciding it from
@@ -176,6 +187,8 @@ export function Panel({
             onBack={goHome}
             onSent={() => setView({ name: "sent" })}
             onSubmit={onSubmit}
+            initialEmail={email}
+            initialName={name}
           />
         )}
         {view.name === "sent" && <Sent onHome={goHome} />}

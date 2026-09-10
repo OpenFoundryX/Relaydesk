@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { readFileSync, statSync } from "node:fs";
 
 describe("loader", () => {
@@ -14,5 +14,157 @@ describe("loader", () => {
     const frame = source.indexOf("createElement(\"iframe\")");
     expect(launcher).toBeGreaterThan(-1);
     expect(frame).toBeGreaterThan(launcher);
+  });
+});
+
+/**
+ * The source-order check above would still pass for a file that was
+ * textually ordered correctly but behaviourally wrong. This block actually
+ * runs the loader in jsdom and drives it, because its <script> contract is
+ * frozen the moment a customer pastes it -- there is no second chance to
+ * add coverage for a behaviour that ships broken.
+ */
+describe("loader behaviour", () => {
+  const source = readFileSync("public/widget.js", "utf8");
+  const SCRIPT_ORIGIN = "https://relay.example.com";
+
+  // Every `window.addEventListener` call the loader makes while it runs is
+  // recorded here, so afterEach can remove it -- without this, a `message`
+  // listener from one test would still be registered (and firing) during
+  // the next one, since the loader itself never calls removeEventListener
+  // and jsdom's `window` is shared across tests in this file.
+  let registered: Array<[string, EventListener]> = [];
+
+  /**
+   * Runs the loader exactly as a browser would for a
+   * `<script async src=".../widget.js" data-key="...">` tag, with
+   * `document.currentScript` pointed at a detached <script> element carrying
+   * the given attributes -- detached so setting its `src` triggers no
+   * jsdom resource fetch, which the loader never needs since it only reads
+   * `tag.src` and `tag.getAttribute(...)`.
+   */
+  function loadWidget(attrs: Record<string, string>) {
+    const tag = document.createElement("script");
+    tag.src = `${SCRIPT_ORIGIN}/widget.js`;
+    for (const [name, value] of Object.entries(attrs)) {
+      tag.setAttribute(name, value);
+    }
+    Object.defineProperty(document, "currentScript", {
+      value: tag,
+      configurable: true,
+    });
+
+    const originalAdd = window.addEventListener.bind(window);
+    window.addEventListener = ((type: string, listener: EventListener, options?: unknown) => {
+      registered.push([type, listener]);
+      return originalAdd(type, listener, options as AddEventListenerOptions);
+    }) as typeof window.addEventListener;
+
+    try {
+      // Exercising the static asset exactly as a browser would eval it
+      // from a <script> tag -- it is not imported as a module, so this is
+      // the only way to run it under test at all.
+      (0, eval)(source);
+    } finally {
+      window.addEventListener = originalAdd;
+    }
+  }
+
+  afterEach(() => {
+    for (const [type, listener] of registered) {
+      window.removeEventListener(type, listener);
+    }
+    registered = [];
+    document.body.innerHTML = "";
+    Object.defineProperty(document, "currentScript", { value: null, configurable: true });
+    // The re-entry guard is deliberately global (window.__relaydeskWidget)
+    // so a real duplicate <script> tag is a no-op; reset it between tests
+    // so each test gets a fresh load rather than being silently skipped by
+    // the previous test's guard.
+    delete (window as unknown as { __relaydeskWidget?: boolean }).__relaydeskWidget;
+  });
+
+  function dispatchClose(origin: string) {
+    window.dispatchEvent(
+      new MessageEvent("message", { data: "relaydesk:close", origin }),
+    );
+  }
+
+  it("keeps the iframe out of the DOM until the launcher is clicked, then adds it", () => {
+    loadWidget({ "data-key": "rdw_test" });
+
+    expect(document.querySelector("iframe")).toBeNull();
+
+    document.querySelector<HTMLButtonElement>("button")!.click();
+
+    const frame = document.querySelector("iframe");
+    expect(frame).not.toBeNull();
+    expect(frame!.style.display).not.toBe("none");
+  });
+
+  it("does not close the panel for a relaydesk:close message from a different origin", () => {
+    loadWidget({ "data-key": "rdw_test" });
+    document.querySelector<HTMLButtonElement>("button")!.click();
+    const frame = document.querySelector<HTMLIFrameElement>("iframe")!;
+
+    dispatchClose("https://evil.example.com");
+
+    expect(frame.style.display).not.toBe("none");
+  });
+
+  it("closes the panel for a relaydesk:close message from the script's own origin", () => {
+    loadWidget({ "data-key": "rdw_test" });
+    document.querySelector<HTMLButtonElement>("button")!.click();
+    const frame = document.querySelector<HTMLIFrameElement>("iframe")!;
+
+    dispatchClose(SCRIPT_ORIGIN);
+
+    expect(frame.style.display).toBe("none");
+  });
+
+  it("returns focus to the launcher when the panel closes via postMessage", () => {
+    // Stands in for both real close paths that reach the loader this way
+    // (Esc and the close button) -- both call the same
+    // window.parent.postMessage("relaydesk:close", "*") in panel.tsx, so
+    // the loader cannot and does not distinguish them.
+    loadWidget({ "data-key": "rdw_test" });
+    const launcher = document.querySelector<HTMLButtonElement>("button")!;
+    launcher.click();
+
+    // Move focus off the launcher first, so the assertion proves hide()
+    // actively refocuses it rather than focus having simply never left.
+    document.body.focus();
+    expect(document.activeElement).not.toBe(launcher);
+
+    dispatchClose(SCRIPT_ORIGIN);
+
+    expect(document.activeElement).toBe(launcher);
+  });
+
+  it("returns focus to the launcher when clicked again to close", () => {
+    loadWidget({ "data-key": "rdw_test" });
+    const launcher = document.querySelector<HTMLButtonElement>("button")!;
+    launcher.click();
+    document.body.focus();
+
+    launcher.click();
+
+    expect(document.querySelector<HTMLIFrameElement>("iframe")!.style.display).toBe("none");
+    expect(document.activeElement).toBe(launcher);
+  });
+
+  it("draws only one launcher when the script tag is included twice", () => {
+    // A duplicate paste, a tag-manager duplicate, or an SPA re-injecting
+    // the tag on navigation must not draw a second overlapping launcher.
+    loadWidget({ "data-key": "rdw_test" });
+    loadWidget({ "data-key": "rdw_test" });
+
+    expect(document.querySelectorAll("button").length).toBe(1);
+  });
+
+  it("does nothing when data-key is missing", () => {
+    loadWidget({});
+
+    expect(document.querySelector("button")).toBeNull();
   });
 });
