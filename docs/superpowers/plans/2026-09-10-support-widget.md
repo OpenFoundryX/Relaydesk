@@ -1446,44 +1446,95 @@ throttles every visitor on every embedding site into one bucket.
 - Consumes: nothing.
 - Produces: an `x-forwarded-for` that survives middleware and carries the visitor's address.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Replace the two tests that assert the old contract**
+
+`apps/web/middleware.test.ts` already contains two tests under
+`describe("middleware header sanitisation")` that assert the *opposite* of
+what this task builds:
+
+- `"strips a client-supplied X-Forwarded-For header on a resolved workspace request"`
+- `"strips a client-supplied X-Forwarded-For header on every other route too"`
+
+They are not stale — they were written deliberately, and the long comment
+above the first one explains the reasoning. This task changes the contract
+they pin, so **delete both and put the new contract in their place**. Do not
+leave them alongside the new tests; two tests asserting opposite things is
+worse than either.
+
+Leave the `x-relaydesk-workspace` tests in that same block exactly as they
+are. That header genuinely has no trustworthy source but `Host`, no proxy
+sets it, and nothing about this task changes it.
+
+The matcher-coverage block at the bottom of the file also has comments
+justifying entries by the strip ("the X-Forwarded-For strip above is what
+stops a caller choosing its own rate-limit bucket"). Those entries must
+stay — the middleware still has to run on those routes to set the workspace
+header — but reword the comments so they describe why the route is matched
+now, not by appeal to a strip that no longer happens.
 
 ```typescript
-// apps/web/middleware.test.ts — add to the existing suite
-import { describe, expect, it } from "vitest";
-
-import { middleware } from "./middleware";
-
-function request(headers: Record<string, string>) {
-  return new Request("https://acme.relaydesk.dev/help", { headers }) as never;
-}
-
-describe("client address", () => {
-  it("preserves a proxy-supplied x-forwarded-for", () => {
-    // Behind a reverse proxy the socket address is the proxy's, so deleting
-    // this header buckets every visitor together and the ticket cap
-    // throttles the whole internet. See spec D9.
-    const response = middleware(request({ "x-forwarded-for": "203.0.113.7" }));
-    expect(response.headers.get("x-middleware-request-x-forwarded-for")).toBe(
-      "203.0.113.7",
-    );
+// apps/web/middleware.test.ts — replacing the two stripping tests
+it("preserves a proxy-supplied X-Forwarded-For", () => {
+  // The contract changed with the reverse proxy. Behind one, the socket
+  // address Next would fall back to is the *proxy's*, so stripping this
+  // header collapses every visitor in the world into a single rate-limit
+  // bucket and TICKET_IP_HOURLY_CAP then throttles all of them to five an
+  // hour -- silently, and failing closed.
+  //
+  // What replaces "strip everything" as the guarantee is that nothing but
+  // the proxy can reach this container: the web service publishes no port,
+  // and the proxy itself accepts X-Forwarded-For only from its own
+  // upstream edge. Both halves are required; see middleware.ts.
+  const request = new NextRequest("http://acme.localhost:3000/submit-ticket", {
+    headers: { host: "acme.localhost:3000", "x-forwarded-for": "203.0.113.7" },
   });
 
-  it("still strips the workspace header a caller supplied", () => {
-    const response = middleware(
-      request({ host: "acme.relaydesk.dev", "x-relaydesk-workspace": "victim" }),
-    );
-    expect(
-      response.headers.get("x-middleware-request-x-relaydesk-workspace"),
-    ).toBe("acme");
+  const response = middleware(request);
+
+  expect(response.headers.get(OVERRIDE_HEADER)?.split(",")).toContain(
+    "x-forwarded-for",
+  );
+  expect(response.headers.get(REQUEST_HEADER_PREFIX + "x-forwarded-for")).toBe(
+    "203.0.113.7",
+  );
+});
+
+it("preserves it on every other matched route too", () => {
+  const request = new NextRequest("http://localhost:3000/forgot-password", {
+    headers: { host: "localhost:3000", "x-forwarded-for": "203.0.113.9" },
   });
+
+  const response = middleware(request);
+
+  expect(response.headers.get(REQUEST_HEADER_PREFIX + "x-forwarded-for")).toBe(
+    "203.0.113.9",
+  );
+});
+
+it("still replaces a client-supplied workspace header", () => {
+  // Unchanged by this task, and pinned here so a future edit to the
+  // header handling cannot quietly take both strips out together.
+  const request = new NextRequest("http://acme.localhost:3000/help", {
+    headers: { host: "acme.localhost:3000", "x-relaydesk-workspace": "evil" },
+  });
+
+  const response = middleware(request);
+
+  expect(response.headers.get(REQUEST_HEADER_PREFIX + "x-relaydesk-workspace")).toBe(
+    "acme",
+  );
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+The file's existing helpers (`OVERRIDE_HEADER`, `REQUEST_HEADER_PREFIX`,
+the `beforeAll` that stubs `NEXT_PUBLIC_PORTAL_DOMAIN` and imports the
+module) are already in scope — reuse them rather than redeclaring.
+
+- [ ] **Step 2: Run the tests to verify the new ones fail**
 
 Run: `cd apps/web && pnpm vitest run middleware.test.ts`
-Expected: FAIL on the first test — the header is deleted, so the value is `null`
+Expected: the two new preservation tests FAIL — the header is still being
+deleted, so the value comes back `null`. The workspace tests pass throughout.
 
 - [ ] **Step 3: Replace the deletion with a comment that is true**
 
@@ -1504,7 +1555,8 @@ line and its comment block, and put this in their place:
   // reach this container except the proxy: the web service publishes no
   // port (see docker-compose.yml) and the proxy itself accepts
   // `X-Forwarded-For` only from its own upstream edge. Break either of
-  // those and a caller can pick its own rate-limit bucket again.
+  // those and a caller can pick its own rate-limit bucket again -- so the
+  // guarantee moved, it did not disappear.
 ```
 
 The `x-relaydesk-workspace` deletion above it stays exactly as it is: that
