@@ -1,4 +1,3 @@
-import pytest
 import sqlalchemy as sa
 
 from relaydesk.models.conversation import Conversation

@@ -56,6 +56,22 @@ def test_allowed_matches_exactly():
     assert origins.allowed(stored, "https://acme.com.evil.com") is False
 
 
+@pytest.mark.parametrize(
+    ("raw", "host"),
+    [
+        # A userinfo prefix names a login, not a destination -- the host
+        # after "@" is what a browser (and urlsplit) actually navigates to.
+        # An admin pasting what looks like "acme.com" here must not
+        # accidentally allow evil.com.
+        ("https://acme.com@evil.com", "evil.com"),
+        ("https://acme.com:443@evil.com", "evil.com"),
+    ],
+)
+def test_a_userinfo_prefix_normalises_to_the_host_after_the_at_sign(raw, host):
+    assert origins.normalise(raw) == f"https://{host}"
+    assert origins.allowed(["https://acme.com"], raw) is False
+
+
 def test_allowed_refuses_absent_and_opaque_origins():
     stored = ["https://acme.com"]
     assert origins.allowed(stored, None) is False

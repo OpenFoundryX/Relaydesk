@@ -81,6 +81,78 @@ async def test_bad_origin_is_rejected(client, db_session) -> None:
     assert response.status_code == 422, response.text
 
 
+async def test_patch_updates_only_the_given_fields(client, db_session) -> None:
+    """The least-tested route on the branch, and the one that rewrites
+    `allowedOrigins` -- an update that clobbers the name when only the
+    allowlist changes (or vice versa) is exactly the kind of thing this
+    slice's other route tests would not catch."""
+    workspace = await make_workspace(db_session)
+    headers = await admin_headers(client, db_session, workspace)
+
+    created = await client.post(
+        "/api/widget-keys",
+        json={"name": "Marketing site", "allowedOrigins": ["https://acme.com"]},
+        headers=headers,
+    )
+    key_id = created.json()["id"]
+
+    patched = await client.patch(
+        f"/api/widget-keys/{key_id}",
+        json={"allowedOrigins": ["https://acme.com", "https://www.acme.com"]},
+        headers=headers,
+    )
+    assert patched.status_code == 200, patched.text
+    body = patched.json()
+    assert body["name"] == "Marketing site"  # Untouched: not in the patch.
+    assert body["allowedOrigins"] == ["https://acme.com", "https://www.acme.com"]
+    assert body["active"] is True
+
+    deactivated = await client.patch(
+        f"/api/widget-keys/{key_id}", json={"active": False}, headers=headers
+    )
+    assert deactivated.status_code == 200, deactivated.text
+    body = deactivated.json()
+    assert body["active"] is False
+    # Still untouched by the second patch, either.
+    assert body["allowedOrigins"] == ["https://acme.com", "https://www.acme.com"]
+
+
+async def test_patch_persists(client, db_session) -> None:
+    """The same defect this slice shipped for create/update/delete: a PATCH
+    answering 200 with the new value proves nothing about whether it was
+    committed. A second, independent read is the only thing that does."""
+    workspace = await make_workspace(db_session)
+    headers = await admin_headers(client, db_session, workspace)
+
+    created = await client.post(
+        "/api/widget-keys", json={"name": "Site"}, headers=headers
+    )
+    key_id = created.json()["id"]
+
+    await client.patch(
+        f"/api/widget-keys/{key_id}", json={"name": "Renamed"}, headers=headers
+    )
+
+    listed = await client.get("/api/widget-keys", headers=headers)
+    assert listed.json()[0]["name"] == "Renamed"
+
+
+async def test_patch_refuses_another_workspaces_embed(client, db_session) -> None:
+    ours = await make_workspace(db_session, slug="ours")
+    theirs = await make_workspace(db_session, slug="theirs")
+    from relaydesk.services import widget_keys as widget_keys_service
+
+    foreign = await widget_keys_service.create(db_session, theirs.id, "Theirs")
+    await db_session.commit()
+    headers = await admin_headers(client, db_session, ours)
+
+    response = await client.patch(
+        f"/api/widget-keys/{foreign.id}", json={"name": "Hijacked"}, headers=headers
+    )
+
+    assert response.status_code == 404
+
+
 async def test_delete_removes_the_embed(client, db_session) -> None:
     workspace = await make_workspace(db_session)
     headers = await admin_headers(client, db_session, workspace)

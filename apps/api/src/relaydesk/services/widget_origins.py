@@ -21,7 +21,7 @@ _DEFAULT_PORTS = {"https": 443, "http": 80}
 
 
 def normalise(value: str) -> str | None:
-    """``value`` reduced to ``scheme://host[:port]``, or ``None`` if it is not an origin.
+    """``value`` reduced to ``scheme://host[:port]``, or ``None`` if not an origin.
 
     Rejects wildcards outright. A pattern like ``*.acme.com`` needs a matcher
     rather than a comparison, and a matcher is the thing that goes subtly
@@ -59,6 +59,13 @@ def allowed(origins: list[str], candidate: str | None) -> bool:
     configured is inert, which is the safe direction to fail: the opposite
     would leave every freshly minted key embeddable anywhere until someone
     remembered to restrict it.
+
+    Thoroughly tested, and not called from anywhere in production: actual
+    enforcement runs through ``frame_ancestors()`` below, which lets the
+    *browser* refuse the embed via CSP. This function exists so that
+    predicate is tested directly rather than only through the header string
+    it is folded into -- it must not be read as evidence that a
+    server-side origin check exists anywhere on this path.
     """
     if not origins or candidate is None:
         return False
