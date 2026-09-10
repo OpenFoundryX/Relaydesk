@@ -16,7 +16,7 @@ export default async function WidgetPage() {
     <>
       <PageHeader
         title="Widget"
-        description="Embed live chat and your knowledge base on any site with a single script tag."
+        description="Embed self-serve help and a way to reach you on any site with a single script tag."
         actions={<NewWidgetKeyButton />}
       />
 

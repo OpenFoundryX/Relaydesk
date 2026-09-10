@@ -55,8 +55,9 @@ export function Results({
       </h1>
 
       {/* Announces the count once it is known, not the loading state --
-          "Loading" read out on every keystroke-triggered search is noise a
-          screen-reader user does not need for a fetch this fast. */}
+          "Loading" read out on every submitted search (spec D8: search
+          runs on submit, not as you type) is noise a screen-reader user
+          does not need for a fetch this fast. */}
       <div aria-live="polite" className="sr-only">
         {!loading &&
           `${results.length} ${results.length === 1 ? "result" : "results"} for ${query}`}

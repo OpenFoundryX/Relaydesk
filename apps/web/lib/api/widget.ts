@@ -56,15 +56,26 @@ export interface WidgetArticleSummary {
  * frame's own `search` route rather than the widget key resolving to an
  * unknown one -- the route above already turned that into `notFound()`
  * before this can run.
+ *
+ * Caught the same way its two siblings above catch theirs: the frame's
+ * session can outlive the key it opened with (an admin can deactivate or
+ * delete one mid-visit), and without this a search from that stale key
+ * surfaces as an unhandled 500 shape instead of the empty result an
+ * unknown key already means everywhere else on this door.
  */
 export async function searchWidgetKb(
   key: string,
   q: string,
 ): Promise<WidgetArticleSummary[]> {
-  return apiFetch<WidgetArticleSummary[]>(
-    `/widget/${encodeURIComponent(key)}/kb/search?q=${encodeURIComponent(q)}`,
-    { auth: false },
-  );
+  try {
+    return await apiFetch<WidgetArticleSummary[]>(
+      `/widget/${encodeURIComponent(key)}/kb/search?q=${encodeURIComponent(q)}`,
+      { auth: false },
+    );
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return [];
+    throw error;
+  }
 }
 
 /** Who wrote an article. Name and monogram -- never an address. */

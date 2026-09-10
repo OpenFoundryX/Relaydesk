@@ -3,8 +3,17 @@ import type { ReactNode } from "react";
 import { SectionEmpty, SettingSection } from "@/components/console/setting-section";
 import type { WidgetKey } from "@/lib/api/widget-keys";
 
+// The console's own configured URL, not a fixed relaydesk.dev domain --
+// `lib/api/portal.ts` establishes the same WEB_URL ?? NEXT_PUBLIC_WEB_URL
+// idiom. This is how the widget.js loader (apps/web/public/widget.js) is
+// served: same origin as the console. Getting this wrong hands a
+// self-hosted install's admin, per the README, a snippet pointing at a
+// domain they do not control.
+const WEB_URL =
+  process.env.WEB_URL ?? process.env.NEXT_PUBLIC_WEB_URL ?? "http://localhost:3000";
+
 function snippet(key: string): string {
-  return `<script async src="https://app.relaydesk.dev/widget.js" data-key="${key}"></script>`;
+  return `<script async src="${WEB_URL}/widget.js" data-key="${key}"></script>`;
 }
 
 /**

@@ -22,7 +22,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type { WidgetKey } from "@/lib/api/widget-keys";
 
-function parseOrigins(text: string): string[] {
+export function parseOrigins(text: string): string[] {
   return text
     .split("\n")
     .map((line) => line.trim())
