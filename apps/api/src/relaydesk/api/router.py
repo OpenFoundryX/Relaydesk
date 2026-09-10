@@ -15,6 +15,7 @@ from relaydesk.api.team import invites_router
 from relaydesk.api.team import router as team_router
 from relaydesk.api.webhooks import router as webhooks_router
 from relaydesk.api.workspace import router as workspace_router
+from relaydesk.api.widget_keys import router as widget_keys_router
 
 api_router = APIRouter()
 api_router.include_router(health_router, prefix="/health", tags=["health"])
@@ -37,6 +38,7 @@ api_router.include_router(analytics_router, prefix="/analytics", tags=["analytic
 # Tools something inside Relaydesk calls, not event subscriptions -- the
 # distinction is spec D1, and event delivery will need its own surface.
 api_router.include_router(webhooks_router, prefix="/webhooks", tags=["webhooks"])
+api_router.include_router(widget_keys_router, prefix="/widget-keys", tags=["widget"])
 # Anonymous: reachable at <slug>.<portal domain> with no session at all. See
 # relaydesk.api.public's module docstring for what "public" means here.
 api_router.include_router(public_router, prefix="/public", tags=["public"])
