@@ -1,12 +1,16 @@
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from relaydesk.db.base import Base, TimestampMixin, UUIDMixin
+
+if TYPE_CHECKING:
+    from relaydesk.models.workspace import Workspace
 
 
 class WidgetKey(UUIDMixin, TimestampMixin, Base):
@@ -67,3 +71,4 @@ class WidgetKey(UUIDMixin, TimestampMixin, Base):
     last_seen_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    workspace: Mapped["Workspace"] = relationship(lazy="selectin")

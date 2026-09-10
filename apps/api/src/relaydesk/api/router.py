@@ -14,8 +14,9 @@ from relaydesk.api.snippets import router as snippets_router
 from relaydesk.api.team import invites_router
 from relaydesk.api.team import router as team_router
 from relaydesk.api.webhooks import router as webhooks_router
-from relaydesk.api.workspace import router as workspace_router
+from relaydesk.api.widget import router as widget_router
 from relaydesk.api.widget_keys import router as widget_keys_router
+from relaydesk.api.workspace import router as workspace_router
 
 api_router = APIRouter()
 api_router.include_router(health_router, prefix="/health", tags=["health"])
@@ -42,3 +43,6 @@ api_router.include_router(widget_keys_router, prefix="/widget-keys", tags=["widg
 # Anonymous: reachable at <slug>.<portal domain> with no session at all. See
 # relaydesk.api.public's module docstring for what "public" means here.
 api_router.include_router(public_router, prefix="/public", tags=["public"])
+# Anonymous, addressed by widget key rather than slug. Its own prefix, so it
+# adds no fixed first segment under /public and no RESERVED_SLUGS entry.
+api_router.include_router(widget_router, prefix="/widget", tags=["widget"])
