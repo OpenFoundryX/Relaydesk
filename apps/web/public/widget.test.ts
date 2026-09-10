@@ -167,4 +167,16 @@ describe("loader behaviour", () => {
 
     expect(document.querySelector("button")).toBeNull();
   });
+
+  it("does not let a keyless tag block a later, correctly configured one", () => {
+    // Regression: the re-entry guard must be claimed only once a key is
+    // confirmed. A customer's mistyped or missing data-key on a first tag
+    // must not silently block a second, valid tag on the same page --
+    // that would be a confusing failure with no widget and no error.
+    loadWidget({});
+    expect(document.querySelector("button")).toBeNull();
+
+    loadWidget({ "data-key": "rdw_test" });
+    expect(document.querySelector("button")).not.toBeNull();
+  });
 });

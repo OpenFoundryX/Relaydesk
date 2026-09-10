@@ -1,14 +1,15 @@
 (function () {
-  // The <script> tag's shape is frozen once a customer pastes it, but this
-  // file is not -- a re-run guard is safe to add here for a duplicate
-  // paste, a tag-manager duplicate, or an SPA re-injecting the tag on
-  // navigation, all of which would otherwise draw a second launcher.
-  if (window.__relaydeskWidget) return;
-  window.__relaydeskWidget = true;
-
   var tag = document.currentScript;
   var key = tag && tag.getAttribute("data-key");
   if (!key) return;
+
+  // The <script> tag's shape is frozen once pasted, but this file is not --
+  // a re-run guard here stops a duplicate paste, a tag-manager duplicate,
+  // or an SPA re-injection drawing a second launcher. Claimed only once a
+  // key is confirmed, so a keyless tag is a no-op, not a block on a later
+  // valid one.
+  if (window.__relaydeskWidget) return;
+  window.__relaydeskWidget = true;
 
   var origin = new URL(tag.src).origin;
   // Prefill only. Nothing can be read with an address, because the widget
