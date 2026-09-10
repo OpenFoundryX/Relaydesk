@@ -49,6 +49,13 @@ async def create_route(
         settings=body.settings,
         created_by_user_id=scope.user.id,
     )
+    # Required, and easy to miss: `get_session` has no commit-on-exit and
+    # there is no commit-on-success middleware, so an uncommitted flush is
+    # rolled back by `AsyncSession.close()` when the request ends and the
+    # embed silently never exists, even though the 201 below hands the
+    # admin a real key and a snippet to paste. `api/snippets.py` follows
+    # the same pattern for the same reason.
+    await session.commit()
     return _out(created)
 
 
@@ -66,6 +73,7 @@ async def update_route(
         settings=body.settings,
         active=body.active,
     )
+    await session.commit()
     return _out(updated)
 
 
@@ -73,3 +81,4 @@ async def update_route(
 async def delete_route(key_id: uuid.UUID, scope: Scope, session: DbSession) -> None:
     scope.require_admin()
     await widget_keys.delete(session, scope.workspace.id, key_id)
+    await session.commit()
