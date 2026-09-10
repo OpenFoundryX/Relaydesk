@@ -117,15 +117,24 @@ export function Panel({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  // The one place "go home" is decided, for every transition that can ask
+  // for it -- Header's back chevron, Compose's own back button, and Sent's
+  // "Back to home". `empty` gates the panel's *initial* view (above), but a
+  // transition is a second, independent way to reach `home`, and each of
+  // these three was reachable even when the knowledge base is empty:
+  // Compose is the initial screen there, so both its back button and, after
+  // a real submission, Sent are always live. Routing every one of them
+  // through this rather than `{ name: "home" }` directly is what stops a
+  // visitor on a zero-article workspace from ever reaching the search field
+  // Home renders -- the exact failure mode spec D7 exists to prevent.
+  const goHome = () => setView(empty ? { name: "compose" } : { name: "home" });
+
   // Results and Article are the two screens reached by going further in;
   // Home is where "further in" starts, so only those two get a way back to
   // it. Compose carries its own `showBack` (it is reachable from Home
   // directly, from either of those two, or is the whole panel on an empty
   // knowledge base), and Sent is terminal with its own way home.
-  const onBack =
-    view.name === "results" || view.name === "article"
-      ? () => setView({ name: "home" })
-      : undefined;
+  const onBack = view.name === "results" || view.name === "article" ? goHome : undefined;
 
   return (
     <div
@@ -164,12 +173,12 @@ export function Panel({
         {view.name === "compose" && (
           <Compose
             showBack={!empty}
-            onBack={() => setView({ name: "home" })}
+            onBack={goHome}
             onSent={() => setView({ name: "sent" })}
             onSubmit={onSubmit}
           />
         )}
-        {view.name === "sent" && <Sent onHome={() => setView({ name: "home" })} />}
+        {view.name === "sent" && <Sent onHome={goHome} />}
       </div>
       <Footer />
     </div>

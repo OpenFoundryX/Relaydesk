@@ -49,11 +49,21 @@ const API_URL =
  * answers `'none'` rather than leaving the header unset. An unset CSP
  * header does not refuse embedding -- it is silence, which a browser reads
  * as "no policy", the opposite of what a lookup failure should mean here.
+ *
+ * Bounded to 2 seconds. There is no platform-enforced hard timeout here --
+ * this runs behind Docker and Caddy, not an edge runtime that would cut the
+ * request off on its own -- so without one, a slow or hung API leaves every
+ * `/widget/frame` request pending indefinitely instead of failing closed
+ * promptly. 2s is generous for what is normally a sub-millisecond hop across
+ * the Docker network to a healthy API (see docker-compose.yml's `api`
+ * service), while still bounding the worst case to something a visitor
+ * notices as "slow to open" rather than "never opens".
  */
 async function embedPolicy(key: string): Promise<string> {
   try {
     const response = await fetch(
       `${API_URL}/api/widget/${encodeURIComponent(key)}/embed-policy`,
+      { signal: AbortSignal.timeout(2000) },
     );
     if (!response.ok) return "frame-ancestors 'none'";
     return await response.text();

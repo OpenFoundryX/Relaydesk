@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { middleware as MiddlewareFn } from "./middleware";
 
@@ -288,6 +288,69 @@ describe("the console article preview is behind the session", () => {
     // note about the subdomain branch returning early. What stops it is the
     // API refusing an unauthenticated read, one layer down.
     expect(response.headers.get("location")).toBeNull();
+  });
+});
+
+/**
+ * The frame's `Content-Security-Policy`, computed by calling the API's
+ * `GET /widget/{key}/embed-policy` (see embedPolicy() in middleware.ts).
+ * A fail-*open* CSP here -- no header, or one that permits embedding it
+ * should not -- would be Critical: it is the one control standing between
+ * an unconfigured or unknown widget key and being framed anywhere. So every
+ * failure mode `embedPolicy` can take is asserted here individually, with
+ * `fetch` mocked rather than hitting a real API.
+ */
+describe("the frame's Content-Security-Policy", () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it("sends the API's answer as the CSP header when the lookup succeeds", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response("frame-ancestors https://acme.example.com", { status: 200 }),
+    );
+
+    const request = new NextRequest("http://localhost:3000/widget/frame?key=rdw_abc");
+    const response = await middleware(request);
+
+    expect(response.headers.get("Content-Security-Policy")).toBe(
+      "frame-ancestors https://acme.example.com",
+    );
+  });
+
+  it("fails closed to 'none' when the request carries no key at all", async () => {
+    // No fetch mock installed: if this ever called the API, the test would
+    // throw on an unmocked network call rather than silently pass.
+    global.fetch = vi.fn();
+
+    const request = new NextRequest("http://localhost:3000/widget/frame");
+    const response = await middleware(request);
+
+    expect(response.headers.get("Content-Security-Policy")).toBe("frame-ancestors 'none'");
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("fails closed to 'none' when the API answers with a non-OK status", async () => {
+    global.fetch = vi.fn().mockResolvedValue(new Response("", { status: 500 }));
+
+    const request = new NextRequest("http://localhost:3000/widget/frame?key=rdw_abc");
+    const response = await middleware(request);
+
+    expect(response.headers.get("Content-Security-Policy")).toBe("frame-ancestors 'none'");
+  });
+
+  it("fails closed to 'none' when the fetch itself throws", async () => {
+    // Covers both a network error and the AbortSignal.timeout() rejection
+    // once the lookup runs past its bound -- both reach `embedPolicy`'s
+    // catch the same way, as a rejected fetch() promise.
+    global.fetch = vi.fn().mockRejectedValue(new Error("network error"));
+
+    const request = new NextRequest("http://localhost:3000/widget/frame?key=rdw_abc");
+    const response = await middleware(request);
+
+    expect(response.headers.get("Content-Security-Policy")).toBe("frame-ancestors 'none'");
   });
 });
 
