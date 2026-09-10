@@ -133,43 +133,41 @@ describe("middleware header sanitisation", () => {
     expect(response.headers.get(REQUEST_HEADER_PREFIX + WORKSPACE_HEADER)).toBeNull();
   });
 
-  // The submit-ticket form's server action forwards this header to the API
-  // as the submitter's address for the ticket rate limiter. Next only
-  // fills it in when it is *absent* (its own request handling does
-  // `req.headers['x-forwarded-for'] ??= socket.remoteAddress`), so a
-  // client-supplied value survives untouched unless something strips it
-  // first -- which would let a caller pick its own rate-limit bucket per
-  // request, defeating the limiter entirely. This asserts our half of that
-  // fix: the client's value must not reach the response Next.js carries
-  // downstream. (The other half -- that Next's own fallback then re-fills
-  // it from the real connection once it is absent -- is Next's internal
-  // behaviour, not something a unit test of this function can observe; it
-  // was confirmed by exercising the running dev server directly. See the
-  // Task 5 report.)
-  it("strips a client-supplied X-Forwarded-For header on a resolved workspace request", () => {
+  // The contract changed with the reverse proxy. Behind one, the socket
+  // address Next would fall back to is the *proxy's*, so stripping this
+  // header collapses every visitor in the world into a single rate-limit
+  // bucket and TICKET_IP_HOURLY_CAP then throttles all of them to five an
+  // hour -- silently, and failing closed.
+  //
+  // What replaces "strip everything" as the guarantee is that nothing but
+  // the proxy can reach this container: the web service publishes no port,
+  // and the proxy itself accepts X-Forwarded-For only from its own
+  // upstream edge. Both halves are required; see middleware.ts.
+  it("preserves a proxy-supplied X-Forwarded-For", () => {
     const request = new NextRequest("http://acme.localhost:3000/submit-ticket", {
-      headers: { host: "acme.localhost:3000", "x-forwarded-for": "6.6.6.6" },
+      headers: { host: "acme.localhost:3000", "x-forwarded-for": "203.0.113.7" },
     });
 
     const response = middleware(request);
 
-    expect(response.headers.get(OVERRIDE_HEADER)?.split(",") ?? []).not.toContain(
+    expect(response.headers.get(OVERRIDE_HEADER)?.split(",")).toContain(
       "x-forwarded-for",
     );
-    expect(response.headers.get(REQUEST_HEADER_PREFIX + "x-forwarded-for")).toBeNull();
+    expect(response.headers.get(REQUEST_HEADER_PREFIX + "x-forwarded-for")).toBe(
+      "203.0.113.7",
+    );
   });
 
-  it("strips a client-supplied X-Forwarded-For header on every other route too", () => {
-    const request = new NextRequest("http://localhost:3000/login", {
-      headers: { host: "localhost:3000", "x-forwarded-for": "6.6.6.6" },
+  it("preserves it on every other matched route too", () => {
+    const request = new NextRequest("http://localhost:3000/forgot-password", {
+      headers: { host: "localhost:3000", "x-forwarded-for": "203.0.113.9" },
     });
 
     const response = middleware(request);
 
-    expect(response.headers.get(OVERRIDE_HEADER)?.split(",") ?? []).not.toContain(
-      "x-forwarded-for",
+    expect(response.headers.get(REQUEST_HEADER_PREFIX + "x-forwarded-for")).toBe(
+      "203.0.113.9",
     );
-    expect(response.headers.get(REQUEST_HEADER_PREFIX + "x-forwarded-for")).toBeNull();
   });
 });
 
@@ -298,9 +296,10 @@ describe("matcher coverage", () => {
   // bypasses `config.matcher` entirely -- so all of them would still pass
   // if the /submit-ticket entry were deleted and the middleware simply
   // stopped running on that route. It is the route the public ticket form
-  // posts from, and the X-Forwarded-For strip above is what stops a caller
-  // choosing its own rate-limit bucket; with no matcher entry, none of that
-  // executes and the whole limiter collapses onto the Next server's address.
+  // posts from, and the middleware still has to run there to resolve the
+  // workspace slug from Host and set it on the request; with no matcher
+  // entry, that resolution never happens and the form has no workspace to
+  // submit its ticket against.
   //
   // Next compiles these patterns with path-to-regexp, which is not a
   // dependency here. These two forms are the only ones this file uses, so
@@ -348,9 +347,10 @@ describe("matcher coverage", () => {
   // The forgot-password form's server action forwards X-Forwarded-For to
   // the API's per-IP password-reset rate limiter the same way the ticket
   // form does. A Server Action POSTs to its own page URL, so without this
-  // matcher entry the strip above never runs on that route, and a caller
-  // could set its own X-Forwarded-For to pick its own rate-limit bucket per
-  // request -- see lib/api/password-reset.ts and the final-branch report.
+  // matcher entry the middleware never runs on that route at all -- and it
+  // is what sets the workspace header for the request, the same job it does
+  // on every other matched route -- see lib/api/password-reset.ts and the
+  // final-branch report.
   it("runs it on the forgot-password route", () => {
     expect(covered("/forgot-password")).toBe(true);
   });

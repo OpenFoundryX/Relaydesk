@@ -185,8 +185,9 @@ services:
       NEXT_PUBLIC_PORTAL_DOMAIN: ${PORTAL_DOMAIN:-localhost:3000}
       WEB_URL: ${WEB_URL:-http://localhost:3000}
       WATCHPACK_POLLING: "true"
-    ports:
-      - "3000:3000"
+    # No published port. The reverse proxy is the only thing that may reach
+    # this container, which is what lets middleware.ts trust the
+    # X-Forwarded-For it receives. See the comment there.
     volumes:
       - ./apps/web:/app
       - web_node_modules:/app/node_modules
