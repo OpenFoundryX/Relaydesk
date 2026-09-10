@@ -8,6 +8,19 @@
 	# caller its own rate-limit bucket and undo the point of the repair in
 	# apps/web/middleware.ts. Replacing rather than appending is what makes
 	# trusting the header downstream safe. Do not remove this line.
+	#
+	# This has no `trusted_proxies` directive, which is correct as long as
+	# Caddy is the outermost hop -- {remote_host} is then genuinely the
+	# visitor's address. It stops being correct the moment something sits
+	# in front of Caddy (a TLS terminator, a load balancer, a CDN): every
+	# visitor would then collapse onto that edge's own address here, and
+	# TICKET_IP_HOURLY_CAP throttles the whole internet to five tickets an
+	# hour, silently -- the exact defect this file's override exists to fix,
+	# recurring one hop further out. If you add such a hop, add a
+	# `trusted_proxies` directive to the `reverse_proxy` block below naming
+	# it, so Caddy derives X-Forwarded-For from a connection it actually
+	# trusts instead of believing whatever arrives (see README.md, "A
+	# reverse proxy in front of Next").
 	reverse_proxy web:3000 {
 		header_up X-Forwarded-For {remote_host}
 	}

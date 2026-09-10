@@ -239,20 +239,48 @@ addresses and check that `rate_limit_hits` has two distinct `key` values.
 
 ### A reverse proxy in front of Next
 
-`apps/web/middleware.ts` deletes the incoming `x-forwarded-for` header
-unconditionally, and relies on Next re-filling it from the socket address
-(Next does `req.headers['x-forwarded-for'] ??= socket.remoteAddress`, so it
-only fills the header in when it is absent). That is what stops a caller
-sending its own `X-Forwarded-For` and picking its own rate-limit bucket per
-request.
+This is the only place a self-hoster reads about the product's sole abuse
+control, so the actual topology, both halves of it:
 
-**It also means that if you put a TLS terminator, load balancer, or CDN in
-front of the Next server, its genuine client chain is discarded** and
-replaced with that proxy's own address — so every visitor once again shares
-one bucket, in exactly the shape described above. Next is assumed here to be
-the outermost hop. If it is not, the strip in `middleware.ts` has to become
-selective: keep the forwarded chain when the connection came from a proxy you
-trust, and take the client from it, rather than deleting it outright.
+1. **Caddy replaces, rather than appends to, `X-Forwarded-For`.** The
+   `Caddyfile`'s `reverse_proxy web:3000` block sets `header_up
+   X-Forwarded-For {remote_host}` explicitly, overriding Caddy's own default
+   of appending to whatever arrived. Without that override, a client sending
+   its own `X-Forwarded-For: 1.2.3.4` would reach Next as `"1.2.3.4, <real
+   address>"`, and `client_ip.resolve` downstream takes the first entry in
+   that list — the forged one.
+2. **`apps/web/middleware.ts` preserves the incoming `x-forwarded-for`
+   header instead of stripping it**, and forwards it as the visitor's
+   address in the server action that calls the API. This is safe only
+   because of the first half: in `docker-compose.yml` the `web` service
+   publishes no port at all, so the only thing that can ever reach it is
+   Caddy, and Caddy only ever sends it the peer address it just computed in
+   (1). Preserving the header without that isolation would let any client
+   reach `web` directly and set `X-Forwarded-For` to whatever it likes.
+
+**Both halves are required.** Either one on its own is a hole: replacing the
+header but leaving `web` reachable by anything lets a direct caller forge
+it past Caddy; isolating `web` but letting Caddy append (or otherwise fail
+to normalise) the header lets a caller's own value survive inside the chain
+Next then trusts. Together, they are what makes it safe for `middleware.ts`
+to stop deleting the header the way an earlier revision of this branch did —
+deleting it here is what let every visitor collapse onto one shared bucket
+the moment anything sat in front of Next, exactly the failure described
+below for Caddy itself.
+
+**Caddy is, in turn, assumed to be the outermost hop.** Its `Caddyfile` has
+no `trusted_proxies` directive, which is the correct default for a stack
+with nothing in front of it — but it means Caddy believes whatever
+`X-Forwarded-For` it receives before recomputing it from the peer address.
+Put a TLS terminator, load balancer, or CDN in front of Caddy without
+addressing this and every visitor's genuine address is discarded at *that*
+hop instead, collapsing onto the edge's own address — `TICKET_IP_HOURLY_CAP`
+then throttles the whole internet to five tickets an hour, silently, the
+same defect this section exists to describe, just moved up one hop. If you
+add a hop in front of Caddy, give its `reverse_proxy` block a
+`trusted_proxies` directive naming that upstream edge, so Caddy derives
+`X-Forwarded-For` from a connection it actually trusts rather than
+believing one handed to it.
 
 ## The API
 
