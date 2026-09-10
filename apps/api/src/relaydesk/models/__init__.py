@@ -38,6 +38,7 @@ from relaydesk.models.session import Session
 from relaydesk.models.snippet import Snippet
 from relaydesk.models.user import User, UserIdentity
 from relaydesk.models.webhook import Webhook, WebhookMethod
+from relaydesk.models.widget_key import WidgetKey
 from relaydesk.models.workspace import Workspace
 
 __all__ = [
@@ -84,5 +85,6 @@ __all__ = [
     "UserIdentity",
     "Webhook",
     "WebhookMethod",
+    "WidgetKey",
     "Workspace",
 ]
