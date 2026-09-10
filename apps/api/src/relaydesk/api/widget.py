@@ -46,6 +46,7 @@ async def bootstrap(key: str, session: DbSession) -> WidgetBootstrapOut:
     """
     widget_key = await widget_keys.resolve(session, key)
     await widget_keys.touch(session, widget_key)
+    await session.commit()
     workspace = widget_key.workspace
     entries = await kb_public.searchable(session, workspace.id)
 
