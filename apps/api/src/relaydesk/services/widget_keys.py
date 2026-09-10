@@ -1,5 +1,6 @@
 """Minting and resolving the credential a widget embed carries."""
 
+import re
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -15,6 +16,77 @@ from relaydesk.services import widget_origins
 # public, so this is about enumeration, not secrecy.
 _KEY_BYTES = 16
 _TOUCH_EVERY = timedelta(minutes=1)
+
+# Branding settings (spec D10, un-deferred). Every key here is optional; an
+# absent key means today's unbranded behaviour, unchanged. Kept as a plain
+# dict on the model rather than columns because none of it is queried and
+# all of it is presentational -- see the model's docstring.
+_SETTINGS_KEYS = {"name", "greeting", "accentColour", "position", "iconUrl"}
+_HEX_COLOUR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+_POSITIONS = {"left", "right"}
+_NAME_MAX = 60
+_GREETING_MAX = 200
+_ICON_URL_MAX = 2048
+
+
+def _clean_string(raw: object, field: str, *, max_length: int) -> str:
+    if not isinstance(raw, str) or not raw.strip():
+        raise Invalid(f"{field} must be a non-empty string.")
+    cleaned = raw.strip()
+    if len(cleaned) > max_length:
+        raise Invalid(f"{field} must be at most {max_length} characters.")
+    return cleaned
+
+
+def _clean_settings(raw: dict | None) -> dict:
+    """Validate the per-key branding blob.
+
+    This is admin-supplied input that ends up in an inline style on a
+    stranger's page (``accentColour``, D5's iframe) or in the loader's
+    launcher (``position``, D6) -- an unvalidated value here is an
+    injection surface, not just a cosmetic bug, so every field is
+    constrained rather than passed through.
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise Invalid("Settings must be an object.")
+
+    unknown = sorted(set(raw) - _SETTINGS_KEYS)
+    if unknown:
+        raise Invalid(f"Unknown setting: {unknown[0]!r}.")
+
+    cleaned: dict = {}
+
+    if "name" in raw:
+        cleaned["name"] = _clean_string(
+            raw["name"], "Display name", max_length=_NAME_MAX
+        )
+
+    if "greeting" in raw:
+        cleaned["greeting"] = _clean_string(
+            raw["greeting"], "Greeting", max_length=_GREETING_MAX
+        )
+
+    if "accentColour" in raw:
+        accent = raw["accentColour"]
+        if not isinstance(accent, str) or not _HEX_COLOUR_RE.match(accent):
+            raise Invalid("Accent colour must be a hex colour, like #4F46E5.")
+        cleaned["accentColour"] = accent
+
+    if "position" in raw:
+        position = raw["position"]
+        if position not in _POSITIONS:
+            raise Invalid("Position must be 'left' or 'right'.")
+        cleaned["position"] = position
+
+    if "iconUrl" in raw:
+        icon_url = _clean_string(raw["iconUrl"], "Icon URL", max_length=_ICON_URL_MAX)
+        if not (icon_url.startswith("https://") or icon_url.startswith("http://")):
+            raise Invalid("Icon URL must be an http(s) URL.")
+        cleaned["iconUrl"] = icon_url
+
+    return cleaned
 
 
 def _new_key() -> str:
@@ -55,7 +127,7 @@ async def create(
         name=label,
         key=_new_key(),
         allowed_origins=_clean_origins(allowed_origins),
-        settings=settings or {},
+        settings=_clean_settings(settings),
         created_by_user_id=created_by_user_id,
     )
     session.add(key)
@@ -106,7 +178,7 @@ async def update(
     if allowed_origins is not None:
         key.allowed_origins = _clean_origins(allowed_origins)
     if settings is not None:
-        key.settings = settings
+        key.settings = _clean_settings(settings)
     if active is not None:
         key.active = active
     await session.flush()

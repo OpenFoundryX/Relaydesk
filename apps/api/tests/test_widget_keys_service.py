@@ -80,3 +80,135 @@ async def test_touch_writes_at_most_once_a_minute(db_session):
     created.last_seen_at = datetime.now(UTC) - timedelta(minutes=2)
     await widget_keys.touch(db_session, created)
     assert created.last_seen_at != first
+
+
+# Branding settings (spec D10, un-deferred). Every field is optional and
+# absent means today's unbranded behaviour, unchanged -- these tests cover
+# what "clean" means for each field, and the two rejections the design brief
+# calls out by name: a bad colour and a bad position.
+class TestSettingsValidation:
+    async def test_create_accepts_a_full_valid_settings_blob(self, db_session):
+        workspace = await make_workspace(db_session)
+        created = await widget_keys.create(
+            db_session,
+            workspace.id,
+            "Site",
+            settings={
+                "name": "Acme Support",
+                "greeting": "Hi! Need a hand?",
+                "accentColour": "#4F46E5",
+                "position": "left",
+                "iconUrl": "https://acme.com/icon.png",
+            },
+        )
+
+        assert created.settings == {
+            "name": "Acme Support",
+            "greeting": "Hi! Need a hand?",
+            "accentColour": "#4F46E5",
+            "position": "left",
+            "iconUrl": "https://acme.com/icon.png",
+        }
+
+    async def test_create_defaults_settings_to_an_empty_object(self, db_session):
+        workspace = await make_workspace(db_session)
+        created = await widget_keys.create(db_session, workspace.id, "Site")
+
+        assert created.settings == {}
+
+    async def test_create_accepts_a_3_hex_colour(self, db_session):
+        workspace = await make_workspace(db_session)
+        created = await widget_keys.create(
+            db_session, workspace.id, "Site", settings={"accentColour": "#fff"}
+        )
+
+        assert created.settings["accentColour"] == "#fff"
+
+    async def test_create_refuses_a_non_hex_colour(self, db_session):
+        """The colour lands directly in an inline style on a stranger's
+        page -- an unvalidated value there is an injection surface."""
+        workspace = await make_workspace(db_session)
+        with pytest.raises(Invalid):
+            await widget_keys.create(
+                db_session,
+                workspace.id,
+                "Site",
+                settings={"accentColour": "red; background:url(javascript:alert(1))"},
+            )
+
+    async def test_create_refuses_an_unknown_position(self, db_session):
+        workspace = await make_workspace(db_session)
+        with pytest.raises(Invalid):
+            await widget_keys.create(
+                db_session, workspace.id, "Site", settings={"position": "top"}
+            )
+
+    async def test_create_refuses_an_oversized_name(self, db_session):
+        workspace = await make_workspace(db_session)
+        with pytest.raises(Invalid):
+            await widget_keys.create(
+                db_session, workspace.id, "Site", settings={"name": "x" * 200}
+            )
+
+    async def test_create_refuses_an_oversized_greeting(self, db_session):
+        workspace = await make_workspace(db_session)
+        with pytest.raises(Invalid):
+            await widget_keys.create(
+                db_session, workspace.id, "Site", settings={"greeting": "x" * 500}
+            )
+
+    async def test_create_refuses_an_unknown_setting_key(self, db_session):
+        workspace = await make_workspace(db_session)
+        with pytest.raises(Invalid):
+            await widget_keys.create(
+                db_session, workspace.id, "Site", settings={"unknownField": "x"}
+            )
+
+    async def test_create_refuses_a_non_string_name(self, db_session):
+        workspace = await make_workspace(db_session)
+        with pytest.raises(Invalid):
+            await widget_keys.create(
+                db_session, workspace.id, "Site", settings={"name": 123}
+            )
+
+    async def test_create_refuses_a_javascript_icon_url(self, db_session):
+        workspace = await make_workspace(db_session)
+        with pytest.raises(Invalid):
+            await widget_keys.create(
+                db_session,
+                workspace.id,
+                "Site",
+                settings={"iconUrl": "javascript:alert(1)"},
+            )
+
+    async def test_update_validates_settings_the_same_way(self, db_session):
+        workspace = await make_workspace(db_session)
+        created = await widget_keys.create(db_session, workspace.id, "Site")
+
+        with pytest.raises(Invalid):
+            await widget_keys.update(
+                db_session,
+                workspace.id,
+                created.id,
+                settings={"position": "up"},
+            )
+
+    async def test_update_replaces_settings_wholesale(self, db_session):
+        workspace = await make_workspace(db_session)
+        created = await widget_keys.create(
+            db_session,
+            workspace.id,
+            "Site",
+            settings={"name": "Old", "position": "left"},
+        )
+
+        updated = await widget_keys.update(
+            db_session,
+            workspace.id,
+            created.id,
+            settings={"greeting": "New greeting"},
+        )
+
+        # A PATCH's settings replace the blob, the same way allowed_origins
+        # does -- there is no per-field merge.
+        assert updated.settings == {"greeting": "New greeting"}

@@ -153,6 +153,70 @@ async def test_patch_refuses_another_workspaces_embed(client, db_session) -> Non
     assert response.status_code == 404
 
 
+async def test_settings_round_trip_through_the_api(client, db_session) -> None:
+    """The console round-trip this slice un-defers (spec D10): create with a
+    branding blob, and read it back exactly on both the list and the
+    subsequent patch response."""
+    workspace = await make_workspace(db_session)
+    headers = await admin_headers(client, db_session, workspace)
+
+    created = await client.post(
+        "/api/widget-keys",
+        json={
+            "name": "Marketing site",
+            "settings": {
+                "name": "Acme Support",
+                "greeting": "Hi! Need a hand?",
+                "accentColour": "#4F46E5",
+                "position": "left",
+            },
+        },
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+    key_id = created.json()["id"]
+    assert created.json()["settings"] == {
+        "name": "Acme Support",
+        "greeting": "Hi! Need a hand?",
+        "accentColour": "#4F46E5",
+        "position": "left",
+    }
+
+    patched = await client.patch(
+        f"/api/widget-keys/{key_id}",
+        json={"settings": {"position": "right"}},
+        headers=headers,
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["settings"] == {"position": "right"}
+
+
+async def test_bad_accent_colour_is_rejected(client, db_session) -> None:
+    """The colour lands in an inline style on a stranger's page (D6) --
+    unvalidated input there is an injection surface, not a display bug."""
+    workspace = await make_workspace(db_session)
+    headers = await admin_headers(client, db_session, workspace)
+
+    response = await client.post(
+        "/api/widget-keys",
+        json={"name": "Site", "settings": {"accentColour": "not-a-colour"}},
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+
+
+async def test_bad_position_is_rejected(client, db_session) -> None:
+    workspace = await make_workspace(db_session)
+    headers = await admin_headers(client, db_session, workspace)
+
+    response = await client.post(
+        "/api/widget-keys",
+        json={"name": "Site", "settings": {"position": "top"}},
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+
+
 async def test_delete_removes_the_embed(client, db_session) -> None:
     workspace = await make_workspace(db_session)
     headers = await admin_headers(client, db_session, workspace)
