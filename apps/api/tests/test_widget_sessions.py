@@ -66,13 +66,17 @@ async def test_an_unknown_kind_is_refused(db_session):
         await widget_sessions.record(db_session, key, uuid.uuid4(), "purchased")
 
 
-async def test_the_route_commits_the_flag(client, db_session):
+async def test_the_route_commits_the_flag(client, db_session, commit_spy):
     """A route test, not just a service test: this slice already shipped an
-    uncommitted-flush defect twice, and only a request through `client`
-    exercises the same session lifecycle a real visitor's request does."""
+    uncommitted-flush defect twice. The row being visible here does not by
+    itself prove that -- the `client` fixture hands the route this exact
+    `db_session`, so a bare flush and a real commit look identical to every
+    assertion in this file except this one, which reads it off `commit_spy`
+    instead."""
     workspace = await make_workspace(db_session)
     key = await widget_keys.create(db_session, workspace.id, "Site")
     await db_session.commit()
+    commit_spy.clear()  # That setup commit isn't the one under test.
     session_id = uuid.uuid4()
 
     response = await client.post(
@@ -80,6 +84,7 @@ async def test_the_route_commits_the_flag(client, db_session):
     )
 
     assert response.status_code == 204
+    assert len(commit_spy) == 1
     row = await db_session.scalar(
         sa.select(WidgetSession).where(WidgetSession.id == session_id)
     )

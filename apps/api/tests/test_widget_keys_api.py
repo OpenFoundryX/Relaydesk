@@ -39,6 +39,26 @@ async def test_admin_creates_and_lists(client, db_session) -> None:
     assert listed.json()[0]["key"] == body["key"]
 
 
+async def test_create_really_commits(client, db_session, commit_spy) -> None:
+    """`create_route` must commit, not just flush -- see widget_keys.py.
+
+    `commit_spy` is the only thing in this file that can tell the two
+    apart: `client` hands the route this exact `db_session`, so a bare
+    flush is already visible to every other assertion here, committed or
+    not.
+    """
+    workspace = await make_workspace(db_session)
+    headers = await admin_headers(client, db_session, workspace)
+    commit_spy.clear()  # admin_headers' own sign-in commits too.
+
+    response = await client.post(
+        "/api/widget-keys", json={"name": "Site"}, headers=headers
+    )
+
+    assert response.status_code == 201, response.text
+    assert len(commit_spy) >= 1
+
+
 async def test_agent_is_refused(client, db_session) -> None:
     workspace = await make_workspace(db_session)
     headers = await agent_headers(client, db_session, workspace)

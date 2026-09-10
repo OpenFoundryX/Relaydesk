@@ -100,6 +100,32 @@ async def client(db_session: AsyncSession) -> AsyncIterator[AsyncClient]:
 
 
 @pytest.fixture
+def commit_spy(db_session: AsyncSession, monkeypatch) -> list[None]:
+    """Counts real calls to ``db_session.commit()``.
+
+    The ``client`` fixture overrides ``get_session`` to hand every route the
+    same ``db_session`` object the test asserts against, so a route that
+    only ``flush()``es is otherwise indistinguishable from one that
+    ``commit()``s -- anything pending is visible to the test either way,
+    committed or not, because it is the same session and the same
+    transaction. Wrapping ``commit`` here, on that shared object, is the one
+    place a test can tell a flush and a commit apart.
+
+    Returns the list that receipts get appended to, so a test can assert
+    ``len(spy) == 1`` (or more precisely) rather than only "at least once".
+    """
+    calls: list[None] = []
+    original = db_session.commit
+
+    async def spy() -> None:
+        calls.append(None)
+        await original()
+
+    monkeypatch.setattr(db_session, "commit", spy)
+    return calls
+
+
+@pytest.fixture
 def outbox(monkeypatch) -> list[dict]:
     """Captures system emails without touching the broker.
 
