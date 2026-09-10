@@ -202,6 +202,43 @@ describe("loader behaviour", () => {
     expect(style!.textContent).toContain("height:100%");
   });
 
+  it("uses data-accent for the launcher's background colour, when given", () => {
+    // Read from the loader's own attributes, not the bootstrap call --
+    // reading it from the bootstrap would add a network request before
+    // the launcher's first paint, which is precisely the byte budget this
+    // loader exists to protect (spec D6).
+    loadWidget({ "data-key": "rdw_test", "data-accent": "#4F46E5" });
+
+    const launcher = document.querySelector<HTMLButtonElement>("button")!;
+    expect(launcher.style.background).toContain("rgb(79, 70, 229)");
+  });
+
+  it("falls back to the default launcher colour when data-accent is absent", () => {
+    loadWidget({ "data-key": "rdw_test" });
+
+    const launcher = document.querySelector<HTMLButtonElement>("button")!;
+    expect(launcher.style.background).toContain("rgb(24, 24, 27)");
+  });
+
+  it("draws the launcher and panel on the left when data-position is left", () => {
+    loadWidget({ "data-key": "rdw_test", "data-position": "left" });
+
+    const launcher = document.querySelector<HTMLButtonElement>("button")!;
+    expect(launcher.style.left).toBe("24px");
+    expect(launcher.style.right).toBe("");
+
+    const style = document.head.querySelector("style")!;
+    expect(style.textContent).toContain("#rdw{position:fixed;left:24px");
+  });
+
+  it("defaults to the right when data-position is absent or not 'left'", () => {
+    loadWidget({ "data-key": "rdw_test", "data-position": "top" });
+
+    const launcher = document.querySelector<HTMLButtonElement>("button")!;
+    expect(launcher.style.right).toBe("24px");
+    expect(launcher.style.left).toBe("");
+  });
+
   it("does not let a keyless tag block a later, correctly configured one", () => {
     // Regression: the re-entry guard must be claimed only once a key is
     // confirmed. A customer's mistyped or missing data-key on a first tag

@@ -10,7 +10,11 @@ vi.mock("@/app/(console)/settings/widget/actions", () => ({
   updateWidgetKeyAction: vi.fn(),
 }));
 
-import { parseOrigins } from "@/components/settings/widget-key-dialog";
+import {
+  buildSettingsInput,
+  isValidAccentColour,
+  parseOrigins,
+} from "@/components/settings/widget-key-dialog";
 
 describe("parseOrigins", () => {
   it("splits one origin per line", () => {
@@ -49,5 +53,54 @@ describe("parseOrigins", () => {
   it("returns an empty list for blank input", () => {
     expect(parseOrigins("")).toEqual([]);
     expect(parseOrigins("   \n  \n")).toEqual([]);
+  });
+});
+
+describe("buildSettingsInput", () => {
+  const blank = { name: "", greeting: "", accentColour: "", position: "right" as const };
+
+  it("omits every field left blank -- absent means today's behaviour", () => {
+    expect(buildSettingsInput(blank)).toEqual({});
+  });
+
+  it("trims and includes only the fields given", () => {
+    expect(
+      buildSettingsInput({ ...blank, name: "  Acme Support  ", greeting: " Hi! " }),
+    ).toEqual({ name: "Acme Support", greeting: "Hi!" });
+  });
+
+  it("includes the accent colour when set", () => {
+    expect(buildSettingsInput({ ...blank, accentColour: "#4F46E5" })).toEqual({
+      accentColour: "#4F46E5",
+    });
+  });
+
+  it("omits position when it is 'right', the default", () => {
+    expect(buildSettingsInput({ ...blank, position: "right" })).toEqual({});
+  });
+
+  it("includes position only when it is 'left'", () => {
+    expect(buildSettingsInput({ ...blank, position: "left" })).toEqual({
+      position: "left",
+    });
+  });
+});
+
+describe("isValidAccentColour", () => {
+  it("accepts an empty value -- accent colour is optional", () => {
+    expect(isValidAccentColour("")).toBe(true);
+    expect(isValidAccentColour("   ")).toBe(true);
+  });
+
+  it("accepts 3- and 6-digit hex colours", () => {
+    expect(isValidAccentColour("#fff")).toBe(true);
+    expect(isValidAccentColour("#4F46E5")).toBe(true);
+  });
+
+  it("rejects a non-hex value", () => {
+    // The colour lands in an inline style on a stranger's page (D5/D6) --
+    // an unvalidated value there is an injection surface.
+    expect(isValidAccentColour("red")).toBe(false);
+    expect(isValidAccentColour("javascript:alert(1)")).toBe(false);
   });
 });

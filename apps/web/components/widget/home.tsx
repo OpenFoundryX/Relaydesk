@@ -16,9 +16,16 @@ import { WidgetButton } from "@/components/widget/button";
 export function Home({
   onSearch,
   onCompose,
+  greeting,
 }: {
   onSearch: (query: string) => void;
   onCompose: () => void;
+  /**
+   * The embed's configured `settings.greeting` (spec D10, un-deferred).
+   * Absent whenever the admin never set one -- falls back to exactly the
+   * copy this screen has always shown.
+   */
+  greeting?: string;
 }) {
   const [typed, setTyped] = useState("");
 
@@ -31,7 +38,7 @@ export function Home({
   return (
     <div className="flex flex-1 flex-col gap-6 px-4 py-6">
       <h1 className="text-[17px] font-semibold tracking-tight text-ink-900 dark:text-white">
-        Hi there. How can we help?
+        {greeting || "Hi there. How can we help?"}
       </h1>
 
       <form role="search" onSubmit={submit} className="relative">

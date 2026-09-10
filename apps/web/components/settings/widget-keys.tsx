@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 import { SectionEmpty, SettingSection } from "@/components/console/setting-section";
-import type { WidgetKey } from "@/lib/api/widget-keys";
+import type { WidgetKey, WidgetKeySettings } from "@/lib/api/widget-keys";
 
 // The console's own configured URL, not a fixed relaydesk.dev domain --
 // `lib/api/portal.ts` establishes the same WEB_URL ?? NEXT_PUBLIC_WEB_URL
@@ -12,8 +12,19 @@ import type { WidgetKey } from "@/lib/api/widget-keys";
 const WEB_URL =
   process.env.WEB_URL ?? process.env.NEXT_PUBLIC_WEB_URL ?? "http://localhost:3000";
 
-function snippet(key: string): string {
-  return `<script async src="${WEB_URL}/widget.js" data-key="${key}"></script>`;
+/**
+ * `data-accent` and `data-position` are read by the loader before it draws
+ * the launcher (spec D6/D10) -- omitted entirely when unconfigured, so an
+ * embed with no branding gets exactly today's `<script>` tag, unchanged.
+ * `position` is included only when it is `"left"`: `"right"` is the
+ * loader's own fallback, so leaving it out there is what an absent setting
+ * already means.
+ */
+function snippet(key: string, settings: WidgetKeySettings): string {
+  const attrs = [`data-key="${key}"`];
+  if (settings.accentColour) attrs.push(`data-accent="${settings.accentColour}"`);
+  if (settings.position === "left") attrs.push(`data-position="left"`);
+  return `<script async src="${WEB_URL}/widget.js" ${attrs.join(" ")}></script>`;
 }
 
 /**
@@ -33,9 +44,11 @@ function snippet(key: string): string {
  * than permits -- a finished-looking snippet with nothing listed here will
  * not load anywhere, and this is the only place that gets explained.
  *
- * Deliberately does not render `settings` (launcher colour, position,
- * greeting) -- that editor is out of scope for this slice even though the
- * API accepts and stores the field.
+ * The snippet reflects `settings` (spec D10): `data-accent` and
+ * `data-position` are added when configured, because the loader (D6) reads
+ * the launcher's colour and corner from the tag itself, before the panel's
+ * first open -- see `public/widget.js`. Editing name, greeting and the rest
+ * happens in `WidgetKeyDialog`; this component only ever renders the result.
  */
 export function WidgetKeys({
   keys,
@@ -57,12 +70,18 @@ export function WidgetKeys({
           action={renderActions?.(embed)}
         >
           <pre className="overflow-x-auto rounded-md border border-ink-200 bg-ink-50 p-3 text-[13px] text-ink-700">
-            {snippet(embed.key)}
+            {snippet(embed.key, embed.settings)}
           </pre>
           <p className="mt-2 text-[13px] text-ink-500">
             This key is public. It appears in the source of every page that
             embeds the widget, so it is safe to paste there -- unlike an API
             key, which must never be.
+          </p>
+          <p className="mt-2 text-[13px] text-ink-500">
+            The launcher&apos;s colour and position live in this snippet, not
+            in the panel it opens. Changing either one under Branding takes
+            effect only once you re-paste the updated snippet wherever this
+            embed is installed.
           </p>
 
           {embed.allowedOrigins.length === 0 ? (

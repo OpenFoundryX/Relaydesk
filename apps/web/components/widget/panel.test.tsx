@@ -34,6 +34,43 @@ describe("Panel", () => {
     expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("");
   });
 
+  it("shows the configured name in the header instead of the workspace name, when set", () => {
+    // spec D10, un-deferred: settings.name replaces the workspace name in
+    // the header -- the whole point of a per-key display name.
+    render(
+      <Panel
+        {...workspace}
+        settings={{ name: "Acme Support" }}
+        articleCount={12}
+      />,
+    );
+    expect(screen.getByText("Acme Support")).toBeTruthy();
+    expect(screen.queryByText("Beacon")).toBeNull();
+  });
+
+  it("falls back to the workspace name when no settings.name is configured", () => {
+    // Absent means today's behaviour, unchanged.
+    render(<Panel {...workspace} articleCount={12} />);
+    expect(screen.getByText("Beacon")).toBeTruthy();
+  });
+
+  it("shows the configured greeting on Home instead of the default copy", () => {
+    render(
+      <Panel
+        {...workspace}
+        settings={{ greeting: "Hi! Need a hand?" }}
+        articleCount={12}
+      />,
+    );
+    expect(screen.getByText("Hi! Need a hand?")).toBeTruthy();
+    expect(screen.queryByText("Hi there. How can we help?")).toBeNull();
+  });
+
+  it("falls back to the default greeting when none is configured", () => {
+    render(<Panel {...workspace} articleCount={12} />);
+    expect(screen.getByText("Hi there. How can we help?")).toBeTruthy();
+  });
+
   it("still has nowhere to search after Sent sends an empty-knowledge-base visitor home", async () => {
     // Regression for a Critical finding: `empty` gated only the panel's
     // *initial* view, not the "go home" transition every one of Header's

@@ -12,6 +12,21 @@ import { Sent } from "@/components/widget/sent";
 import type { SubmitWidgetTicketResult } from "@/app/(widget)/widget/frame/actions";
 import type { WidgetSessionEventKind } from "@/lib/api/widget";
 
+/**
+ * The per-key branding blob (spec D10, un-deferred). Every field is
+ * optional and validated server-side (`services/widget_keys.py`); an
+ * absent field means today's unbranded behaviour, unchanged. `iconUrl` is
+ * validated on write but deliberately not rendered here yet -- see this
+ * slice's report for why.
+ */
+type WidgetBrandingSettings = {
+  name?: string;
+  greeting?: string;
+  accentColour?: string;
+  position?: "left" | "right";
+  iconUrl?: string;
+};
+
 export type PanelProps = {
   workspaceName: string;
   monogram: string;
@@ -70,12 +85,23 @@ type View =
 export function Panel({
   workspaceName,
   monogram,
+  settings,
   articleCount,
   widgetKey,
   email,
   name,
   onSubmit,
 }: PanelProps) {
+  // Cast rather than re-validated here: the value only ever reaches this
+  // component already cleaned by `services/widget_keys.py`'s
+  // `_clean_settings`, which is the one place these fields are constrained.
+  const branding = settings as WidgetBrandingSettings;
+  // The configured display name replaces the workspace name in the header
+  // (spec D10, un-deferred) -- absent falls back to exactly what rendered
+  // before this existed.
+  const displayName =
+    branding.name && branding.name.trim() !== "" ? branding.name : workspaceName;
+
   // The day-one state for every new customer (spec D7). Deciding it from
   // articleCount rather than from a failed search is what stops a new
   // workspace ever rendering a search box over nothing.
@@ -186,14 +212,15 @@ export function Panel({
       ref={containerRef}
       role="dialog"
       aria-modal="true"
-      aria-label={`${workspaceName} support`}
+      aria-label={`${displayName} support`}
       tabIndex={-1}
       className="motion-reduce:transition-none flex h-screen flex-col bg-white text-ink-900 dark:bg-ink-900 dark:text-ink-50"
     >
-      <Header name={workspaceName} monogram={monogram} onBack={onBack} onClose={close} />
+      <Header name={displayName} monogram={monogram} onBack={onBack} onClose={close} />
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         {view.name === "home" && (
           <Home
+            greeting={branding.greeting}
             onSearch={(query) => {
               recordEvent("searched");
               setView({ name: "results", query });

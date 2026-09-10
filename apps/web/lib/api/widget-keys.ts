@@ -5,6 +5,25 @@ import { cache } from "react";
 import { apiFetch } from "./client";
 
 /**
+ * Per-key branding (spec D10). Every field is optional; an absent field
+ * means today's unbranded behaviour, unchanged. Validated server-side in
+ * `services/widget_keys.py`, which is the one place that matters -- this
+ * type only shapes what the console reads and writes.
+ *
+ * `iconUrl` is accepted and validated by the API but not exposed here: an
+ * icon is not rendered anywhere yet (see this slice's report), and a
+ * console field for a setting nothing shows would be a silent trap for an
+ * admin who sets it and never sees it appear.
+ */
+export interface WidgetKeySettings {
+  name?: string;
+  greeting?: string;
+  accentColour?: string;
+  position?: "left" | "right";
+  iconUrl?: string;
+}
+
+/**
  * A console-managed widget embed (spec D1/D4). Admin-only, reached under
  * `/widget-keys` -- not to be confused with `lib/api/widget.ts`, the
  * anonymous door the embedded widget itself calls by key.
@@ -22,9 +41,8 @@ export interface WidgetKey {
    */
   key: string;
   allowedOrigins: string[];
-  /** Launcher colour, position, greeting and the like. Deliberately not
-   * rendered anywhere in this slice -- see the widget settings page brief. */
-  settings: Record<string, unknown>;
+  /** Launcher colour, position, greeting and the like (spec D10). */
+  settings: WidgetKeySettings;
   active: boolean;
   lastSeenAt: string | null;
   createdAt: string;
@@ -33,6 +51,7 @@ export interface WidgetKey {
 export interface WidgetKeyInput {
   name: string;
   allowedOrigins?: string[];
+  settings?: WidgetKeySettings;
 }
 
 export const getWidgetKeys = cache(async (): Promise<WidgetKey[]> => {

@@ -26,4 +26,46 @@ describe("WidgetKeys", () => {
     render(<WidgetKeys keys={[{ ...key, allowedOrigins: ["https://acme.com"] }]} />);
     expect(screen.getByText(/data-key="rdw_abc"/)).toBeTruthy();
   });
+
+  it("omits data-accent and data-position from the snippet when no branding is configured", () => {
+    render(<WidgetKeys keys={[{ ...key, allowedOrigins: ["https://acme.com"] }]} />);
+    expect(screen.queryByText(/data-accent/)).toBeNull();
+    expect(screen.queryByText(/data-position/)).toBeNull();
+  });
+
+  it("includes data-accent in the snippet when an accent colour is configured", () => {
+    render(
+      <WidgetKeys
+        keys={[
+          {
+            ...key,
+            allowedOrigins: ["https://acme.com"],
+            settings: { accentColour: "#4F46E5" },
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByText(/data-accent="#4F46E5"/)).toBeTruthy();
+  });
+
+  it("includes data-position in the snippet only when the position is left", () => {
+    render(
+      <WidgetKeys
+        keys={[
+          {
+            ...key,
+            allowedOrigins: ["https://acme.com"],
+            settings: { position: "left" },
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByText(/data-position="left"/)).toBeTruthy();
+  });
+
+  it("says plainly that a colour or position change needs a re-paste", () => {
+    // A real cost to the admin, and must not be a surprise.
+    render(<WidgetKeys keys={[{ ...key, allowedOrigins: ["https://acme.com"] }]} />);
+    expect(screen.getByText(/re-paste/i)).toBeTruthy();
+  });
 });

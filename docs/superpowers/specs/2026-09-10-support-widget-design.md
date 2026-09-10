@@ -246,14 +246,25 @@ hang off the `WidgetKey`. A workspace running a marketing site and a
 logged-in app can then embed two keys with different settings and revoke one
 without touching the other.
 
-*Deferred, not shipped, as of this slice.* The `settings` column exists and
-`POST`/`PATCH /api/widget-keys` accept and store it, but nothing renders it:
-the loader hard-codes the launcher's colour and position, the panel never
-reads its own `settings` prop, and the console has no editor for it. The
-column is kept anyway rather than dropped, because storing an unread JSONB
-blob costs nothing today and its absence would be a migration later, once
-an editor exists, on a table a live production install by then owns rows
-in.
+*Un-deferred in a later slice.* `name`, `greeting`, `accentColour` and
+`position` are validated in `services/widget_keys.py` (a hex colour, a
+`left`/`right` literal, capped string lengths -- this is admin input that
+ends up in an inline style and in the loader's own attributes, on a
+stranger's page), editable from a Branding section in the console's
+`WidgetKeyDialog`, and rendered: the configured name and greeting replace
+the workspace name and default copy in the panel (`components/widget/`),
+and `data-accent`/`data-position` on the generated `<script>` tag replace
+the loader's hard-coded launcher colour and corner (`public/widget.js`) --
+read from the tag itself, not the bootstrap call, so the launcher's first
+paint still costs no request (D6). The console says plainly that changing
+either one means re-pasting the snippet.
+
+`iconUrl` is validated the same way but not rendered anywhere yet: reusing
+the knowledge-base image pipeline (`services/blobs.py`, `KbImage`) would
+need a new upload endpoint, a nullable `article_id` or a sibling model, and
+a new serving route, which is more than this pass added -- see that
+slice's report. Whether the message form itself can be disabled per key
+remains deferred, unchanged.
 
 ## 4. Schema
 
