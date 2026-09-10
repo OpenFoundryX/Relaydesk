@@ -56,10 +56,10 @@ front-end, and nothing else to the domain. The services underneath —
 
 Three things constrain the design rather than merely enabling it.
 
-**The search index endpoint already exists** because the portal's
-`/help/search/index` route needs it. A widget that fetches it once and
-searches locally makes no request per keystroke, which removes search
-entirely from the rate-limit surface (D8).
+**The search endpoints already exist** because the portal needs them —
+both a query endpoint and a prebuilt index the help site scores in the
+browser. The widget uses the query endpoint and leaves the index alone; D8
+records why the reverse would cost more than it saves here.
 
 **`Contact` is `UniqueConstraint(workspace_id, email)`.** Email is identity.
 A submission with a new address creates a contact; a repeat submission
