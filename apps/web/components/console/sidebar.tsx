@@ -76,6 +76,12 @@ const settingsItems: NavItem[] = [
     adminOnly: true,
   },
   {
+    label: "Widget",
+    href: "/settings/widget",
+    icon: CircleDot,
+    adminOnly: true,
+  },
+  {
     label: "MCP servers",
     href: "/settings/mcp-servers",
     icon: CircleDot,
