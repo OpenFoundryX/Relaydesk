@@ -72,7 +72,10 @@ async def test_the_route_commits_the_flag(client, db_session, commit_spy):
     itself prove that -- the `client` fixture hands the route this exact
     `db_session`, so a bare flush and a real commit look identical to every
     assertion in this file except this one, which reads it off `commit_spy`
-    instead."""
+    instead. Within-cap (successful) path requires exactly 2 commits: one from
+    `ratelimit.check` (see its docstring: 'This commits') before the route's
+    own `await session.commit()` at the end. A count of exactly 2 is what
+    distinguishes a route that commits from one that merely flushes."""
     workspace = await make_workspace(db_session)
     key = await widget_keys.create(db_session, workspace.id, "Site")
     await db_session.commit()
@@ -84,10 +87,10 @@ async def test_the_route_commits_the_flag(client, db_session, commit_spy):
     )
 
     assert response.status_code == 204
-    # >= rather than ==: the route now also runs through ratelimit.check,
-    # which commits on its own (see that function's docstring) before the
-    # route's own commit below it.
-    assert len(commit_spy) >= 1
+    # Exactly 2 commits expected: one from ratelimit.check, one from the route.
+    # This assertion would fail if the route's trailing `await session.commit()`
+    # is removed, ensuring the WidgetSession row persists to the database.
+    assert len(commit_spy) == 2
     row = await db_session.scalar(
         sa.select(WidgetSession).where(WidgetSession.id == session_id)
     )
