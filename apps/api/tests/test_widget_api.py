@@ -36,3 +36,18 @@ async def test_bootstrap_records_that_the_embed_is_installed(client, db_session)
     await client.get(f"/api/widget/{key.key}")
     await db_session.refresh(key)
     assert key.last_seen_at is not None
+
+
+async def test_embed_policy_refuses_when_no_origins_are_set(client, db_session):
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
+    await db_session.commit()
+
+    response = await client.get(f"/api/widget/{key.key}/embed-policy")
+    assert response.text == "frame-ancestors 'none'"
+
+
+async def test_embed_policy_answers_none_for_an_unknown_key(client, db_session):
+    response = await client.get("/api/widget/rdw_" + "0" * 32 + "/embed-policy")
+    assert response.status_code == 200
+    assert response.text == "frame-ancestors 'none'"

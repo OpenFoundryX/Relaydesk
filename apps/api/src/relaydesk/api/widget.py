@@ -19,13 +19,14 @@ from datetime import timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi.responses import PlainTextResponse
 from pydantic import EmailStr
 
 from relaydesk.api import public
 from relaydesk.api.deps import DbSession
 from relaydesk.config import get_settings
 from relaydesk.email_parse.normalize import ParsedAttachment
-from relaydesk.errors import Invalid, TooManyRequests
+from relaydesk.errors import Invalid, NotFound, TooManyRequests
 from relaydesk.schemas.kb import (
     PublicArticleSummary,
     PublicCollectionOut,
@@ -34,7 +35,14 @@ from relaydesk.schemas.kb import (
     TicketSubmittedOut,
 )
 from relaydesk.schemas.widget import WidgetBootstrapOut
-from relaydesk.services import client_ip, kb_public, ratelimit, tickets, widget_keys
+from relaydesk.services import (
+    client_ip,
+    kb_public,
+    ratelimit,
+    tickets,
+    widget_keys,
+    widget_origins,
+)
 
 router = APIRouter()
 
@@ -177,6 +185,22 @@ async def submit(
     # exactly this reason.
     await session.commit()
     return TicketSubmittedOut(received=True)
+
+
+@router.get("/{key}/embed-policy", response_class=PlainTextResponse)
+async def embed_policy(key: str, session: DbSession) -> str:
+    """The frame's ``frame-ancestors`` value, and nothing else.
+
+    An unknown or inactive key answers ``'none'`` rather than 404: the frame
+    must refuse to render either way, and a 404 here would tell a caller
+    which keys exist -- the same reasoning as ``resolve()`` itself, just
+    surfacing through a header instead of an error envelope.
+    """
+    try:
+        widget_key = await widget_keys.resolve(session, key)
+    except NotFound:
+        return "frame-ancestors 'none'"
+    return widget_origins.frame_ancestors(widget_key.allowed_origins)
 
 
 # Declared last: `{path:path}` matches anything, including the fixed

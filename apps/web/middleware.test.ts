@@ -107,23 +107,23 @@ describe("middleware header sanitisation", () => {
   const REQUEST_HEADER_PREFIX = "x-middleware-request-";
   const WORKSPACE_HEADER = "x-relaydesk-workspace";
 
-  it("replaces a client-supplied workspace header with the one resolved from Host", () => {
+  it("replaces a client-supplied workspace header with the one resolved from Host", async () => {
     const request = new NextRequest("http://acme.localhost:3000/help", {
       headers: { host: "acme.localhost:3000", [WORKSPACE_HEADER]: "evil" },
     });
 
-    const response = middleware(request);
+    const response = await middleware(request);
 
     expect(response.headers.get(OVERRIDE_HEADER)?.split(",")).toContain(WORKSPACE_HEADER);
     expect(response.headers.get(REQUEST_HEADER_PREFIX + WORKSPACE_HEADER)).toBe("acme");
   });
 
-  it("strips a client-supplied workspace header entirely when the Host does not resolve", () => {
+  it("strips a client-supplied workspace header entirely when the Host does not resolve", async () => {
     const request = new NextRequest("http://example.com/random-page", {
       headers: { host: "example.com", [WORKSPACE_HEADER]: "evil" },
     });
 
-    const response = middleware(request);
+    const response = await middleware(request);
 
     // Not merely "not evil" -- absent altogether. A host with no matching
     // subdomain must not carry the header downstream at all.
@@ -143,12 +143,12 @@ describe("middleware header sanitisation", () => {
   // the proxy can reach this container: the web service publishes no port,
   // and the proxy itself accepts X-Forwarded-For only from its own
   // upstream edge. Both halves are required; see middleware.ts.
-  it("preserves a proxy-supplied X-Forwarded-For", () => {
+  it("preserves a proxy-supplied X-Forwarded-For", async () => {
     const request = new NextRequest("http://acme.localhost:3000/submit-ticket", {
       headers: { host: "acme.localhost:3000", "x-forwarded-for": "203.0.113.7" },
     });
 
-    const response = middleware(request);
+    const response = await middleware(request);
 
     expect(response.headers.get(OVERRIDE_HEADER)?.split(",")).toContain(
       "x-forwarded-for",
@@ -158,12 +158,12 @@ describe("middleware header sanitisation", () => {
     );
   });
 
-  it("preserves it on every other matched route too", () => {
+  it("preserves it on every other matched route too", async () => {
     const request = new NextRequest("http://localhost:3000/forgot-password", {
       headers: { host: "localhost:3000", "x-forwarded-for": "203.0.113.9" },
     });
 
-    const response = middleware(request);
+    const response = await middleware(request);
 
     expect(response.headers.get(REQUEST_HEADER_PREFIX + "x-forwarded-for")).toBe(
       "203.0.113.9",
@@ -174,12 +174,12 @@ describe("middleware header sanitisation", () => {
 describe("root path resolution", () => {
   const WORKSPACE_HEADER = "x-relaydesk-workspace";
 
-  it("redirects a resolved subdomain's root to the help centre", () => {
+  it("redirects a resolved subdomain's root to the help centre", async () => {
     const request = new NextRequest("http://acme.localhost:3000/", {
       headers: { host: "acme.localhost:3000" },
     });
 
-    const response = middleware(request);
+    const response = await middleware(request);
 
     expect(response.status).toBe(307);
     const location = response.headers.get("location");
@@ -187,34 +187,34 @@ describe("root path resolution", () => {
     expect(new URL(location!).pathname).toBe("/help");
   });
 
-  it("leaves the apex root alone -- no redirect, so the marketing site still renders", () => {
+  it("leaves the apex root alone -- no redirect, so the marketing site still renders", async () => {
     const request = new NextRequest("http://localhost:3000/", {
       headers: { host: "localhost:3000" },
     });
 
-    const response = middleware(request);
+    const response = await middleware(request);
 
     expect(response.status).not.toBe(307);
     expect(response.headers.get("location")).toBeNull();
   });
 
-  it("does not redirect a reserved label's root -- it never resolves to a workspace", () => {
+  it("does not redirect a reserved label's root -- it never resolves to a workspace", async () => {
     const request = new NextRequest("http://www.localhost:3000/", {
       headers: { host: "www.localhost:3000" },
     });
 
-    const response = middleware(request);
+    const response = await middleware(request);
 
     expect(response.status).not.toBe(307);
     expect(response.headers.get("location")).toBeNull();
   });
 
-  it("still strips a client-supplied workspace header on the apex root", () => {
+  it("still strips a client-supplied workspace header on the apex root", async () => {
     const request = new NextRequest("http://localhost:3000/", {
       headers: { host: "localhost:3000", [WORKSPACE_HEADER]: "evil" },
     });
 
-    const response = middleware(request);
+    const response = await middleware(request);
 
     const OVERRIDE_HEADER = "x-middleware-override-headers";
     expect(response.headers.get(OVERRIDE_HEADER)?.split(",") ?? []).not.toContain(
@@ -245,12 +245,12 @@ describe("root path resolution", () => {
 describe("the console article preview is behind the session", () => {
   const PREVIEW = "/knowledge-base/c71ef494-3264-4fe8-b79d-427d94b5fd6f/preview";
 
-  it("redirects an anonymous request to the sign-in page", () => {
+  it("redirects an anonymous request to the sign-in page", async () => {
     const request = new NextRequest(`http://localhost:3000${PREVIEW}`, {
       headers: { host: "localhost:3000" },
     });
 
-    const response = middleware(request);
+    const response = await middleware(request);
 
     expect(response.status).toBe(307);
     const location = response.headers.get("location");
@@ -261,12 +261,12 @@ describe("the console article preview is behind the session", () => {
   // The control for the test above: without this, a middleware that
   // redirected *everything* would pass it and prove nothing about the
   // session being what makes the difference.
-  it("lets a request carrying a session cookie through", () => {
+  it("lets a request carrying a session cookie through", async () => {
     const request = new NextRequest(`http://localhost:3000${PREVIEW}`, {
       headers: { host: "localhost:3000", cookie: "rd_session=a-real-token" },
     });
 
-    const response = middleware(request);
+    const response = await middleware(request);
 
     expect(response.status).not.toBe(307);
     expect(response.headers.get("location")).toBeNull();
@@ -277,12 +277,12 @@ describe("the console article preview is behind the session", () => {
   // comes back as a redirect to /signed-out. This asserts the one thing
   // *this* function is responsible for on that host: it does not hand the
   // route a workspace it could serve content for by itself.
-  it("does not render console content on a portal subdomain either", () => {
+  it("does not render console content on a portal subdomain either", async () => {
     const request = new NextRequest(`http://acme.localhost:3000${PREVIEW}`, {
       headers: { host: "acme.localhost:3000" },
     });
 
-    const response = middleware(request);
+    const response = await middleware(request);
 
     // No session, no redirect to /login on this host -- see the report's
     // note about the subdomain branch returning early. What stops it is the
