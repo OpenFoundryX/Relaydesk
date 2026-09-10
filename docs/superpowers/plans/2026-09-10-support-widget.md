@@ -69,26 +69,24 @@ from relaydesk.models.widget_key import WidgetKey
 from tests.factories import make_workspace
 
 
-@pytest.mark.asyncio
-async def test_key_is_stored_verbatim(session):
+async def test_key_is_stored_verbatim(db_session):
     """The credential is public by construction; a digest could never be re-shown."""
-    workspace = await make_workspace(session)
-    session.add(
+    workspace = await make_workspace(db_session)
+    db_session.add(
         WidgetKey(workspace_id=workspace.id, name="Marketing site", key="rdw_abc123")
     )
-    await session.flush()
+    await db_session.flush()
 
-    stored = await session.scalar(sa.select(WidgetKey.key))
+    stored = await db_session.scalar(sa.select(WidgetKey.key))
     assert stored == "rdw_abc123"
 
 
-@pytest.mark.asyncio
-async def test_defaults_refuse_embedding(session):
+async def test_defaults_refuse_embedding(db_session):
     """An unconfigured key allows nobody -- empty means refuse, not permit."""
-    workspace = await make_workspace(session)
+    workspace = await make_workspace(db_session)
     key = WidgetKey(workspace_id=workspace.id, name="Site", key="rdw_def456")
-    session.add(key)
-    await session.flush()
+    db_session.add(key)
+    await db_session.flush()
 
     assert key.allowed_origins == []
     assert key.settings == {}
@@ -96,16 +94,15 @@ async def test_defaults_refuse_embedding(session):
     assert key.last_seen_at is None
 
 
-@pytest.mark.asyncio
-async def test_key_is_unique_across_workspaces(session):
-    one = await make_workspace(session, slug="one")
-    two = await make_workspace(session, slug="two")
-    session.add(WidgetKey(workspace_id=one.id, name="A", key="rdw_same"))
-    await session.flush()
-    session.add(WidgetKey(workspace_id=two.id, name="B", key="rdw_same"))
+async def test_key_is_unique_across_workspaces(db_session):
+    one = await make_workspace(db_session, slug="one")
+    two = await make_workspace(db_session, slug="two")
+    db_session.add(WidgetKey(workspace_id=one.id, name="A", key="rdw_same"))
+    await db_session.flush()
+    db_session.add(WidgetKey(workspace_id=two.id, name="B", key="rdw_same"))
 
     with pytest.raises(sa.exc.IntegrityError):
-        await session.flush()
+        await db_session.flush()
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -497,19 +494,17 @@ from relaydesk.services import widget_keys
 from tests.factories import make_workspace
 
 
-@pytest.mark.asyncio
-async def test_create_mints_a_prefixed_key(session):
-    workspace = await make_workspace(session)
-    created = await widget_keys.create(session, workspace.id, "Marketing site")
+async def test_create_mints_a_prefixed_key(db_session):
+    workspace = await make_workspace(db_session)
+    created = await widget_keys.create(db_session, workspace.id, "Marketing site")
 
     assert created.key.startswith("rdw_")
     assert len(created.key) == 36
     assert created.allowed_origins == []
 
 
-@pytest.mark.asyncio
-async def test_create_normalises_origins(session):
-    workspace = await make_workspace(session)
+async def test_create_normalises_origins(db_session):
+    workspace = await make_workspace(db_session)
     created = await widget_keys.create(
         session,
         workspace.id,
@@ -521,61 +516,56 @@ async def test_create_normalises_origins(session):
     assert created.allowed_origins == ["https://acme.com"]
 
 
-@pytest.mark.asyncio
-async def test_create_refuses_an_unparseable_origin(session):
-    workspace = await make_workspace(session)
+async def test_create_refuses_an_unparseable_origin(db_session):
+    workspace = await make_workspace(db_session)
     with pytest.raises(Invalid):
         await widget_keys.create(
             session, workspace.id, "Site", allowed_origins=["*.acme.com"]
         )
 
 
-@pytest.mark.asyncio
-async def test_resolve_finds_an_active_key(session):
-    workspace = await make_workspace(session)
-    created = await widget_keys.create(session, workspace.id, "Site")
+async def test_resolve_finds_an_active_key(db_session):
+    workspace = await make_workspace(db_session)
+    created = await widget_keys.create(db_session, workspace.id, "Site")
 
-    found = await widget_keys.resolve(session, created.key)
+    found = await widget_keys.resolve(db_session, created.key)
     assert found.id == created.id
 
 
-@pytest.mark.asyncio
-async def test_resolve_refuses_unknown_and_inactive_alike(session):
+async def test_resolve_refuses_unknown_and_inactive_alike(db_session):
     """Same exception either way -- a caller must not learn which keys exist."""
-    workspace = await make_workspace(session)
-    created = await widget_keys.create(session, workspace.id, "Site")
-    await widget_keys.update(session, workspace.id, created.id, active=False)
+    workspace = await make_workspace(db_session)
+    created = await widget_keys.create(db_session, workspace.id, "Site")
+    await widget_keys.update(db_session, workspace.id, created.id, active=False)
 
     with pytest.raises(NotFound):
-        await widget_keys.resolve(session, created.key)
+        await widget_keys.resolve(db_session, created.key)
     with pytest.raises(NotFound):
-        await widget_keys.resolve(session, "rdw_" + "0" * 32)
+        await widget_keys.resolve(db_session, "rdw_" + "0" * 32)
 
 
-@pytest.mark.asyncio
-async def test_get_is_scoped_to_its_workspace(session):
-    one = await make_workspace(session, slug="one")
-    two = await make_workspace(session, slug="two")
-    created = await widget_keys.create(session, one.id, "Site")
+async def test_get_is_scoped_to_its_workspace(db_session):
+    one = await make_workspace(db_session, slug="one")
+    two = await make_workspace(db_session, slug="two")
+    created = await widget_keys.create(db_session, one.id, "Site")
 
     with pytest.raises(NotFound):
-        await widget_keys.get(session, two.id, created.id)
+        await widget_keys.get(db_session, two.id, created.id)
 
 
-@pytest.mark.asyncio
-async def test_touch_writes_at_most_once_a_minute(session):
-    workspace = await make_workspace(session)
-    created = await widget_keys.create(session, workspace.id, "Site")
+async def test_touch_writes_at_most_once_a_minute(db_session):
+    workspace = await make_workspace(db_session)
+    created = await widget_keys.create(db_session, workspace.id, "Site")
 
-    await widget_keys.touch(session, created)
+    await widget_keys.touch(db_session, created)
     first = created.last_seen_at
     assert first is not None
 
-    await widget_keys.touch(session, created)
+    await widget_keys.touch(db_session, created)
     assert created.last_seen_at == first
 
     created.last_seen_at = datetime.now(UTC) - timedelta(minutes=2)
-    await widget_keys.touch(session, created)
+    await widget_keys.touch(db_session, created)
     assert created.last_seen_at != first
 ```
 
@@ -648,15 +638,15 @@ async def create(
         settings=settings or {},
         created_by_user_id=created_by_user_id,
     )
-    session.add(key)
-    await session.flush()
+    db_session.add(key)
+    await db_session.flush()
     return key
 
 
 async def list_keys(
     session: AsyncSession, workspace_id: uuid.UUID
 ) -> list[WidgetKey]:
-    result = await session.scalars(
+    result = await db_session.scalars(
         sa.select(WidgetKey)
         .where(WidgetKey.workspace_id == workspace_id)
         .order_by(WidgetKey.created_at.desc())
@@ -667,7 +657,7 @@ async def list_keys(
 async def get(
     session: AsyncSession, workspace_id: uuid.UUID, key_id: uuid.UUID
 ) -> WidgetKey:
-    key = await session.scalar(
+    key = await db_session.scalar(
         sa.select(WidgetKey).where(
             WidgetKey.id == key_id, WidgetKey.workspace_id == workspace_id
         )
@@ -699,7 +689,7 @@ async def update(
         key.settings = settings
     if active is not None:
         key.active = active
-    await session.flush()
+    await db_session.flush()
     return key
 
 
@@ -708,8 +698,8 @@ async def delete(
 ) -> None:
     """Deleting the row *is* the revocation; there is no ``revoked_at``."""
     key = await get(session, workspace_id, key_id)
-    await session.delete(key)
-    await session.flush()
+    await db_session.delete(key)
+    await db_session.flush()
 
 
 async def resolve(session: AsyncSession, key: str) -> WidgetKey:
@@ -719,7 +709,7 @@ async def resolve(session: AsyncSession, key: str) -> WidgetKey:
     same message. Telling them apart would let a caller walk the key space
     and learn which embeds exist.
     """
-    found = await session.scalar(
+    found = await db_session.scalar(
         sa.select(WidgetKey).where(WidgetKey.key == key, WidgetKey.active.is_(True))
     )
     if found is None:
@@ -739,7 +729,7 @@ async def touch(session: AsyncSession, widget_key: WidgetKey) -> None:
     if seen is not None and now - seen < _TOUCH_EVERY:
         return
     widget_key.last_seen_at = now
-    await session.flush()
+    await db_session.flush()
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -772,75 +762,82 @@ git commit -m "feat(widget): mint, resolve and revoke an embed key"
 
 ```python
 # apps/api/tests/test_widget_keys_api.py
-import pytest
-
+from relaydesk.models import Role
 from tests.factories import make_member, make_workspace, sign_in
 
 
-@pytest.mark.asyncio
-async def test_admin_creates_and_lists(client, session):
-    workspace = await make_workspace(session)
-    admin = await make_member(session, workspace, role="admin")
-    headers = await sign_in(client, admin)
+# The house pattern -- these mirror tests/test_api_keys_api.py.
+async def admin_headers(client, db_session, workspace):
+    await make_member(db_session, workspace, email="admin@relaydesk.dev")
+    await db_session.commit()
+    return await sign_in(client, db_session, "admin@relaydesk.dev")
+
+
+async def agent_headers(client, db_session, workspace):
+    await make_member(
+        db_session, workspace, email="agent@relaydesk.dev", role=Role.agent
+    )
+    await db_session.commit()
+    return await sign_in(client, db_session, "agent@relaydesk.dev")
+
+
+async def test_admin_creates_and_lists(client, db_session) -> None:
+    workspace = await make_workspace(db_session)
+    headers = await admin_headers(client, db_session, workspace)
 
     created = await client.post(
-        "/widget-keys",
-        json={"name": "Marketing site", "allowed_origins": ["https://acme.com/"]},
+        "/api/widget-keys",
+        json={"name": "Marketing site", "allowedOrigins": ["https://acme.com/"]},
         headers=headers,
     )
-    assert created.status_code == 201
+    assert created.status_code == 201, created.text
     body = created.json()
     assert body["key"].startswith("rdw_")
-    assert body["allowed_origins"] == ["https://acme.com"]
+    assert body["allowedOrigins"] == ["https://acme.com"]
 
-    listed = await client.get("/widget-keys", headers=headers)
+    listed = await client.get("/api/widget-keys", headers=headers)
     assert listed.status_code == 200
     # The key comes back in full every time -- it is public, and the admin
-    # needs it to re-paste the snippet.
+    # needs it to re-paste the snippet. Contrast ApiKey, whose secret is
+    # shown once and never again.
     assert listed.json()[0]["key"] == body["key"]
 
 
-@pytest.mark.asyncio
-async def test_agent_is_refused(client, session):
-    workspace = await make_workspace(session)
-    agent = await make_member(session, workspace, role="agent")
-    headers = await sign_in(client, agent)
+async def test_agent_is_refused(client, db_session) -> None:
+    workspace = await make_workspace(db_session)
+    headers = await agent_headers(client, db_session, workspace)
 
     response = await client.post(
-        "/widget-keys", json={"name": "Site"}, headers=headers
+        "/api/widget-keys", json={"name": "Site"}, headers=headers
     )
-    assert response.status_code == 403
+    assert response.status_code == 403, response.text
 
 
-@pytest.mark.asyncio
-async def test_bad_origin_is_rejected_with_the_offending_value(client, session):
-    workspace = await make_workspace(session)
-    admin = await make_member(session, workspace, role="admin")
-    headers = await sign_in(client, admin)
+async def test_bad_origin_is_rejected(client, db_session) -> None:
+    workspace = await make_workspace(db_session)
+    headers = await admin_headers(client, db_session, workspace)
 
     response = await client.post(
-        "/widget-keys",
-        json={"name": "Site", "allowed_origins": ["*.acme.com"]},
+        "/api/widget-keys",
+        json={"name": "Site", "allowedOrigins": ["*.acme.com"]},
         headers=headers,
     )
-    assert response.status_code == 422
+    assert response.status_code == 422, response.text
 
 
-@pytest.mark.asyncio
-async def test_delete_removes_the_embed(client, session):
-    workspace = await make_workspace(session)
-    admin = await make_member(session, workspace, role="admin")
-    headers = await sign_in(client, admin)
+async def test_delete_removes_the_embed(client, db_session) -> None:
+    workspace = await make_workspace(db_session)
+    headers = await admin_headers(client, db_session, workspace)
 
     created = await client.post(
-        "/widget-keys", json={"name": "Site"}, headers=headers
+        "/api/widget-keys", json={"name": "Site"}, headers=headers
     )
     key_id = created.json()["id"]
 
-    deleted = await client.delete(f"/widget-keys/{key_id}", headers=headers)
-    assert deleted.status_code == 204
+    deleted = await client.delete(f"/api/widget-keys/{key_id}", headers=headers)
+    assert deleted.status_code == 204, deleted.text
 
-    remaining = await client.get("/widget-keys", headers=headers)
+    remaining = await client.get("/api/widget-keys", headers=headers)
     assert remaining.json() == []
 ```
 
@@ -975,7 +972,7 @@ In `apps/api/src/relaydesk/api/router.py`, add the import alongside the others a
 ```python
 from relaydesk.api.widget_keys import router as widget_keys_router
 
-api_router.include_router(widget_keys_router, prefix="/widget-keys", tags=["widget"])
+api_router.include_router(widget_keys_router, prefix="/api/widget-keys", tags=["widget"])
 ```
 
 - [ ] **Step 6: Run tests to verify they pass**
@@ -1013,42 +1010,39 @@ from relaydesk.services import widget_keys
 from tests.factories import make_workspace
 
 
-@pytest.mark.asyncio
-async def test_bootstrap_reports_an_empty_knowledge_base(client, session):
+async def test_bootstrap_reports_an_empty_knowledge_base(client, db_session):
     """The day-one state: the frame must know before its first paint."""
-    workspace = await make_workspace(session)
-    key = await widget_keys.create(session, workspace.id, "Site")
-    await session.commit()
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
+    await db_session.commit()
 
-    response = await client.get(f"/widget/{key.key}")
+    response = await client.get(f"/api/widget/{key.key}")
     assert response.status_code == 200
     body = response.json()
     assert body["article_count"] == 0
     assert body["workspace_name"] == workspace.name
 
 
-@pytest.mark.asyncio
-async def test_unknown_and_inactive_keys_answer_identically(client, session):
-    workspace = await make_workspace(session)
-    key = await widget_keys.create(session, workspace.id, "Site")
-    await widget_keys.update(session, workspace.id, key.id, active=False)
-    await session.commit()
+async def test_unknown_and_inactive_keys_answer_identically(client, db_session):
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
+    await widget_keys.update(db_session, workspace.id, key.id, active=False)
+    await db_session.commit()
 
-    inactive = await client.get(f"/widget/{key.key}")
-    unknown = await client.get("/widget/rdw_" + "0" * 32)
+    inactive = await client.get(f"/api/widget/{key.key}")
+    unknown = await client.get("/api/widget/rdw_" + "0" * 32)
 
     assert inactive.status_code == unknown.status_code == 404
     assert inactive.json() == unknown.json()
 
 
-@pytest.mark.asyncio
-async def test_bootstrap_records_that_the_embed_is_installed(client, session):
-    workspace = await make_workspace(session)
-    key = await widget_keys.create(session, workspace.id, "Site")
-    await session.commit()
+async def test_bootstrap_records_that_the_embed_is_installed(client, db_session):
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
+    await db_session.commit()
 
-    await client.get(f"/widget/{key.key}")
-    await session.refresh(key)
+    await client.get(f"/api/widget/{key.key}")
+    await db_session.refresh(key)
     assert key.last_seen_at is not None
 ```
 
@@ -1091,8 +1085,8 @@ async def bootstrap(key: str, session: DbSession) -> WidgetBootstrapOut:
     a different state of the same one -- fetching it later would show a
     search field for one frame and then take it away.
     """
-    widget_key = await widget_keys.resolve(session, key)
-    await widget_keys.touch(session, widget_key)
+    widget_key = await widget_keys.resolve(db_session, key)
+    await widget_keys.touch(db_session, widget_key)
     workspace = widget_key.workspace
 
     return WidgetBootstrapOut(
@@ -1105,7 +1099,7 @@ async def bootstrap(key: str, session: DbSession) -> WidgetBootstrapOut:
 
 @router.get("/{key}/kb", response_model=list[PublicCollectionOut])
 async def kb_index(key: str, session: DbSession) -> list[PublicCollectionOut]:
-    widget_key = await widget_keys.resolve(session, key)
+    widget_key = await widget_keys.resolve(db_session, key)
     return await kb_public.roots(session, widget_key.workspace_id)
 
 
@@ -1121,7 +1115,7 @@ async def kb_search_index(key: str, session: DbSession) -> list[PublicSearchEntr
     Declared above ``/{key}/kb/{path}`` on purpose: a catch-all path would
     otherwise swallow ``kb/search/index`` as an article slug.
     """
-    widget_key = await widget_keys.resolve(session, key)
+    widget_key = await widget_keys.resolve(db_session, key)
     return await kb_public.searchable(session, widget_key.workspace_id)
 
 
@@ -1130,13 +1124,13 @@ async def kb_search(
     key: str, session: DbSession, q: str = ""
 ) -> list[PublicArticleSummary]:
     """Server-side search, for indexes too large to ship whole (spec D8)."""
-    widget_key = await widget_keys.resolve(session, key)
+    widget_key = await widget_keys.resolve(db_session, key)
     return await kb_public.search(session, widget_key.workspace_id, q)
 
 
 @router.get("/{key}/kb/{path:path}", response_model=PublicNodeOut)
 async def kb_node(key: str, path: str, session: DbSession) -> PublicNodeOut:
-    widget_key = await widget_keys.resolve(session, key)
+    widget_key = await widget_keys.resolve(db_session, key)
     return await kb_public.resolve(session, widget_key.workspace_id, path)
 ```
 
@@ -1176,7 +1170,7 @@ async def published_article_count(
     session: AsyncSession, workspace_id: uuid.UUID
 ) -> int:
     """How many articles a stranger can read. Drives the widget's empty state."""
-    return await session.scalar(
+    return await db_session.scalar(
         _visible(sa.select(sa.func.count()).select_from(KbArticle)).where(
             KbArticle.workspace_id == workspace_id
         )
@@ -1233,19 +1227,18 @@ from relaydesk.services import widget_keys
 from tests.factories import make_workspace
 
 
-@pytest.mark.asyncio
-async def test_submission_creates_a_conversation(client, session):
-    workspace = await make_workspace(session)
-    key = await widget_keys.create(session, workspace.id, "Site")
-    await session.commit()
+async def test_submission_creates_a_conversation(client, db_session):
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
+    await db_session.commit()
 
     response = await client.post(
-        f"/widget/{key.key}/tickets",
+        f"/api/widget/{key.key}/tickets",
         data={"email": "wren@lantern.co", "subject": "Refund", "message": "Hello"},
     )
     assert response.status_code == 201
 
-    count = await session.scalar(
+    count = await db_session.scalar(
         sa.select(sa.func.count())
         .select_from(Conversation)
         .where(Conversation.workspace_id == workspace.id)
@@ -1253,27 +1246,26 @@ async def test_submission_creates_a_conversation(client, session):
     assert count == 1
 
 
-@pytest.mark.asyncio
-async def test_per_key_cap_refuses_beyond_its_budget(client, session, monkeypatch):
+async def test_per_key_cap_refuses_beyond_its_budget(client, db_session, monkeypatch):
     """One abused embed exhausts its own budget, not the workspace's."""
     from relaydesk.config import get_settings
 
     get_settings.cache_clear()
     monkeypatch.setenv("WIDGET_KEY_HOURLY_CAP", "2")
 
-    workspace = await make_workspace(session)
-    key = await widget_keys.create(session, workspace.id, "Site")
-    await session.commit()
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
+    await db_session.commit()
 
     for index in range(2):
         accepted = await client.post(
-            f"/widget/{key.key}/tickets",
+            f"/api/widget/{key.key}/tickets",
             data={"email": f"a{index}@lantern.co", "message": "Hello"},
         )
         assert accepted.status_code == 201
 
     refused = await client.post(
-        f"/widget/{key.key}/tickets",
+        f"/api/widget/{key.key}/tickets",
         data={"email": "c@lantern.co", "message": "Hello"},
     )
     assert refused.status_code == 429
@@ -1334,7 +1326,7 @@ async def submit(
     company: Annotated[str, Form()] = "",
     files: Annotated[list[UploadFile] | None, File()] = None,
 ) -> TicketSubmittedOut:
-    widget_key = await widget_keys.resolve(session, key)
+    widget_key = await widget_keys.resolve(db_session, key)
 
     uploads = files or []
     if len(uploads) > get_settings().ticket_attachment_max_count:
@@ -1724,7 +1716,7 @@ async def embed_policy(key: str, session: DbSession) -> str:
     which keys exist.
     """
     try:
-        widget_key = await widget_keys.resolve(session, key)
+        widget_key = await widget_keys.resolve(db_session, key)
     except NotFound:
         return "frame-ancestors 'none'"
     return widget_origins.frame_ancestors(widget_key.allowed_origins)
@@ -1736,19 +1728,17 @@ Declare it above the `{path:path}` catch-all, with the other fixed segments.
 
 ```python
 # apps/api/tests/test_widget_api.py — append
-@pytest.mark.asyncio
-async def test_embed_policy_refuses_when_no_origins_are_set(client, session):
-    workspace = await make_workspace(session)
-    key = await widget_keys.create(session, workspace.id, "Site")
-    await session.commit()
+async def test_embed_policy_refuses_when_no_origins_are_set(client, db_session):
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
+    await db_session.commit()
 
-    response = await client.get(f"/widget/{key.key}/embed-policy")
+    response = await client.get(f"/api/widget/{key.key}/embed-policy")
     assert response.text == "frame-ancestors 'none'"
 
 
-@pytest.mark.asyncio
-async def test_embed_policy_answers_none_for_an_unknown_key(client, session):
-    response = await client.get("/widget/rdw_" + "0" * 32 + "/embed-policy")
+async def test_embed_policy_answers_none_for_an_unknown_key(client, db_session):
+    response = await client.get("/api/widget/rdw_" + "0" * 32 + "/embed-policy")
     assert response.status_code == 200
     assert response.text == "frame-ancestors 'none'"
 ```
@@ -2049,7 +2039,7 @@ baseline its later AI numbers could be judged against.
 
 **Interfaces:**
 - Consumes: `WidgetKey` (Task 1), the `/widget/{key}` router (Task 5).
-- Produces: `POST /widget/{key}/sessions/{session_id}` accepting `{"kind": "searched" | "read" | "submitted"}`, and `widget_sessions.record(session, widget_key, session_id, kind) -> None`.
+- Produces: `POST /widget/{key}/sessions/{session_id}` accepting `{"kind": "searched" | "read" | "submitted"}`, and `widget_sessions.record(db_session, widget_key, session_id, kind) -> None`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2065,15 +2055,14 @@ from relaydesk.services import widget_keys, widget_sessions
 from tests.factories import make_workspace
 
 
-@pytest.mark.asyncio
-async def test_first_event_opens_the_session(session):
-    workspace = await make_workspace(session)
-    key = await widget_keys.create(session, workspace.id, "Site")
+async def test_first_event_opens_the_session(db_session):
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
     session_id = uuid.uuid4()
 
-    await widget_sessions.record(session, key, session_id, "searched")
+    await widget_sessions.record(db_session, key, session_id, "searched")
 
-    row = await session.scalar(
+    row = await db_session.scalar(
         sa.select(WidgetSession).where(WidgetSession.id == session_id)
     )
     assert row.searched is True
@@ -2081,45 +2070,42 @@ async def test_first_event_opens_the_session(session):
     assert row.workspace_id == workspace.id
 
 
-@pytest.mark.asyncio
-async def test_repeating_an_event_writes_one_row(session):
+async def test_repeating_an_event_writes_one_row(db_session):
     """A visitor who searches four times is one session, not four."""
-    workspace = await make_workspace(session)
-    key = await widget_keys.create(session, workspace.id, "Site")
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
     session_id = uuid.uuid4()
 
     for _ in range(4):
-        await widget_sessions.record(session, key, session_id, "searched")
+        await widget_sessions.record(db_session, key, session_id, "searched")
 
-    count = await session.scalar(sa.select(sa.func.count()).select_from(WidgetSession))
+    count = await db_session.scalar(sa.select(sa.func.count()).select_from(WidgetSession))
     assert count == 1
 
 
-@pytest.mark.asyncio
-async def test_flags_accumulate_and_never_lower(session):
-    workspace = await make_workspace(session)
-    key = await widget_keys.create(session, workspace.id, "Site")
+async def test_flags_accumulate_and_never_lower(db_session):
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
     session_id = uuid.uuid4()
 
-    await widget_sessions.record(session, key, session_id, "searched")
-    await widget_sessions.record(session, key, session_id, "read")
-    await widget_sessions.record(session, key, session_id, "submitted")
+    await widget_sessions.record(db_session, key, session_id, "searched")
+    await widget_sessions.record(db_session, key, session_id, "read")
+    await widget_sessions.record(db_session, key, session_id, "submitted")
 
-    row = await session.scalar(
+    row = await db_session.scalar(
         sa.select(WidgetSession).where(WidgetSession.id == session_id)
     )
     assert (row.searched, row.read_article, row.submitted) == (True, True, True)
 
 
-@pytest.mark.asyncio
-async def test_an_unknown_kind_is_refused(session):
+async def test_an_unknown_kind_is_refused(db_session):
     from relaydesk.errors import Invalid
 
-    workspace = await make_workspace(session)
-    key = await widget_keys.create(session, workspace.id, "Site")
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
 
     with pytest.raises(Invalid):
-        await widget_sessions.record(session, key, uuid.uuid4(), "purchased")
+        await widget_sessions.record(db_session, key, uuid.uuid4(), "purchased")
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -2301,13 +2287,13 @@ async def record(
         updated_at=now,
         **{flag: True},
     )
-    await session.execute(
+    await db_session.execute(
         statement.on_conflict_do_update(
             index_elements=[WidgetSession.id],
             set_={flag: True, "updated_at": now},
         )
     )
-    await session.flush()
+    await db_session.flush()
 ```
 
 - [ ] **Step 6: Add the route**
@@ -2320,8 +2306,8 @@ async def record_event(
     key: str, session_id: uuid.UUID, body: WidgetEventIn, session: DbSession
 ) -> None:
     """Record how far one panel open got. Never fails visibly to the visitor."""
-    widget_key = await widget_keys.resolve(session, key)
-    await widget_sessions.record(session, widget_key, session_id, body.kind)
+    widget_key = await widget_keys.resolve(db_session, key)
+    await widget_sessions.record(db_session, widget_key, session_id, body.kind)
 ```
 
 with `class WidgetEventIn(CamelModel): kind: str` in `schemas/widget.py`.
