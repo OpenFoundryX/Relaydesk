@@ -181,16 +181,31 @@ The alternative — search over nothing, returning "no results" — was rejected
 because it makes the product look broken on the one day a new customer is
 deciding whether to keep it.
 
-**D8 — Search runs in the browser, against the prefetched index.**
+**D8 — Search runs on submit, through the server.**
 
-The frame fetches `/kb/search/index` once on open and searches locally. No
-request per keystroke, instant results, and search contributes nothing to
-rate-limit pressure. The index contains only published, externally-scoped
-articles, which are already served in full on the public help site, so this
-discloses nothing new.
+The panel's search field submits rather than searching as you type, and the
+frame asks the server for each submitted query. There is therefore no
+request per keystroke to avoid.
 
-`GET /widget/{key}/kb/search` still exists for indexes too large to ship
-whole; the threshold is a runtime decision, not a spec one.
+This reverses an earlier draft of this decision, which had the frame fetch
+`/kb/search/index` once on open and score it in the browser the way the
+public help site does. That is right for the help site, where a visitor has
+already committed to a full page load, and wrong here: the index is the
+whole published knowledge base, and shipping it on panel open contradicts
+the one number this widget is sold on — a loader under 3 KB and nothing
+else fetched until someone clicks (D6). A workspace with several hundred
+articles would pay for instant search with exactly the weight the embed
+promises not to add.
+
+`GET /widget/{key}/kb/search/index` remains, unused by the frame today. It
+is what an instant-search pass would adopt for workspaces whose index is
+small enough to be worth shipping, and it already serves the portal.
+
+The residual cost is that search is an anonymous endpoint with no cap of
+its own, reached once per submitted query. It reads only published
+articles — the same rows the public help site serves to anyone — so the
+exposure is load, not disclosure. If that load ever matters, the per-key
+hourly cap in §8 is the place to extend.
 
 **D9 — Submission goes through a server action, and the client-IP chain must
 be repaired first.**
