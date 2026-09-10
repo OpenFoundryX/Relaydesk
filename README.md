@@ -75,6 +75,10 @@ Then visit:
 - API: http://localhost:8000
 - API Docs: http://localhost:8000/docs
 
+Port 3000 is served by a small Caddy reverse proxy (see `Caddyfile`); the
+`web` container itself deliberately publishes no port, so it is only ever
+reached through the proxy.
+
 ### Google sign-in (optional)
 
 "Continue with Google" on the login page works out of the box for

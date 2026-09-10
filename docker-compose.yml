@@ -205,6 +205,15 @@ services:
       api:
         condition: service_healthy
 
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - web
+
 # A fixed subnet so the address above is ours to assign rather than
 # Docker's to hand out. The static address sits high in the range on
 # purpose: Docker allocates dynamic addresses sequentially from .2, and

@@ -1,0 +1,14 @@
+:3000 {
+	# Caddy's reverse_proxy APPENDS to an existing X-Forwarded-For by
+	# default, rather than replacing it. Without this override, a client
+	# sending "X-Forwarded-For: 1.2.3.4" would arrive at Next as
+	# "1.2.3.4, <real address>" -- the web server action forwards that
+	# whole string to the API, and client_ip.resolve takes
+	# forwarded.split(",")[0], i.e. the forged value. That would hand the
+	# caller its own rate-limit bucket and undo the point of the repair in
+	# apps/web/middleware.ts. Replacing rather than appending is what makes
+	# trusting the header downstream safe. Do not remove this line.
+	reverse_proxy web:3000 {
+		header_up X-Forwarded-For {remote_host}
+	}
+}
