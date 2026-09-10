@@ -2369,8 +2369,14 @@ async def record_event(
     key: str, session_id: uuid.UUID, body: WidgetEventIn, session: DbSession
 ) -> None:
     """Record how far one panel open got. Never fails visibly to the visitor."""
-    widget_key = await widget_keys.resolve(db_session, key)
-    await widget_sessions.record(db_session, widget_key, session_id, body.kind)
+    widget_key = await widget_keys.resolve(session, key)
+    await widget_sessions.record(session, widget_key, session_id, body.kind)
+    # `get_session` has no commit-on-exit and nothing commits on success, so
+    # an uncommitted flush is rolled back by `AsyncSession.close()` when the
+    # request ends and the counter silently never moves. Two earlier routes
+    # in this slice shipped exactly that defect; `public.py:332` is the
+    # pattern every mutating route here follows.
+    await session.commit()
 ```
 
 with `class WidgetEventIn(CamelModel): kind: str` in `schemas/widget.py`.
