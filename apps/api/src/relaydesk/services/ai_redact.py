@@ -19,6 +19,15 @@ so redacting it costs answer quality and buys nothing.
 This implementation uses a token-based scanner to avoid regex backtracking:
 each token is checked independently with bounded, anchored patterns rather
 than scanning the full message with nested quantifiers.
+
+Known limitation, recorded rather than hidden: two numbers written adjacent
+with nothing between them but spaces can still be mis-grouped, and the tail
+of the second printed in the clear -- "020 7946 0958 07700 900123" redacts
+as "[number] 900123", the sixteen digits of the first four groups being a
+credible card. A line break between them is enough to separate them, and so
+is any punctuation; only the bare-space case is ambiguous, and it is
+ambiguous to a reader too. Widening the scanner to resolve it costs more in
+over-redaction than the case is worth.
 """
 
 import re
@@ -53,14 +62,32 @@ def redact(text: str) -> str:
     return "".join(result)
 
 
-_LABEL_RE = re.compile(r"[A-Za-z]{1,12}[:#=]")
+# Only labels that announce PII. Leak 1 was "phone:555-123-4567" and
+# "card#4111111111111111" passing through whole because the letter-guard
+# returned the token on sight of a letter. Peeling ANY "word:" prefix closed
+# that but destroyed labelled identifiers instead -- "amount:1,234,567.89"
+# became "amount:[phone]", and "serial:", "sku#", "po#" and "order:" went the
+# same way. The label is the strongest evidence available about what follows
+# it, so it is read as evidence rather than merely stripped: these labels say
+# "personal data follows", and every other label says the opposite.
+#
+# Bounding the peel to a fixed vocabulary also removes the recursion that a
+# crafted token could drive -- "a:" repeated a thousand times reached Python's
+# frame limit and raised RecursionError out of an anonymous endpoint.
+_PII_LABEL_RE = re.compile(
+    r"(?:phone|telephone|tel|mobile|mob|cell|fax|email|mail|card|ssn|sin|nino)"
+    r"\d?\.?[:#=]",
+    re.IGNORECASE,
+)
 
 # Punctuation that can sit either side of a number without being part of it.
-# Deliberately excludes "(", ")" and "-": those are group separators inside a
-# real number -- "(555) 123-4567" -- and peeling them would take the number
-# apart. "." and "," appear in both roles, but only ever as separators in the
-# MIDDLE of a number, so peeling them at the edges alone is safe.
-_EDGE_PUNCT = "\"'`;:!?.,\u00ab\u00bb\u201c\u201d\u2018\u2019"
+# "." and "," appear in both roles, but only ever as separators in the MIDDLE
+# of a number, so peeling them at the edges alone is safe. Angle brackets are
+# never number-internal; round and square brackets are handled separately
+# because "(555) 123-4567" needs its parens kept.
+_EDGE_PUNCT = "\"'`;:!?.,<>«»“”‘’"
+_CLOSER = {"(": ")", "[": "]"}
+_OPENER = {")": "(", "]": "["}
 
 # What counts as a separator between the digit groups of a card or phone
 # number, for both "strip these out before counting digits" and "does this
@@ -68,17 +95,24 @@ _EDGE_PUNCT = "\"'`;:!?.,\u00ab\u00bb\u201c\u201d\u2018\u2019"
 # tokenizer split on (tabs, newlines, non-breaking spaces -- not just the
 # ASCII space), so a number joined across a multi-token window can never
 # leak just because its gap character wasn't in some narrower, separately
-# maintained list. This one definition is the only place that list lives.
-_SEPARATOR_RE = re.compile(r"[\s,.\-()]")
+# maintained list. The en and em dashes are here because Word and Gmail
+# rewrite a typed hyphen into one without asking.
+_SEPARATOR_RE = re.compile(r"[\s,.\-–—()]")
 
 _SPACE_RE = re.compile(r"\s+")
-_DIGIT_GROUP_RE = re.compile(r"[\d,.\-() ]+")
+_LINE_BREAK_RE = re.compile(r"[\n\r  ]")
+_DIGIT_GROUP_RE = re.compile(r"[\d,.\-–—() ]+")
 
-# Six tokens, not five. A number written "+33 1 42 68 53 00" is six groups,
-# and a window that stopped at five would redact the first five and print the
-# last two digits in the clear -- a partial leak is the one outcome worse
-# than either redacting or not.
-_MAX_WINDOW = 6
+# Five groups, because six ate ordinary numeric prose -- a row of quantities,
+# a CSV paste, a log line. The one number that genuinely needs six is an
+# international one written "+33 1 42 68 53 00", and there the "+" is the
+# evidence that earns the extra group.
+_MAX_WINDOW = 5
+_MAX_WINDOW_PLUS = 6
+
+# The label peel may fire at most this many times on one token. A fixed
+# vocabulary makes deep nesting implausible; this makes it impossible.
+_MAX_LABEL_DEPTH = 2
 
 
 def _is_space(token: str) -> bool:
@@ -86,22 +120,48 @@ def _is_space(token: str) -> bool:
 
 
 def _is_digit_group(token: str) -> bool:
-    """Digits and separators only, and at least one digit.
-
-    The digit requirement stops a run of dashes or dots being treated as the
-    start of a number.
-    """
+    """Digits and separators only, and at least one digit."""
     return bool(_DIGIT_GROUP_RE.fullmatch(token)) and any(c.isdigit() for c in token)
 
 
 def _split_edges(token: str) -> tuple[str, str, str]:
-    """``token`` as (leading punctuation, core, trailing punctuation)."""
-    start = 0
-    while start < len(token) and token[start] in _EDGE_PUNCT:
-        start += 1
-    end = len(token)
-    while end > start and token[end - 1] in _EDGE_PUNCT:
-        end -= 1
+    """``token`` as (leading punctuation, core, trailing punctuation).
+
+    Brackets are peeled only when they are NOT part of the number: an
+    unmatched one, or a matched pair around something that is not a digit
+    group at all. "(555)" keeps its parens, because they are how the area
+    code was written and stripping them loses the grouping that tells a
+    phone number from an account number; "(wren@lantern.co)" loses them,
+    because an address in brackets is still an address.
+    """
+    start, end = 0, len(token)
+    peeled = True
+    while peeled and start < end:
+        peeled = False
+
+        lead_char, trail_char = token[start], token[end - 1]
+        if (
+            end - start > 2
+            and lead_char in _CLOSER
+            and trail_char == _CLOSER[lead_char]
+            and not _is_digit_group(token[start + 1 : end - 1])
+        ):
+            start, end = start + 1, end - 1
+            continue
+
+        if lead_char in _EDGE_PUNCT or (
+            lead_char in _CLOSER and _CLOSER[lead_char] not in token[start:end]
+        ):
+            start += 1
+            peeled = True
+            continue
+
+        if trail_char in _EDGE_PUNCT or (
+            trail_char in _OPENER and _OPENER[trail_char] not in token[start:end]
+        ):
+            end -= 1
+            peeled = True
+
     return token[:start], token[start:end], token[end:]
 
 
@@ -110,64 +170,60 @@ def _redact_token(token: str, tokens: list, index: int) -> tuple:
 
     Returns (redacted_token, additional_tokens_consumed).
     """
-    # A leading label glued straight onto PII ("phone:555-123-4567",
-    # "card#4111111111111111") would otherwise be caught whole by the
-    # letter-guard below and pass through unredacted. Peel the label,
-    # check the remainder on its own, and re-attach the label to
-    # whatever comes back. An identifier like "INV-2024-0042" has no
-    # ":"/"#"/"=" after its letters, so it never matches this and stays
-    # protected by the letter-guard as before.
-    label_match = _LABEL_RE.match(token)
-    if label_match:
-        remainder = token[label_match.end():]
-        if remainder:
-            redacted_remainder, consumed = _redact_token(remainder, tokens, index)
-            if redacted_remainder != remainder:
-                return label_match.group() + redacted_remainder, consumed
-
-    # Punctuation around a number is not part of it. Without this a quoted
-    # card or a phone number ending a sentence goes out in the clear,
-    # because every check below is anchored to the whole token. Peeling it
-    # here also stops the full stop in "call 555-123-4567." being eaten as
-    # though it were a group separator.
     lead, core, trail = _split_edges(token)
-    if core and (lead or trail):
-        # A token that ENDS in punctuation also ends any multi-token number,
-        # so the window must not be allowed to read past it.
-        window = tokens[: index + 1] if trail else tokens
-        redacted_core, consumed = _redact_token(core, window, index)
-        if redacted_core != core:
-            return lead + redacted_core + trail, consumed
+    if not core:
+        return token, 0
 
-    # Email: must contain @ and match email pattern
-    if "@" in token and _is_email(token):
+    # A token that ENDS in punctuation also ends any multi-token number, so
+    # the window must not be allowed to read past it.
+    window = tokens[: index + 1] if trail else tokens
+    redacted, consumed = _redact_core(core, window, index, depth=0)
+    if redacted == core:
+        return token, 0
+    return lead + redacted + trail, consumed
+
+
+def _redact_core(core: str, tokens: list, index: int, depth: int) -> tuple:
+    """Decide the fate of one token with its surrounding punctuation removed.
+
+    Every guard below is anchored to the whole string it is given, which is
+    why the edges have to come off first: "case ID 2023-45678." reached the
+    phone rule with its full stop still attached, and a trailing "." reads
+    as a group separator.
+    """
+    label_match = _PII_LABEL_RE.match(core)
+    if label_match and depth < _MAX_LABEL_DEPTH:
+        remainder = core[label_match.end():]
+        if remainder:
+            inner, consumed = _redact_core(remainder, tokens, index, depth + 1)
+            if inner != remainder:
+                return label_match.group() + inner, consumed
+
+    if "@" in core and _is_email(core):
         return "[email]", 0
 
     # Any token containing a letter is left alone (keeps dates, versions, IDs)
-    if re.search(r"[a-zA-Z]", token):
-        return token, 0
+    if re.search(r"[a-zA-Z]", core):
+        return core, 0
 
     # ISO dates (YYYY-MM-DD) are left alone
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", token):
-        return token, 0
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", core):
+        return core, 0
 
     # IP addresses (X.X.X.X format) are left alone
-    if _looks_like_ip(token):
-        return token, 0
+    if _looks_like_ip(core):
+        return core, 0
 
     # Date-like patterns (4-5 digits, dash, 2-5 digits) are left alone
-    if re.fullmatch(r"\d{4,5}-\d{2,5}", token):
-        return token, 0
+    if re.fullmatch(r"\d{4,5}-\d{2,5}", core):
+        return core, 0
 
-    result, consumed = _check_card(token, tokens, index)
-    if result != token:
-        return result, consumed
+    # A figure with both a thousands separator and a decimal point is money,
+    # not a telephone number.
+    if _looks_like_decimal(core):
+        return core, 0
 
-    result, consumed = _check_phone(token, tokens, index)
-    if result != token:
-        return result, consumed
-
-    return token, 0
+    return _check_number(core, tokens, index)
 
 
 def _is_email(token: str) -> bool:
@@ -175,26 +231,36 @@ def _is_email(token: str) -> bool:
     return bool(re.fullmatch(r"[\w.+-]+@[\w-]+\.[\w.-]+", token))
 
 
-def _digit_windows(core: str, tokens: list, index: int) -> list:
-    """Every run of digit-group tokens starting here, longest first.
+def _looks_like_decimal(token: str) -> bool:
+    """A thousands-grouped figure with a fractional part: 1,234,567.89."""
+    return bool(re.fullmatch(r"\d{1,3}(?:,\d{3})+\.\d+|\d+\.\d{1,2}", token))
 
-    Each entry is ``(combined_text, extra_tokens_consumed, trailing_punct)``.
 
-    Longest first, and the caller takes the first that matches, because a
-    window that only ever tried its maximum length would abandon the
-    position whenever the widest run happened to be the wrong shape.
-    "card 4111 1111 1111 1111 2026" is five groups; the five-group total is
-    twenty digits and matches nothing, and giving up there printed "4111" in
-    the clear. The four-group prefix is the card.
+def _digit_windows(core: str, tokens: list, index: int, max_window: int) -> list:
+    """Every run of digit-group tokens starting here, in preference order.
+
+    Two orderings, concatenated. Windows that cross no line break come
+    first, longest first; then those that do, longest first. A line break
+    usually separates two numbers -- a card on one line, a telephone number
+    on the next -- but it can also fall inside one that has been wrapped, so
+    it is a preference rather than a boundary. Taking it as a hard boundary
+    would leak a wrapped card whole; ignoring it, as this did, swallowed the
+    following number's first group and printed the rest in the clear.
+
+    Longest first WITHIN each class, because a window that only ever tried
+    its maximum length abandoned the position whenever the widest run was
+    the wrong shape: "card 4111 1111 1111 1111 2026" is five groups and
+    twenty digits, matching nothing, and giving up there printed "4111".
     """
     if not _is_digit_group(core):
-        return []
+        return [[], []]
 
-    windows = [(core, 0, "")]
+    plain, crossing = [(core, 0, "")], []
     combined = core
     count = 1
     pos = index + 1
-    while count < _MAX_WINDOW and pos + 1 < len(tokens):
+    crossed = False
+    while count < max_window and pos + 1 < len(tokens):
         gap = tokens[pos]
         if not _is_space(gap):
             break
@@ -203,18 +269,61 @@ def _digit_windows(core: str, tokens: list, index: int) -> list:
             break
         combined += gap + next_core
         count += 1
-        windows.append((combined, count - 1, next_trail))
+        crossed = crossed or bool(_LINE_BREAK_RE.search(gap))
+        (crossing if crossed else plain).append((combined, count - 1, next_trail))
         pos += 2
         if next_trail:
             break
 
-    windows.reverse()
-    return windows
+    plain.reverse()
+    crossing.reverse()
+    return [plain, crossing]
 
 
-def _check_card(core: str, tokens: list, index: int) -> tuple:
-    """Check if this token, or a run starting at it, is a card number."""
-    for combined, consumed, trail in _digit_windows(core, tokens, index):
+# A card written in groups is nearly always sixteen digits, sometimes
+# fifteen (Amex) and rarely nineteen. When two window lengths both land in
+# the accepted range, the more canonical one is the card and the longer one
+# has eaten whatever followed it: "4111 1111 1111 1111 12" totals eighteen
+# and swallows an expiry month, where the sixteen-digit prefix is the card.
+_CARD_LENGTH_PREFERENCE = (16, 15, 19, 18, 17)
+
+
+def _check_number(core: str, tokens: list, index: int) -> tuple:
+    """Redact this token, or a run starting at it, as a card or a phone number.
+
+    Card before phone at every window, because their digit ranges do not
+    overlap (15-19 against 9-14) and trying phone first would match the
+    first three groups of a four-group card and print the fourth in the
+    clear.
+
+    Both are tried across the windows that cross no line break before
+    either is tried across the windows that do. A line break usually
+    separates two numbers -- a card on one line, a telephone number on the
+    next -- but it can also fall inside one that has been wrapped, so it is
+    a preference rather than a boundary. Taking it as a hard boundary would
+    leak a wrapped card whole; ignoring it swallowed the following number's
+    first group and printed the rest. Preferring one class wholesale, and
+    not merely within a single check, is what keeps a card window on the
+    far side of a line break from beating a phone window on this side.
+    """
+    plus = core.startswith("+")
+    probe = core[1:] if plus else core
+    max_window = _MAX_WINDOW_PLUS if plus else _MAX_WINDOW
+
+    for windows in _digit_windows(probe, tokens, index, max_window):
+        card = _best_card(windows)
+        if card is not None:
+            return card
+        phone = _best_phone(windows, plus=plus)
+        if phone is not None:
+            return phone
+    return core, 0
+
+
+def _best_card(windows: list) -> tuple | None:
+    """The most card-shaped window in this class, or None."""
+    matches = []
+    for combined, consumed, trail in windows:
         digits = _strip_separators(combined)
         if not _looks_like_card_digits(digits):
             continue
@@ -227,21 +336,16 @@ def _check_card(core: str, tokens: list, index: int) -> tuple:
             and len(digits) not in (15, 16, 19)
         ):
             continue
-        return "[number]" + trail, consumed
-    return core, 0
+        matches.append((_CARD_LENGTH_PREFERENCE.index(len(digits)), combined, consumed, trail))
+    if not matches:
+        return None
+    _, _, consumed, trail = min(matches, key=lambda match: match[0])
+    return "[number]" + trail, consumed
 
 
-def _check_phone(core: str, tokens: list, index: int) -> tuple:
-    """Check if this token, or a run starting at it, is a telephone number.
-
-    The international "+" prefix is handled here rather than in a second
-    walk of its own: it changes only whether grouping is required, not how
-    the run is collected, and two walks with different counting conventions
-    was how the last round's partial leaks got in.
-    """
-    plus = core.startswith("+")
-    probe = core[1:] if plus else core
-    for combined, consumed, trail in _digit_windows(probe, tokens, index):
+def _best_phone(windows: list, *, plus: bool) -> tuple | None:
+    """The longest phone-shaped window in this class, or None."""
+    for combined, consumed, trail in windows:
         digits = _strip_separators(combined)
         if not re.fullmatch(r"\d+", digits):
             continue
@@ -252,7 +356,7 @@ def _check_phone(core: str, tokens: list, index: int) -> tuple:
         if not plus and not _SEPARATOR_RE.search(combined):
             continue
         return "[phone]" + trail, consumed
-    return core, 0
+    return None
 
 
 def _strip_separators(token: str) -> str:

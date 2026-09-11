@@ -187,3 +187,122 @@ def test_a_label_glued_to_pii_does_not_shield_it(message):
 def test_narrowing_the_letter_guard_did_not_widen_redaction(message):
     """The companion to the test above: peeling labels must cost nothing here."""
     assert redact(message) == message
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("4111 1111 1111 1111\n020 7946 0958", "[number]\n[phone]"),
+        ("020 7946 0958\n020 7946 0959", "[phone]\n[phone]"),
+    ],
+)
+def test_a_line_break_between_two_numbers_is_a_boundary(message, expected):
+    """Contact details on consecutive lines are one message, not one number.
+
+    Treating every whitespace as a separator -- needed so a wrapped card
+    still redacts -- let a card window cross the line break, swallow the
+    following number's first group and print the rest in the clear.
+    """
+    assert redact(message) == expected
+
+
+def test_a_wrapped_card_still_redacts():
+    """The other side of the same trade: the line break is a preference, not a wall."""
+    assert redact("4111 1111\n1111 1111") == "[number]"
+
+
+def test_a_card_does_not_swallow_the_expiry_that_follows_it():
+    """Eighteen digits is in range; sixteen is the card. The canonical length wins."""
+    assert redact("4111 1111 1111 1111 12 26") == "[number] 12 26"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "amount:1,234,567.89",
+        "total:9876543.21",
+        "ref:1234-5678-9012",
+        "serial:1234-5678-9012",
+        "sku#0000-1111-2222",
+        "po#100-200-300",
+        "order:012 345 678",
+    ],
+)
+def test_a_label_that_is_not_pii_protects_what_follows_it(message):
+    """The label is evidence, not just a prefix to strip.
+
+    Peeling any `word:` closed the glued-PII leak but destroyed labelled
+    identifiers -- exactly the shapes the module promises to keep. These
+    labels say "not personal data", and are read that way.
+    """
+    assert redact(message) == message
+
+
+@pytest.mark.parametrize("message", ["a:" * 1000, "ab#" * 1000, "x=" * 1000])
+def test_a_crafted_label_chain_does_not_crash(message):
+    """This runs on an anonymous endpoint; RecursionError here is a 500."""
+    redact(message)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "case ID 2023-45678.",
+        "order 0123456789.",
+        "my server is 192.168.1.100.",
+        "192.168.1.100,",
+    ],
+)
+def test_a_full_stop_does_not_destroy_a_protected_shape(message):
+    """Every guard is anchored to the whole token, so the edges come off first.
+
+    A trailing "." reads as a group separator and pushed each of these into
+    phone range -- each one a must-keep shape one full stop from ruin.
+    """
+    assert redact(message) == message
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("<wren@lantern.co>", "<[email]>"),
+        ("(wren@lantern.co)", "([email])"),
+        ("my email (wren@lantern.co) is old", "my email ([email]) is old"),
+        ("call 555-123-4567.)", "call [phone].)"),
+        ("my card (4111 1111 1111 1111) expires soon", "my card ([number]) expires soon"),
+    ],
+)
+def test_brackets_around_a_number_survive_it(message, expected):
+    """Brackets were absorbed into the number and vanished with it."""
+    assert redact(message) == expected
+
+
+def test_parentheses_that_are_part_of_the_number_are_kept():
+    """The counter-case: "(555)" is how an area code is written."""
+    assert redact("(555) 123-4567") == "[phone]"
+
+
+def test_an_en_dash_separates_digit_groups_like_a_hyphen():
+    """Word and Gmail rewrite a typed hyphen into one without asking."""
+    assert redact("555–123–4567") == "[phone]"
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [("tel.:555-123-4567", "tel.:[phone]"), ("phone2:555-123-4567", "phone2:[phone]")],
+)
+def test_label_variants_people_actually_type(message, expected):
+    assert redact(message) == expected
+
+
+def test_a_money_figure_is_not_a_telephone_number():
+    assert redact("refund of 1,234,567.89 please") == "refund of 1,234,567.89 please"
+
+
+def test_a_six_group_list_of_numbers_is_not_a_phone_number():
+    """Six space-separated groups is a CSV paste or a list far more often
+    than a telephone number. The one number that genuinely needs six groups
+    is international, and there the "+" is the evidence that earns it --
+    which is why the wider window is granted only to a "+" prefix.
+    """
+    assert redact("items 1 2 3 4 5 1000") == "items 1 2 3 4 5 1000"
