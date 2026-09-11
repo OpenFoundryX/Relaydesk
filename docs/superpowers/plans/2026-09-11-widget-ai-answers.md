@@ -724,13 +724,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relaydesk.models.kb import KbArticle, KbCategory
-from relaydesk.services import kb_public, kb_text
-
-# A tunable, not a constant. The right value is a property of a workspace's
-# writing, and the deflection counters from slice 8 are what will
-# eventually set it -- they record what visitors searched and whether they
-# escalated anyway.
-RELEVANCE_FLOOR = 0.05
+from relaydesk.services import kb_public
 
 _MARKER = re.compile(r"\[(\d{1,2})\]")
 
@@ -763,10 +757,16 @@ def _body(article: KbArticle) -> str:
     result. A model handed five of those cannot answer from them, and a
     model that cannot answer from its sources does not say so -- it fills
     the gap from training data, which is the failure grounding exists to
-    prevent. ``extract_text`` is the same function that feeds Postgres
-    full-text search, so what the model reads is what search matched on.
+    prevent.
+
+    ``body_text`` is the column ``search_vector`` is computed from
+    (``kb.py``: ``to_tsvector('english', title || ' ' || body_text)``), so
+    what the model reads is literally what search matched on. It is
+    extracted once on write in ``kb_articles.update``; re-deriving it here
+    from ``doc`` would parse the same JSON again on every question to
+    arrive at the same string.
     """
-    text = kb_text.extract_text(article.doc).strip()
+    text = article.body_text.strip()
     return text[:BODY_LIMIT] if text else article.excerpt
 
 
@@ -779,9 +779,16 @@ async def retrieve(
 ) -> list[Source]:
     """The published articles this question may be answered from, numbered.
 
-    Returns an empty list when nothing is relevant enough, and the caller
-    must treat that as "do not call the model" rather than as "call it with
-    no context" -- a model given no sources will answer from its training
+    The relevance floor is Postgres\' own: ``kb_public.search`` filters on
+    ``search_vector @@ websearch_to_tsquery(...)``, so an article that comes
+    back matched the question and one that did not is already absent. There
+    is no separate score to threshold against here, and inventing one would
+    mean surfacing ``ts_rank`` out of ``kb_articles.search`` -- a change to
+    the help site\'s search, not to this module.
+
+    Returns an empty list when nothing matched, and the caller must treat
+    that as "do not call the model" rather than as "call it with no
+    context" -- a model given no sources will answer from its training
     data, which is exactly what grounding exists to prevent.
     """
     articles = await kb_public.search(session, workspace_id, question)
