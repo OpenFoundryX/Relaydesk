@@ -120,6 +120,16 @@ def _is_email(token: str) -> bool:
     return bool(re.fullmatch(r"[\w.+-]+@[\w-]+\.[\w.-]+", token))
 
 
+# What counts as a separator between the digit groups of a card or phone
+# number, for both "strip these out before counting digits" and "does this
+# have a separator at all" checks. \s is the same whitespace class the
+# tokenizer split on (tabs, newlines, non-breaking spaces -- not just the
+# ASCII space), so a number joined across a multi-token window can never
+# leak just because its gap character wasn't in some narrower, separately
+# maintained list. This one definition is the only place that list lives.
+_SEPARATOR_RE = re.compile(r"[\s,.\-()]")
+
+
 def _check_card(token: str, tokens: list, index: int) -> tuple:
     """Check if token or token sequence is a card number.
 
@@ -128,7 +138,7 @@ def _check_card(token: str, tokens: list, index: int) -> tuple:
     # Single token: check if it's a card
     digits_only = _strip_separators(token)
     if _looks_like_card_digits(digits_only):
-        has_sep = any(c in token for c in " ,-.")
+        has_sep = bool(_SEPARATOR_RE.search(token))
         if has_sep or len(digits_only) in [15, 16, 19]:
             return "[number]", 0
 
@@ -163,13 +173,13 @@ def _check_phone(token: str, tokens: list, index: int) -> tuple:
 
 
 def _strip_separators(token: str) -> str:
-    """Remove spaces, commas, dots, and dashes."""
-    return token.translate(str.maketrans("", "", " ,.-"))
+    """Remove digit-group separators (whitespace, commas, dots, dashes)."""
+    return _SEPARATOR_RE.sub("", token)
 
 
 def _strip_separators_and_parens(token: str) -> str:
-    """Remove spaces, commas, dots, dashes, and parentheses."""
-    return token.translate(str.maketrans("", "", " ,.-()"))
+    """Remove digit-group separators, including parentheses."""
+    return _SEPARATOR_RE.sub("", token)
 
 
 def _looks_like_card_digits(digits: str) -> bool:
@@ -187,7 +197,7 @@ def _looks_like_phone_digits(digits: str, original: str) -> bool:
     if not (9 <= len(digits) <= 14):
         return False
     # Must have at least one separator or start with +
-    has_sep = any(c in original for c in " -,.()")
+    has_sep = bool(_SEPARATOR_RE.search(original))
     starts_with_plus = original.startswith("+")
     return has_sep or starts_with_plus
 

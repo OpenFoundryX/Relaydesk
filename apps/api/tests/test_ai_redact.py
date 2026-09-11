@@ -29,6 +29,10 @@ from relaydesk.services.ai_redact import redact
         ("phone:555-123-4567", "phone:[phone]"),
         ("email:foo@bar.com", "email:[email]"),
         ("card#4111111111111111", "card#[number]"),
+        # Non-literal (but still whitespace) separators between digit groups
+        ("4111 1111\n1111 1111", "[number]"),
+        ("020\t7946\t0958", "[phone]"),
+        ("call 555\xa0123\xa04567", "call [phone]"),
     ],
 )
 def test_redacts(raw, expected):
