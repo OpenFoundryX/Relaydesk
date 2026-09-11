@@ -45,6 +45,11 @@ async def test_revoking_an_embed_keeps_the_record_of_what_it_spent(db_session) -
 
     await widget_keys.delete(db_session, workspace.id, key.id)
 
+    # Expunge all objects to ensure a genuine row load from the database,
+    # not a cached identity-mapped object. Without this, the test would pass
+    # by accident if the object was garbage-collected before re-select.
+    db_session.expunge_all()
+
     row = await db_session.scalar(sa.select(AiCall))
     assert row is not None
     assert row.widget_key_id is None

@@ -1,8 +1,7 @@
 import enum
 import uuid
 
-from sqlalchemy import Enum, ForeignKey, Integer, String
-from sqlalchemy import BigInteger
+from sqlalchemy import BigInteger, Enum, ForeignKey, Index, Integer, String
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -40,6 +39,7 @@ class AiCall(UUIDMixin, TimestampMixin, Base):
     """
 
     __tablename__ = "ai_calls"
+    __table_args__ = (Index("ix_ai_calls_workspace_created", "workspace_id", "created_at"),)
 
     workspace_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True),
