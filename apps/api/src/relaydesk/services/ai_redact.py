@@ -55,6 +55,55 @@ def redact(text: str) -> str:
 
 _LABEL_RE = re.compile(r"[A-Za-z]{1,12}[:#=]")
 
+# Punctuation that can sit either side of a number without being part of it.
+# Deliberately excludes "(", ")" and "-": those are group separators inside a
+# real number -- "(555) 123-4567" -- and peeling them would take the number
+# apart. "." and "," appear in both roles, but only ever as separators in the
+# MIDDLE of a number, so peeling them at the edges alone is safe.
+_EDGE_PUNCT = "\"'`;:!?.,\u00ab\u00bb\u201c\u201d\u2018\u2019"
+
+# What counts as a separator between the digit groups of a card or phone
+# number, for both "strip these out before counting digits" and "does this
+# have a separator at all" checks. \s is the same whitespace class the
+# tokenizer split on (tabs, newlines, non-breaking spaces -- not just the
+# ASCII space), so a number joined across a multi-token window can never
+# leak just because its gap character wasn't in some narrower, separately
+# maintained list. This one definition is the only place that list lives.
+_SEPARATOR_RE = re.compile(r"[\s,.\-()]")
+
+_SPACE_RE = re.compile(r"\s+")
+_DIGIT_GROUP_RE = re.compile(r"[\d,.\-() ]+")
+
+# Six tokens, not five. A number written "+33 1 42 68 53 00" is six groups,
+# and a window that stopped at five would redact the first five and print the
+# last two digits in the clear -- a partial leak is the one outcome worse
+# than either redacting or not.
+_MAX_WINDOW = 6
+
+
+def _is_space(token: str) -> bool:
+    return bool(_SPACE_RE.fullmatch(token))
+
+
+def _is_digit_group(token: str) -> bool:
+    """Digits and separators only, and at least one digit.
+
+    The digit requirement stops a run of dashes or dots being treated as the
+    start of a number.
+    """
+    return bool(_DIGIT_GROUP_RE.fullmatch(token)) and any(c.isdigit() for c in token)
+
+
+def _split_edges(token: str) -> tuple[str, str, str]:
+    """``token`` as (leading punctuation, core, trailing punctuation)."""
+    start = 0
+    while start < len(token) and token[start] in _EDGE_PUNCT:
+        start += 1
+    end = len(token)
+    while end > start and token[end - 1] in _EDGE_PUNCT:
+        end -= 1
+    return token[:start], token[start:end], token[end:]
+
 
 def _redact_token(token: str, tokens: list, index: int) -> tuple:
     """Check if a token should be redacted.
@@ -76,6 +125,20 @@ def _redact_token(token: str, tokens: list, index: int) -> tuple:
             if redacted_remainder != remainder:
                 return label_match.group() + redacted_remainder, consumed
 
+    # Punctuation around a number is not part of it. Without this a quoted
+    # card or a phone number ending a sentence goes out in the clear,
+    # because every check below is anchored to the whole token. Peeling it
+    # here also stops the full stop in "call 555-123-4567." being eaten as
+    # though it were a group separator.
+    lead, core, trail = _split_edges(token)
+    if core and (lead or trail):
+        # A token that ENDS in punctuation also ends any multi-token number,
+        # so the window must not be allowed to read past it.
+        window = tokens[: index + 1] if trail else tokens
+        redacted_core, consumed = _redact_token(core, window, index)
+        if redacted_core != core:
+            return lead + redacted_core + trail, consumed
+
     # Email: must contain @ and match email pattern
     if "@" in token and _is_email(token):
         return "[email]", 0
@@ -96,21 +159,13 @@ def _redact_token(token: str, tokens: list, index: int) -> tuple:
     if re.fullmatch(r"\d{4,5}-\d{2,5}", token):
         return token, 0
 
-    # Check for card number (single token or multi-token sequence)
     result, consumed = _check_card(token, tokens, index)
     if result != token:
         return result, consumed
 
-    # Check for phone number (single token or multi-token sequence)
-    # Handle + prefix by looking ahead
-    if token.startswith("+"):
-        result, consumed = _check_phone_with_plus(token, tokens, index)
-        if result != token:
-            return result, consumed
-    else:
-        result, consumed = _check_phone(token, tokens, index)
-        if result != token:
-            return result, consumed
+    result, consumed = _check_phone(token, tokens, index)
+    if result != token:
+        return result, consumed
 
     return token, 0
 
@@ -120,117 +175,94 @@ def _is_email(token: str) -> bool:
     return bool(re.fullmatch(r"[\w.+-]+@[\w-]+\.[\w.-]+", token))
 
 
-# What counts as a separator between the digit groups of a card or phone
-# number, for both "strip these out before counting digits" and "does this
-# have a separator at all" checks. \s is the same whitespace class the
-# tokenizer split on (tabs, newlines, non-breaking spaces -- not just the
-# ASCII space), so a number joined across a multi-token window can never
-# leak just because its gap character wasn't in some narrower, separately
-# maintained list. This one definition is the only place that list lives.
-_SEPARATOR_RE = re.compile(r"[\s,.\-()]")
+def _digit_windows(core: str, tokens: list, index: int) -> list:
+    """Every run of digit-group tokens starting here, longest first.
 
+    Each entry is ``(combined_text, extra_tokens_consumed, trailing_punct)``.
 
-def _check_card(token: str, tokens: list, index: int) -> tuple:
-    """Check if token or token sequence is a card number.
-
-    Returns (redacted, tokens_consumed).
+    Longest first, and the caller takes the first that matches, because a
+    window that only ever tried its maximum length would abandon the
+    position whenever the widest run happened to be the wrong shape.
+    "card 4111 1111 1111 1111 2026" is five groups; the five-group total is
+    twenty digits and matches nothing, and giving up there printed "4111" in
+    the clear. The four-group prefix is the card.
     """
-    # Single token: check if it's a card
-    digits_only = _strip_separators(token)
-    if _looks_like_card_digits(digits_only):
-        has_sep = bool(_SEPARATOR_RE.search(token))
-        if has_sep or len(digits_only) in [15, 16, 19]:
-            return "[number]", 0
+    if not _is_digit_group(core):
+        return []
 
-    # Multi-token: try combining 2-5 consecutive digit-group tokens
-    combined, consumed = _collect_digit_tokens(token, tokens, index, max_tokens=5)
-    if consumed > 0:
-        digits_only = _strip_separators(combined)
-        if _looks_like_card_digits(digits_only):
-            return "[number]", consumed - 1  # -1 because first token is current
+    windows = [(core, 0, "")]
+    combined = core
+    count = 1
+    pos = index + 1
+    while count < _MAX_WINDOW and pos + 1 < len(tokens):
+        gap = tokens[pos]
+        if not _is_space(gap):
+            break
+        next_lead, next_core, next_trail = _split_edges(tokens[pos + 1])
+        if next_lead or not _is_digit_group(next_core):
+            break
+        combined += gap + next_core
+        count += 1
+        windows.append((combined, count - 1, next_trail))
+        pos += 2
+        if next_trail:
+            break
 
-    return token, 0
+    windows.reverse()
+    return windows
 
 
-def _check_phone(token: str, tokens: list, index: int) -> tuple:
-    """Check if token or token sequence is a phone number.
+def _check_card(core: str, tokens: list, index: int) -> tuple:
+    """Check if this token, or a run starting at it, is a card number."""
+    for combined, consumed, trail in _digit_windows(core, tokens, index):
+        digits = _strip_separators(combined)
+        if not _looks_like_card_digits(digits):
+            continue
+        # A bare run of digits with no grouping at all is only a card at the
+        # lengths that are unambiguously one; otherwise it is somebody's
+        # order number.
+        if (
+            consumed == 0
+            and not _SEPARATOR_RE.search(combined)
+            and len(digits) not in (15, 16, 19)
+        ):
+            continue
+        return "[number]" + trail, consumed
+    return core, 0
 
-    Returns (redacted, tokens_consumed).
+
+def _check_phone(core: str, tokens: list, index: int) -> tuple:
+    """Check if this token, or a run starting at it, is a telephone number.
+
+    The international "+" prefix is handled here rather than in a second
+    walk of its own: it changes only whether grouping is required, not how
+    the run is collected, and two walks with different counting conventions
+    was how the last round's partial leaks got in.
     """
-    # Single token
-    digits_only = _strip_separators_and_parens(token)
-    if _looks_like_phone_digits(digits_only, token):
-        return "[phone]", 0
-
-    # Multi-token: try combining 2-5 consecutive digit-group tokens
-    combined, consumed = _collect_digit_tokens(token, tokens, index, max_tokens=5)
-    if consumed > 0:
-        digits_only = _strip_separators_and_parens(combined)
-        if _looks_like_phone_digits(digits_only, combined):
-            return "[phone]", consumed - 1
-
-    return token, 0
+    plus = core.startswith("+")
+    probe = core[1:] if plus else core
+    for combined, consumed, trail in _digit_windows(probe, tokens, index):
+        digits = _strip_separators(combined)
+        if not re.fullmatch(r"\d+", digits):
+            continue
+        if not 9 <= len(digits) <= 14:
+            continue
+        # Grouping (or a country code) is what separates a phone number from
+        # a nine-digit account number.
+        if not plus and not _SEPARATOR_RE.search(combined):
+            continue
+        return "[phone]" + trail, consumed
+    return core, 0
 
 
 def _strip_separators(token: str) -> str:
-    """Remove digit-group separators (whitespace, commas, dots, dashes)."""
-    return _SEPARATOR_RE.sub("", token)
-
-
-def _strip_separators_and_parens(token: str) -> str:
-    """Remove digit-group separators, including parentheses."""
+    """Remove digit-group separators (whitespace, commas, dots, dashes, parens)."""
     return _SEPARATOR_RE.sub("", token)
 
 
 def _looks_like_card_digits(digits: str) -> bool:
     """Check if digit string looks like a card (15-19 digits)."""
-    return (
-        bool(re.fullmatch(r"\d+", digits))
-        and 15 <= len(digits) <= 19
-    )
-
-
-def _looks_like_phone_digits(digits: str, original: str) -> bool:
-    """Check if digits look like a phone (9-14 digits with structure)."""
-    if not re.fullmatch(r"\d+", digits):
-        return False
-    if not (9 <= len(digits) <= 14):
-        return False
-    # Must have at least one separator or start with +
-    has_sep = bool(_SEPARATOR_RE.search(original))
-    starts_with_plus = original.startswith("+")
-    return has_sep or starts_with_plus
-
-
-def _collect_digit_tokens(token: str, tokens: list, index: int, max_tokens: int) -> tuple:
-    """Collect up to max_tokens consecutive digit-group tokens.
-
-    Returns (combined_string, total_tokens_collected).
-    """
-    if not re.fullmatch(r"[\d,.\-() ]+", token):
-        return token, 0
-
-    combined = token
-    count = 1
-    pos = index + 1
-
-    while count < max_tokens and pos < len(tokens):
-        # Skip whitespace
-        if re.match(r"\s+$", tokens[pos]):
-            combined += tokens[pos]
-            pos += 1
-            if pos >= len(tokens):
-                break
-        # Check if next token is also digits/separators
-        next_token = tokens[pos]
-        if re.fullmatch(r"[\d,.\-() ]+", next_token):
-            combined += next_token
-            count += 1
-            pos += 1
-        else:
-            break
-
-    return combined, count
+    return bool(re.fullmatch(r"\d+", digits)) and 15 <= len(digits) <= 19
 
 
 def _looks_like_ip(token: str) -> bool:
@@ -238,48 +270,4 @@ def _looks_like_ip(token: str) -> bool:
     parts = token.split(".")
     if len(parts) != 4:
         return False
-    for part in parts:
-        if not re.fullmatch(r"\d{1,3}", part):
-            return False
-    return True
-
-
-def _check_phone_with_plus(token: str, tokens: list, index: int) -> tuple:
-    """Check if token starting with + (plus country code) is a phone.
-
-    Combines multiple tokens: +CC number number...
-    Returns (redacted, tokens_consumed).
-    """
-    # Collect the + token plus following digit tokens
-    combined = token
-    count = 0
-    pos = index + 1
-
-    # Look ahead for up to 5 more tokens that are digits/separators
-    while count < 5 and pos < len(tokens):
-        next_token = tokens[pos]
-        # Skip whitespace but include it
-        if re.match(r"\s+$", next_token):
-            combined += next_token
-            pos += 1
-        # Check if next token is digits/separators (but not +)
-        elif re.fullmatch(r"[\d,.\-() ]+", next_token):
-            combined += next_token
-            count += 1
-            pos += 1
-        else:
-            break
-
-    if count == 0:
-        # No digit tokens found after +
-        return token, 0
-
-    digits_only = _strip_separators_and_parens(combined)
-    # Remove the + from digit count
-    digits_only = digits_only.lstrip("+")
-
-    # Must have country code (1-3 digits) + at least 7 more digits = minimum 9 total
-    if len(digits_only) >= 9 and re.fullmatch(r"\d+", digits_only):
-        return "[phone]", count
-
-    return token, 0
+    return all(re.fullmatch(r"\d{1,3}", part) for part in parts)

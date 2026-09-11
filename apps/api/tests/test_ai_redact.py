@@ -101,3 +101,89 @@ def test_redact_performance(payload_size, max_seconds):
     assert elapsed < max_seconds, f"Redaction took {elapsed:.3f}s for {payload_size} bytes, expected < {max_seconds}s"
     # Verify the result is unchanged (no matches should occur)
     assert result == large_input
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "4111 1111\n1111 1111",
+        "020\t7946\t0958",
+        "call 555\xa0123\xa04567",
+    ],
+)
+def test_a_number_split_by_any_whitespace_is_still_a_number(message):
+    """The separator set and the tokenizer must not be able to disagree.
+
+    `redact` splits on `\\s`, so a card broken across a line, a tab-aligned
+    column, or a non-breaking space arrives as several tokens exactly as a
+    space-separated one does. When the window's own idea of a separator was
+    a hand-written list of ASCII characters, each of these went out in full.
+    """
+    assert message not in redact(message)
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("call 555-123-4567;", "call [phone];"),
+        ("call 555-123-4567?", "call [phone]?"),
+        ("call 555-123-4567!", "call [phone]!"),
+        ('"4111 1111 1111 1111"', '"[number]"'),
+        # And the full stop survives rather than being eaten as a separator.
+        ("call 555-123-4567.", "call [phone]."),
+    ],
+)
+def test_punctuation_around_a_number_is_not_part_of_it(message, expected):
+    """Every check is anchored to a whole token, so the edges must come off first."""
+    assert redact(message) == expected
+
+
+def test_a_card_followed_by_another_number_does_not_leak_its_first_group():
+    """The window tries shorter runs rather than abandoning the position.
+
+    Five digit groups in a row is not a card, and a window that only ever
+    tried its own maximum length gave up here and emitted "4111" in the
+    clear -- the one outcome worse than either redacting or not.
+    """
+    assert redact("card 4111 1111 1111 1111 2026") == "card [number] 2026"
+
+
+def test_two_adjacent_phone_numbers_are_both_redacted():
+    assert redact("020 7946 0958 555-123-4567") == "[phone] [phone]"
+
+
+def test_a_six_group_international_number_is_redacted_whole():
+    """Five groups would have redacted the first five and printed "00"."""
+    assert redact("+33 1 42 68 53 00") == "[phone]"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "phone:555-123-4567",
+        "email:foo@bar.com",
+        "card#4111111111111111",
+        "SSN:123-45-6789",
+    ],
+)
+def test_a_label_glued_to_pii_does_not_shield_it(message):
+    """The letter-guard protects "INV-2024-0042"; it must not protect this."""
+    assert message not in redact(message)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "ticket #100234567",
+        "my invoice is INV-2024-0042",
+        "case ID 2023-45678",
+        "the 2026-09-11 release",
+        "SW1A 1AA",
+        "09:30:15",
+        "version 2.5.1 broke it",
+        "price range 100-200 dollars",
+    ],
+)
+def test_narrowing_the_letter_guard_did_not_widen_redaction(message):
+    """The companion to the test above: peeling labels must cost nothing here."""
+    assert redact(message) == message
