@@ -306,3 +306,72 @@ def test_a_six_group_list_of_numbers_is_not_a_phone_number():
     which is why the wider window is granted only to a "+" prefix.
     """
     assert redact("items 1 2 3 4 5 1000") == "items 1 2 3 4 5 1000"
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("my card is 6212 3456 7890 1234 567 thanks", "my card is [number] thanks"),
+        ("card:1234 5678 9012 3456 999", "card:[number]"),
+    ],
+)
+def test_a_nineteen_digit_card_is_redacted_whole(message, expected):
+    """Fifteen, sixteen and nineteen are all real card lengths.
+
+    Preferring the sixteen-digit prefix fixed a window that ate an expiry
+    month, and printed the last three digits of every nineteen-digit card
+    in the clear instead. A canonical total beats a non-canonical one;
+    between two canonical totals the longer window is the whole card.
+    """
+    assert redact(message) == expected
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("mailto:wren@lantern.co", "mailto:[email]"),
+        ("from:wren@lantern.co", "from:[email]"),
+        ("contact:555-123-4567", "contact:[phone]"),
+        ("number:555-123-4567", "number:[phone]"),
+        ("whatsapp:555-123-4567", "whatsapp:[phone]"),
+        ("card no:4111 1111 1111 1111", "card no:[number]"),
+    ],
+)
+def test_an_unfamiliar_label_fails_towards_redaction(message, expected):
+    """A list of known PII labels fails open, and these all walked through it.
+
+    The list that has to be right is the one naming things that are NOT
+    personal data; anything unrecognised is treated as though it might be.
+    """
+    assert redact(message) == expected
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("ring me on ((555) 123-4567) ok", "ring me on ([phone]) ok"),
+        ("((wren@lantern.co))", "(([email]))"),
+        ("[(wren@lantern.co)]", "[([email])]"),
+    ],
+)
+def test_nested_brackets_all_come_off(message, expected):
+    """Two bugs in one: the pair branch peeled without recording that it had,
+    so the loop stopped after one pair; and "is this bracket unmatched?" was
+    asked as a presence test, which "((555)" passes while still having one
+    "(" too many.
+    """
+    assert redact(message) == expected
+
+
+def test_money_in_brackets_is_still_money():
+    assert (
+        redact("the refund (1,234,567.89) was reversed")
+        == "the refund (1,234,567.89) was reversed"
+    )
+
+
+def test_a_long_run_of_brackets_stays_fast():
+    """The balance test is linear, so an unbounded peel over it is quadratic."""
+    start = time.time()
+    redact("(" * 200_000)
+    assert time.time() - start < 1.0

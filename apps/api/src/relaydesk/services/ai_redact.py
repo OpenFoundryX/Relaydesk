@@ -62,20 +62,24 @@ def redact(text: str) -> str:
     return "".join(result)
 
 
-# Only labels that announce PII. Leak 1 was "phone:555-123-4567" and
-# "card#4111111111111111" passing through whole because the letter-guard
-# returned the token on sight of a letter. Peeling ANY "word:" prefix closed
-# that but destroyed labelled identifiers instead -- "amount:1,234,567.89"
-# became "amount:[phone]", and "serial:", "sku#", "po#" and "order:" went the
-# same way. The label is the strongest evidence available about what follows
-# it, so it is read as evidence rather than merely stripped: these labels say
-# "personal data follows", and every other label says the opposite.
+# A label glued to a number tells you what the number is, and the question
+# is which way to fail when the label is unfamiliar. Peeling ANY "word:"
+# destroyed labelled identifiers -- "amount:1,234,567.89" became
+# "amount:[phone]", likewise "serial:", "sku#", "po#". Peeling only a list
+# of known PII labels fixed that and failed the other way: "mailto:",
+# "contact:", "whatsapp:", "number:" and a dozen others sailed through with
+# real telephone numbers and addresses attached.
 #
-# Bounding the peel to a fixed vocabulary also removes the recursion that a
-# crafted token could drive -- "a:" repeated a thousand times reached Python's
-# frame limit and raised RecursionError out of an anonymous endpoint.
-_PII_LABEL_RE = re.compile(
-    r"(?:phone|telephone|tel|mobile|mob|cell|fax|email|mail|card|ssn|sin|nino)"
+# So the list that has to be right is the one naming things that are NOT
+# personal data, and an unfamiliar label fails toward redaction. That is the
+# safer direction here: an over-redacted "widget:1234567890" costs one
+# unanswerable question, where an under-redacted "whatsapp:555-123-4567"
+# sends a stranger's number to a third party.
+_LABEL_RE = re.compile(r"[A-Za-z]{1,12}\d?\.?[:#=]")
+_NON_PII_LABEL_RE = re.compile(
+    r"(?:amount|total|sum|price|cost|qty|quantity|ref|reference|serial|sn|sku"
+    r"|po|order|lot|batch|invoice|inv|account|acct|id|case|ticket|item|part"
+    r"|seq|line|row|page|version|build|rev|job|task|issue|bug|step|port|pid)"
     r"\d?\.?[:#=]",
     re.IGNORECASE,
 )
@@ -110,6 +114,8 @@ _DIGIT_GROUP_RE = re.compile(r"[\d,.\-–—() ]+")
 _MAX_WINDOW = 5
 _MAX_WINDOW_PLUS = 6
 
+_MAX_EDGE_PEELS = 16
+
 # The label peel may fire at most this many times on one token. A fixed
 # vocabulary makes deep nesting implausible; this makes it impossible.
 _MAX_LABEL_DEPTH = 2
@@ -136,7 +142,12 @@ def _split_edges(token: str) -> tuple[str, str, str]:
     """
     start, end = 0, len(token)
     peeled = True
-    while peeled and start < end:
+    # Bounded because the `in token[start:end]` balance test is linear, and
+    # an unbounded peel over a long run of brackets is therefore quadratic.
+    # Real punctuation around a number does not run deeper than this.
+    for _ in range(_MAX_EDGE_PEELS):
+        if not peeled or start >= end:
+            break
         peeled = False
 
         lead_char, trail_char = token[start], token[end - 1]
@@ -147,17 +158,25 @@ def _split_edges(token: str) -> tuple[str, str, str]:
             and not _is_digit_group(token[start + 1 : end - 1])
         ):
             start, end = start + 1, end - 1
+            peeled = True
             continue
 
+        # "Is this bracket unmatched?" is a question about counts, not about
+        # presence: "((555)" contains a ")" but still has one "(" too many,
+        # and testing for presence left the outer one glued to the number.
         if lead_char in _EDGE_PUNCT or (
-            lead_char in _CLOSER and _CLOSER[lead_char] not in token[start:end]
+            lead_char in _CLOSER
+            and token.count(lead_char, start, end)
+            > token.count(_CLOSER[lead_char], start, end)
         ):
             start += 1
             peeled = True
             continue
 
         if trail_char in _EDGE_PUNCT or (
-            trail_char in _OPENER and _OPENER[trail_char] not in token[start:end]
+            trail_char in _OPENER
+            and token.count(trail_char, start, end)
+            > token.count(_OPENER[trail_char], start, end)
         ):
             end -= 1
             peeled = True
@@ -191,8 +210,12 @@ def _redact_core(core: str, tokens: list, index: int, depth: int) -> tuple:
     phone rule with its full stop still attached, and a trailing "." reads
     as a group separator.
     """
-    label_match = _PII_LABEL_RE.match(core)
-    if label_match and depth < _MAX_LABEL_DEPTH:
+    label_match = _LABEL_RE.match(core)
+    if (
+        label_match
+        and depth < _MAX_LABEL_DEPTH
+        and not _NON_PII_LABEL_RE.fullmatch(label_match.group())
+    ):
         remainder = core[label_match.end():]
         if remainder:
             inner, consumed = _redact_core(remainder, tokens, index, depth + 1)
@@ -220,7 +243,7 @@ def _redact_core(core: str, tokens: list, index: int, depth: int) -> tuple:
 
     # A figure with both a thousands separator and a decimal point is money,
     # not a telephone number.
-    if _looks_like_decimal(core):
+    if _looks_like_decimal(core.strip("()")):
         return core, 0
 
     return _check_number(core, tokens, index)
@@ -280,12 +303,17 @@ def _digit_windows(core: str, tokens: list, index: int, max_window: int) -> list
     return [plain, crossing]
 
 
-# A card written in groups is nearly always sixteen digits, sometimes
-# fifteen (Amex) and rarely nineteen. When two window lengths both land in
-# the accepted range, the more canonical one is the card and the longer one
-# has eaten whatever followed it: "4111 1111 1111 1111 12" totals eighteen
-# and swallows an expiry month, where the sixteen-digit prefix is the card.
-_CARD_LENGTH_PREFERENCE = (16, 15, 19, 18, 17)
+# Cards come in fifteen, sixteen and nineteen digits. Seventeen and
+# eighteen are accepted because the range is a sanity check rather than a
+# card catalogue, but they are not real card lengths -- a window totalling
+# eighteen has eaten something that follows, as "4111 1111 1111 1111 12"
+# eats an expiry month over the sixteen-digit card in front of it.
+#
+# So a canonical total beats a non-canonical one. Between two canonical
+# totals the LONGER window wins, because it is the whole card: preferring
+# the shorter one printed the last three digits of every nineteen-digit
+# card in the clear.
+_CANONICAL_CARD_LENGTHS = frozenset({15, 16, 19})
 
 
 def _check_number(core: str, tokens: list, index: int) -> tuple:
@@ -336,10 +364,11 @@ def _best_card(windows: list) -> tuple | None:
             and len(digits) not in (15, 16, 19)
         ):
             continue
-        matches.append((_CARD_LENGTH_PREFERENCE.index(len(digits)), combined, consumed, trail))
+        canonical = len(digits) in _CANONICAL_CARD_LENGTHS
+        matches.append(((0 if canonical else 1, -consumed), consumed, trail))
     if not matches:
         return None
-    _, _, consumed, trail = min(matches, key=lambda match: match[0])
+    _, consumed, trail = min(matches, key=lambda match: match[0])
     return "[number]" + trail, consumed
 
 
