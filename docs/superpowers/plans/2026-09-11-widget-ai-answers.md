@@ -1623,6 +1623,7 @@ async def test_an_uncited_answer_is_recorded_as_refused(db_session) -> None:
     row = await db_session.scalar(sa.select(AiCall))
     assert row.outcome == AiOutcome.refused
     assert row.reason == "no_citation"
+```
 
 - [ ] **Step 6: Run tests**
 
