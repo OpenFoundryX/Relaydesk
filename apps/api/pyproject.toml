@@ -8,6 +8,7 @@ dependencies = [
     "aioimaplib>=1.1,<2",
     "aiosmtplib>=3.0,<4",
     "alembic>=1.14,<2",
+    "anthropic>=1.0",
     "argon2-cffi>=23.1,<26",
     "asyncpg>=0.30,<1",
     "celery[amqp]>=5.4,<6",
