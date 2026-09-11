@@ -25,19 +25,22 @@ _EMAIL = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
 # Crucially: the last digit has no optional separator after it, so the
 # space between card and following word is preserved.
 _CARD = re.compile(r"\b(?:\d[ ,.-]?){14,18}\d\b")
-# An international prefix with +CC, or a leading 0 with structured digits, or
+# An international prefix with +CC, or a leading 0 with separators, or
 # digit groups with required separators. Requires actual phone-like structure
 # to avoid matching bare runs like account or order numbers or dates.
-# The 0-prefix pattern requires specific grouping to avoid date-like patterns.
-# The separated pattern requires 2+ digit groups and final 4 digits to avoid
-# matching date-like patterns like 2024-0042.
+# All quantifiers are bounded to prevent catastrophic backtracking on
+# visitor-supplied input (e.g. long logs or CSV data pasted into questions).
+# The 0-prefix requires at least one separator to exclude structureless IDs,
+# accepting that bare formats like 02079460958 go unredacted (best-effort only).
+# The separated format requires word boundaries to avoid matching within
+# date patterns like 2024-0042 or case IDs like 2023-45678.
 _PHONE = re.compile(
     r"(?:"
-    r"\+\d{1,3}(?:[ ,.-]?\d{1,5})+"  # +CC with digit groups
+    r"\+\d{1,3}(?:[ ,.-]?\d{1,5}){1,4}"  # +CC with 1-4 digit groups (bounded)
     r"|"
-    r"0[ ,.-]?\d{2,5}[ ,.-]?\d{3,4}[ ,.-]?\d{3,4}"  # 0 prefix with structured groups
+    r"0\d{0,4}[ ,.-]\d{1,6}(?:[ ,.-]\d{1,6}){0,2}"  # 0 prefix: up to 3 groups of digits
     r"|"
-    r"(?:\(?\d{2,5}\)?[ ,.-]){2,}\d{4}\b"  # 2+ digit groups + final 4, trailing boundary
+    r"(?:\(?\d{3}\)?[ ,.-]){2,3}\d{4}\b"  # Separated: 3-digit groups, final 4
     r")"
 )
 
