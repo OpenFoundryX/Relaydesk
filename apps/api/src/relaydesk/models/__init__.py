@@ -6,6 +6,7 @@ Alembic autogenerates a migration.
 
 from relaydesk.db.base import Base
 from relaydesk.models.activity import ActivityEvent, ActivityKind
+from relaydesk.models.ai_call import AiCall, AiOutcome
 from relaydesk.models.ai_config import AiConfig
 from relaydesk.models.api_key import ApiKey, ApiKeyScope
 from relaydesk.models.api_usage import ApiKeyUsage
@@ -46,7 +47,9 @@ from relaydesk.models.workspace import Workspace
 __all__ = [
     "ActivityEvent",
     "ActivityKind",
+    "AiCall",
     "AiConfig",
+    "AiOutcome",
     "ApiKey",
     "ApiKeyScope",
     "ApiKeyUsage",
