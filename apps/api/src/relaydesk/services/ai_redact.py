@@ -53,11 +53,29 @@ def redact(text: str) -> str:
     return "".join(result)
 
 
+_LABEL_RE = re.compile(r"[A-Za-z]{1,12}[:#=]")
+
+
 def _redact_token(token: str, tokens: list, index: int) -> tuple:
     """Check if a token should be redacted.
 
     Returns (redacted_token, additional_tokens_consumed).
     """
+    # A leading label glued straight onto PII ("phone:555-123-4567",
+    # "card#4111111111111111") would otherwise be caught whole by the
+    # letter-guard below and pass through unredacted. Peel the label,
+    # check the remainder on its own, and re-attach the label to
+    # whatever comes back. An identifier like "INV-2024-0042" has no
+    # ":"/"#"/"=" after its letters, so it never matches this and stays
+    # protected by the letter-guard as before.
+    label_match = _LABEL_RE.match(token)
+    if label_match:
+        remainder = token[label_match.end():]
+        if remainder:
+            redacted_remainder, consumed = _redact_token(remainder, tokens, index)
+            if redacted_remainder != remainder:
+                return label_match.group() + redacted_remainder, consumed
+
     # Email: must contain @ and match email pattern
     if "@" in token and _is_email(token):
         return "[email]", 0

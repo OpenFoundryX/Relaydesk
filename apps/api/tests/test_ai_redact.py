@@ -25,6 +25,10 @@ from relaydesk.services.ai_redact import redact
         ("card 4111,1111,1111,1111", "card [number]"),
         ("card 4111111111111111", "card [number]"),
         ("card 378282246310005", "card [number]"),
+        # Labels glued straight onto PII
+        ("phone:555-123-4567", "phone:[phone]"),
+        ("email:foo@bar.com", "email:[email]"),
+        ("card#4111111111111111", "card#[number]"),
     ],
 )
 def test_redacts(raw, expected):
