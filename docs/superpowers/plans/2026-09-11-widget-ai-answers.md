@@ -724,7 +724,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relaydesk.models.kb import KbArticle, KbCategory
-from relaydesk.services import kb_public
+from relaydesk.services import kb_public, kb_text
 
 # A tunable, not a constant. The right value is a property of a workspace's
 # writing, and the deflection counters from slice 8 are what will
@@ -746,8 +746,28 @@ class Source:
     body: str
 
 
+# Five articles at this length is roughly 2.5k tokens of context, which the
+# daily budget carries comfortably. Lower it before lowering the article
+# count: fewer sources is a worse answer than shorter ones.
+BODY_LIMIT = 2000
+
+
 def _path(ancestors: list[KbCategory], article: KbArticle) -> str:
     return "/".join([*(category.slug for category in ancestors), article.slug])
+
+
+def _body(article: KbArticle) -> str:
+    """The article's text, not its blurb.
+
+    ``excerpt`` is ``String(400)`` and is written to sit under a search
+    result. A model handed five of those cannot answer from them, and a
+    model that cannot answer from its sources does not say so -- it fills
+    the gap from training data, which is the failure grounding exists to
+    prevent. ``extract_text`` is the same function that feeds Postgres
+    full-text search, so what the model reads is what search matched on.
+    """
+    text = kb_text.extract_text(article.doc).strip()
+    return text[:BODY_LIMIT] if text else article.excerpt
 
 
 async def retrieve(
@@ -776,7 +796,7 @@ async def retrieve(
             article_id=article.id,
             title=article.title,
             path=_path(ancestors.get(article.id, []), article),
-            body=article.excerpt or "",
+            body=_body(article),
         )
         for index, article in enumerate(kept, start=1)
     ]
