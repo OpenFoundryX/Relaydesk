@@ -875,11 +875,12 @@ git commit -m "feat(ai): a citation the server issued is a citation the server c
 **Interfaces:**
 - Consumes: `AiConfig` (Task 1).
 - Produces:
-  - `@dataclass Completion: text: str; input_tokens: int; output_tokens: int; declined: bool`
-  - `class Provider(Protocol)` with `async def complete(self, *, system: str, question: str, model: str) -> AsyncIterator[str]` and `def usage(self) -> Completion`
+  - `class ProviderUnavailable(Exception)` — raised for an outage AND for a refusal; callers must not distinguish them
+  - `@dataclass Completion: text: str = ""; input_tokens: int = 0; output_tokens: int = 0`
+  - `class Provider(Protocol)` with `def complete(self, *, system: str, question: str, model: str) -> AsyncIterator[str]` (declared non-`async`: it is an async *generator* function, so its return type is the iterator) and `def usage(self) -> Completion`
   - `class FakeProvider` — scripted, for every other task's tests
   - `class AnthropicProvider`
-  - `def for_config(config: AiConfig) -> Provider`
+  - `def for_config(config: AiConfig) -> Provider | None`
 
 **Before writing any Anthropic call:** load the `claude-api` skill and read `python/claude-api/README.md` and `python/claude-api/streaming.md`. Do not write the request from memory — `budget_tokens` is rejected on current models, assistant prefill returns 400, and `output_format` is superseded by `output_config`.
 
@@ -912,7 +913,34 @@ async def test_fake_can_be_scripted_to_fail():
 
 
 def test_no_key_means_no_provider():
-    config = AiConfig(provider="anthropic", model="claude-opus-5", api_key=None)
+    """`enabled=True` is load-bearing, not decoration.
+
+    `AiConfig.enabled` carries a SQLAlchemy column `default=False`, which is
+    applied at INSERT, not at construction: an unflushed `AiConfig()` has
+    `enabled is None`. Leave it unset and `for_config` returns `None` on the
+    enabled check having never looked at the key, so this test would pass
+    unchanged with a real key in place -- naming a guarantee it does not
+    observe. Setting it true makes the missing key the only reason.
+    """
+    config = AiConfig(
+        provider="anthropic", model="claude-opus-5", api_key=None, enabled=True
+    )
+    assert for_config(config) is None
+
+
+def test_a_configured_workspace_gets_a_provider():
+    """The other half: without this, `for_config` returning None always would pass."""
+    config = AiConfig(
+        provider="anthropic", model="claude-opus-5", api_key="sk-test", enabled=True
+    )
+    assert for_config(config) is not None
+
+
+def test_disabled_beats_a_present_key():
+    """Switching the feature off must not require discarding the key."""
+    config = AiConfig(
+        provider="anthropic", model="claude-opus-5", api_key="sk-test", enabled=False
+    )
     assert for_config(config) is None
 ```
 
@@ -1074,7 +1102,7 @@ def for_config(config: AiConfig) -> Provider | None:
 - [ ] **Step 5: Run tests**
 
 Run: `docker compose exec -T api pytest tests/test_ai_provider.py -v`
-Expected: PASS (3 tests)
+Expected: PASS (5 tests)
 
 - [ ] **Step 6: Commit**
 
