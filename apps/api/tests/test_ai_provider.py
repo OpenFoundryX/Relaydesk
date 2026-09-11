@@ -22,6 +22,37 @@ async def test_fake_can_be_scripted_to_fail():
         )]
 
 
+async def test_fake_usage_does_not_accumulate_across_calls():
+    """A shared fixture reused across two calls must not report nonsense."""
+    provider = FakeProvider(chunks=["You can ", "ask for one [1]."])
+    [chunk async for chunk in provider.complete(
+        system="s", question="q", model="claude-opus-5"
+    )]
+    [chunk async for chunk in provider.complete(
+        system="s", question="q", model="claude-opus-5"
+    )]
+    second_call_usage = provider.usage()
+
+    fresh = FakeProvider(chunks=["You can ", "ask for one [1]."])
+    [chunk async for chunk in fresh.complete(
+        system="s", question="q", model="claude-opus-5"
+    )]
+    single_call_usage = fresh.usage()
+
+    assert second_call_usage == single_call_usage
+
+
+def test_provider_unavailable_hides_the_cause_in_its_message():
+    """A visitor must not be able to tell an outage from a refusal.
+
+    The type is already the same either way -- this checks the message is
+    too, since the message is what a naive caller is most likely to surface.
+    """
+    refusal = ProviderUnavailable("refused")
+    connection_failure = ProviderUnavailable("Connection reset by peer")
+    assert str(refusal) == str(connection_failure)
+
+
 def test_no_key_means_no_provider():
     """`enabled=True` is load-bearing, not decoration.
 

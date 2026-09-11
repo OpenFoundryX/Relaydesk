@@ -21,8 +21,16 @@ class ProviderUnavailable(Exception):
 
     Deliberately one exception for both. The caller's response is the same
     either way -- degrade to the widget that already works (spec D4) -- and
-    a visitor must not be able to tell an outage from a refusal.
+    a visitor must not be able to tell an outage from a refusal. That
+    guarantee covers ``str(exc)`` too: it is always the same fixed message,
+    regardless of cause. The SDK's own text (or any other operator-useful
+    detail) still reaches logs via ``exc.detail``, which never becomes part
+    of the exception's public string.
     """
+
+    def __init__(self, detail: str = "") -> None:
+        super().__init__("the model is unavailable")
+        self.detail = detail
 
 
 @dataclass
@@ -35,7 +43,15 @@ class Completion:
 class Provider(Protocol):
     def complete(
         self, *, system: str, question: str, model: str
-    ) -> AsyncIterator[str]: ...
+    ) -> AsyncIterator[str]:
+        """Stream the answer, chunk by chunk.
+
+        ``ProviderUnavailable`` can be raised after one or more chunks have
+        already been yielded -- a caller that streams chunks onward as they
+        arrive must be prepared for the stream to end in failure after it
+        has already sent partial text.
+        """
+        ...
 
     def usage(self) -> Completion: ...
 
@@ -51,6 +67,7 @@ class FakeProvider:
     async def complete(
         self, *, system: str, question: str, model: str
     ) -> AsyncIterator[str]:
+        self._usage = Completion()
         if self.fails:
             raise ProviderUnavailable("scripted failure")
         for chunk in self.chunks:
@@ -87,6 +104,12 @@ class AnthropicProvider:
     async def complete(
         self, *, system: str, question: str, model: str
     ) -> AsyncIterator[str]:
+        """Stream the answer, chunk by chunk.
+
+        A mid-stream API error, or a refusal discovered only once the stream
+        ends, both raise ``ProviderUnavailable`` after chunks may already
+        have been yielded -- text already sent to the caller is not undone.
+        """
         import anthropic
 
         try:
