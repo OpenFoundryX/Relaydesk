@@ -1273,8 +1273,8 @@ git commit -m "feat(ai): a spend ceiling checked before the spend, not after"
 **Interfaces:**
 - Consumes: `ai_retrieval.retrieve/render_context/resolve_citations` (Task 4), `ai_provider.for_config/FakeProvider/ProviderUnavailable` (Task 5), `ai_budget.within_budget` (Task 6), `ai_redact.redact` (Task 3), `AiCall`/`AiOutcome` (Task 2), `AiConfig` (Task 1).
 - Produces:
-  - `@dataclass Degraded: reason: str`
-  - `async answer(session, workspace, widget_key, question, *, provider=None) -> AsyncIterator[str] | Degraded` — see the note in Step 3 on why the shape is a small class rather than a bare generator.
+  - `@dataclass Attempt: degraded: bool; reason: str | None = None; stream: AsyncIterator[str] | None = None; sources: list[Source] = []` — see the note in Step 3 on why the shape is one small class rather than a union of a generator and a sentinel.
+  - `async answer(session, workspace, widget_key, question, *, provider=None) -> Attempt`
 
 - [ ] **Step 1: Write the failing test**
 
