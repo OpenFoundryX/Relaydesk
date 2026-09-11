@@ -12,9 +12,9 @@ these patterns are deliberately narrow: an order number stays, a version
 string stays, a duration stays. Only shapes that are almost never anything
 else are replaced.
 
-Skipped entirely when the workspace has configured a ``base_url`` of its
-own (spec D6): the text never leaves their deployment, so redacting it
-costs answer quality and buys nothing.
+A caller may skip redaction entirely when the workspace has configured a
+``base_url`` of its own (spec D6): the text never leaves their deployment,
+so redacting it costs answer quality and buys nothing.
 """
 
 import re
@@ -22,10 +22,24 @@ import re
 _EMAIL = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
 # Long enough runs of digits, optionally grouped, to be a card or an
 # account. Fifteen digits minimum keeps order numbers and years out.
-_CARD = re.compile(r"\b(?:\d[ -]?){15,19}\b")
-# An international prefix, or a run of digits with separators long enough
-# to be a telephone number rather than a quantity.
-_PHONE = re.compile(r"(?:\+\d{1,3}[ -]?)?(?:\(?\d{2,5}\)?[ -]?){2,4}\d{2,4}")
+# Crucially: the last digit has no optional separator after it, so the
+# space between card and following word is preserved.
+_CARD = re.compile(r"\b(?:\d[ ,.-]?){14,18}\d\b")
+# An international prefix with +CC, or a leading 0 with structured digits, or
+# digit groups with required separators. Requires actual phone-like structure
+# to avoid matching bare runs like account or order numbers or dates.
+# The 0-prefix pattern requires specific grouping to avoid date-like patterns.
+# The separated pattern requires 2+ digit groups and final 4 digits to avoid
+# matching date-like patterns like 2024-0042.
+_PHONE = re.compile(
+    r"(?:"
+    r"\+\d{1,3}(?:[ ,.-]?\d{1,5})+"  # +CC with digit groups
+    r"|"
+    r"0[ ,.-]?\d{2,5}[ ,.-]?\d{3,4}[ ,.-]?\d{3,4}"  # 0 prefix with structured groups
+    r"|"
+    r"(?:\(?\d{2,5}\)?[ ,.-]){2,}\d{4}\b"  # 2+ digit groups + final 4, trailing boundary
+    r")"
+)
 
 
 def redact(text: str) -> str:
