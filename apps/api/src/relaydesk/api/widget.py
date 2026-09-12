@@ -16,6 +16,7 @@ swallowed as an article path.
 """
 
 import json
+import logging
 import uuid
 from collections.abc import AsyncIterator
 from datetime import timedelta
@@ -50,6 +51,7 @@ from relaydesk.services import (
     widget_sessions,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -254,32 +256,41 @@ async def record_event(
 
 
 @router.post("/{key}/ask")
-async def ask(
-    key: str, body: WidgetAskIn, session: DbSession, request: Request
-) -> StreamingResponse:
+async def ask(key: str, body: WidgetAskIn, session: DbSession) -> StreamingResponse:
     """Answer from the knowledge base, or say plainly that this degraded.
 
     Always 200 once the key resolves. Every failure inside is a degradation
     to the widget that already works (spec D4), not an error -- a visitor
     who asked a question should never see a stack trace, and a workspace
     that has not configured AI should see no change at all.
+
+    That promise is enforced, not assumed: everything from the rate-limit
+    check through the pre-stream half of `ai_answers.answer` runs under a
+    catch-all, because an unexpected exception there is otherwise exactly
+    as visible to the visitor as a genuine one -- both are a 500 through
+    `main.py`'s generic handler, breaking the SSE contract Task 10 is
+    built against. The exception is logged, not swallowed silently, so an
+    operator can still see it; the visitor only ever sees a degraded frame.
     """
     widget_key = await widget_keys.resolve(session, key)
 
-    within = await ratelimit.check(
-        session,
-        "widget_ask",
-        str(widget_key.id),
-        limit=get_settings().widget_ask_hourly_cap,
-        window=timedelta(hours=1),
-    )
-    if not within:
-        return _degraded("rate_limited")
+    try:
+        within = await ratelimit.check(
+            session,
+            "widget_ask",
+            str(widget_key.id),
+            limit=get_settings().widget_ask_hourly_cap,
+            window=timedelta(hours=1),
+        )
+        if not within:
+            return _degraded("rate_limited")
 
-    attempt = await ai_answers.answer(
-        session, widget_key.workspace, widget_key, body.question.strip()
-    )
-    await session.commit()
+        attempt = await ai_answers.answer(
+            session, widget_key.workspace, widget_key, body.question.strip()
+        )
+    except Exception:
+        logger.exception("widget ask: unexpected failure before streaming")
+        return _degraded("error")
 
     if attempt.degraded:
         return _degraded(attempt.reason or "unavailable")
@@ -287,9 +298,20 @@ async def ask(
     async def events() -> AsyncIterator[str]:
         assert attempt.stream is not None
         answer_text = ""
-        async for chunk in attempt.stream:
-            answer_text += chunk
-            yield f"event: text\ndata: {json.dumps({'text': chunk})}\n\n"
+        try:
+            async for chunk in attempt.stream:
+                answer_text += chunk
+                yield f"event: text\ndata: {json.dumps({'text': chunk})}\n\n"
+        except Exception:
+            # Anything other than `ProviderUnavailable` -- that one is
+            # already caught inside `ai_answers.stream`, which ends the
+            # generator cleanly rather than raising. A client mid-stream
+            # cannot tell an exception here from a network drop unless
+            # this still ends with a `done` frame, the same as every
+            # other failure this route reports (Task 10 depends on it).
+            logger.exception("widget ask: mid-stream failure")
+            yield f"event: done\ndata: {json.dumps({'outcome': 'degraded'})}\n\n"
+            return
         cited = ai_retrieval.resolve_citations(answer_text, attempt.sources)
         payload = {
             "outcome": "answered" if cited else "refused",
@@ -305,9 +327,12 @@ async def ask(
 def _degraded(reason: str) -> StreamingResponse:
     """One terminal event and nothing else.
 
-    The reason travels for the audit's sake, and the panel ignores it: a
-    visitor learning that a workspace has spent its AI budget is
-    information they should not have.
+    `reason` is not read here, and not sent to the client -- the whole
+    point is that a visitor cannot tell a rate limit from an unconfigured
+    workspace from an outage. It exists purely so each call site names,
+    for a reader, what it is degrading because of; it is not written to
+    an audit row by this function (the caller already has, or never had
+    one to write -- rate limiting has no `AiCall` row at all).
     """
 
     async def once() -> AsyncIterator[str]:
