@@ -2,14 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { Article } from "@/components/widget/article";
 import { Ask } from "@/components/widget/ask";
 import { Compose } from "@/components/widget/compose";
 import { Footer } from "@/components/widget/footer";
 import { Header } from "@/components/widget/header";
+import { HelpTabPlaceholder } from "@/components/widget/help-placeholder";
 import { Home } from "@/components/widget/home";
-import { Results } from "@/components/widget/results";
 import { Sent } from "@/components/widget/sent";
+import { TabBar, type PanelTab } from "@/components/widget/tab-bar";
 import type { SubmitWidgetTicketResult } from "@/app/(widget)/widget/frame/actions";
 import type { WidgetSessionEventKind } from "@/lib/api/widget";
 
@@ -72,28 +72,31 @@ export type PanelProps = {
   onSubmit?: (formData: FormData) => Promise<SubmitWidgetTicketResult>;
 };
 
-// Home and Results both offer search; Compose is reachable from either
-// (and, when the knowledge base is empty, is where the panel opens
-// directly), Article is reachable from Results, and Sent is terminal.
-type View =
+// The Home tab's own sub-navigation. Compose is reachable from Home
+// (secondary, or the whole of the primary card without AI) and from Ask's
+// escalate button; Ask is reachable only from Home's primary card, only
+// when `aiEnabled`; Sent is terminal. Search, results and reading an
+// article used to be here too -- they now live behind the Help tab (see
+// `help-placeholder.tsx`), which a second agent is building concurrently
+// in `help.tsx`.
+type HomeView =
   | { name: "home" }
-  | { name: "results"; query: string }
-  | { name: "article"; path: string }
   | { name: "compose" }
   | { name: "ask" }
   | { name: "sent" };
 
 /**
  * The widget panel: everything a visitor sees inside the loader's iframe
- * (spec D5). Composes the seven states the design draws in
- * `docs/superpowers/specs/2026-09-10-support-widget-design.md` §7 behind
- * one piece of view state.
+ * (spec D5). A persistent bottom tab bar -- Home, Messages, Help -- sits
+ * over three screens; only Home has any sub-navigation of its own today,
+ * modelled on Intercom's Messenger.
  *
  * Two rules carry meaning, not taste, and are enforced by which button
  * variant each screen is given, not by anything here: "Send a message" is
- * secondary on Home and primary on Results and Article -- the visitor has
- * tried to self-serve, so escalation becomes the right action -- and dark
- * mode follows `prefers-color-scheme` only, via Tailwind's `dark:`
+ * secondary on Home and primary once the visitor has tried to self-serve
+ * -- the deflection hierarchy the design draws in
+ * `docs/superpowers/specs/2026-09-10-support-widget-design.md` §7 -- and
+ * dark mode follows `prefers-color-scheme` only, via Tailwind's `dark:`
  * variant, because the frame is cross-origin from the host page and has no
  * other signal for it.
  */
@@ -126,16 +129,31 @@ export function Panel({
   // articleCount rather than from a failed search is what stops a new
   // workspace ever rendering a search box over nothing.
   const empty = articleCount === 0;
-  // Three day-one states, in priority order. An empty knowledge base still
-  // opens on `compose` and never mounts a search field (spec D7, slice 8)
-  // -- that rule is untouched, and it outranks AI because a model with
-  // nothing to ground an answer in cannot answer either. Otherwise a
-  // workspace that has configured AI opens on the conversation, and one
-  // that has not opens on search exactly as before.
-  const [view, setView] = useState<View>(() => {
+
+  // Which tab is active. Starts on Home always -- an empty knowledge base
+  // or a configured AI both decide what Home itself opens on (below), not
+  // which tab that is; there is nothing to search yet either way, so
+  // starting anywhere else has nothing to offer.
+  const [tab, setTab] = useState<PanelTab>("home");
+
+  // Three day-one states, in priority order, exactly as before. An empty
+  // knowledge base still opens on `compose` and never mounts a search
+  // affordance (spec D7, slice 8) -- that rule is untouched, and it
+  // outranks AI because a model with nothing to ground an answer in cannot
+  // answer either. Otherwise a workspace that has configured AI opens on
+  // the conversation, and one that has not opens on Home's cards exactly
+  // as before.
+  const [homeView, setHomeView] = useState<HomeView>(() => {
     if (empty) return { name: "compose" };
     return aiEnabled ? { name: "ask" } : { name: "home" };
   });
+
+  // Whether the (still unbuilt) Help tab is showing a full-height screen
+  // of its own -- reading an article, the same way Article used to. Set by
+  // nothing today (the placeholder never calls it), but wired through so
+  // the real Help component has a working `onFullScreenChange` the moment
+  // it lands, instead of needing another round trip through panel.tsx.
+  const [helpFullScreen, setHelpFullScreen] = useState(false);
 
   // Set only by Ask's escalate button, from the turns already on screen
   // (task 11, spec D8): the agent reading the resulting ticket must see
@@ -146,7 +164,12 @@ export function Panel({
   const [transcript, setTranscript] = useState("");
   const compose = (nextTranscript = "") => {
     setTranscript(nextTranscript);
-    setView({ name: "compose" });
+    // Always lands on the Home tab -- the message form has never lived
+    // anywhere else, so a visitor who escalates from a future Help
+    // article is brought back to Home to finish it, the same way Ask's
+    // own escalate button already does today.
+    setTab("home");
+    setHomeView({ name: "compose" });
   };
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -163,7 +186,12 @@ export function Panel({
 
   // Each kind fires at most once per session (spec §1, §4): the deflection
   // baseline counts sessions, not events, so a search box firing on every
-  // keystroke or an article re-opened twice must not inflate it.
+  // keystroke or an article re-opened twice must not inflate it. Only
+  // `submitted` is posted from here today -- `searched` and `read` moved
+  // with the search/results/article flow into the Help tab, and have
+  // nowhere left to fire from until that component (built separately, in
+  // `help.tsx`) wires them back in against its own search box and its own
+  // article view.
   const firedRef = useRef<Set<WidgetSessionEventKind>>(new Set());
 
   // The counter side of the deflection baseline (task 11). Posted to the
@@ -228,23 +256,27 @@ export function Panel({
   }, []);
 
   // The one place "go home" is decided, for every transition that can ask
-  // for it -- Header's back chevron, Compose's own back button, and Sent's
-  // "Back to home". `empty` gates the panel's *initial* view (above), but a
-  // transition is a second, independent way to reach `home`, and each of
-  // these three was reachable even when the knowledge base is empty:
-  // Compose is the initial screen there, so both its back button and, after
-  // a real submission, Sent are always live. Routing every one of them
-  // through this rather than `{ name: "home" }` directly is what stops a
-  // visitor on a zero-article workspace from ever reaching the search field
-  // Home renders -- the exact failure mode spec D7 exists to prevent.
-  const goHome = () => setView(empty ? { name: "compose" } : { name: "home" });
+  // for it -- Compose's own back button and Sent's "Back to home". `empty`
+  // gates the panel's *initial* view (above), but a transition is a second,
+  // independent way to reach `home`, and both of these were reachable even
+  // when the knowledge base is empty: Compose is the initial screen there,
+  // so both its back button and, after a real submission, Sent are always
+  // live. Routing both through this rather than `{ name: "home" }` directly
+  // is what stops a visitor on a zero-article workspace from ever reaching
+  // the cards Home renders -- the exact failure mode spec D7 exists to
+  // prevent.
+  const goHome = () => setHomeView(empty ? { name: "compose" } : { name: "home" });
 
-  // Results and Article are the two screens reached by going further in;
-  // Home is where "further in" starts, so only those two get a way back to
-  // it. Compose carries its own `showBack` (it is reachable from Home
-  // directly, from either of those two, or is the whole panel on an empty
-  // knowledge base), and Sent is terminal with its own way home.
-  const onBack = view.name === "results" || view.name === "article" ? goHome : undefined;
+  // A full-height screen hides the tab bar and gets no back-chevron of its
+  // own from Header -- it carries its own back control instead, exactly as
+  // the reference does it: Compose's inline "Back" link, Sent's "Back to
+  // home", and (once Help is built) an article's own way out. Nothing here
+  // routes through Header's `onBack` today -- that prop existed only for
+  // Results and Article, which have both moved behind the Help tab -- so it
+  // is passed as `undefined` unconditionally until that component defines
+  // its own equivalent.
+  const fullScreen =
+    (tab === "home" && homeView.name !== "home") || (tab === "help" && helpFullScreen);
 
   return (
     <div
@@ -267,63 +299,60 @@ export function Panel({
       style={wide ? { zoom: PANEL_ZOOM, height: `calc(100vh / ${PANEL_ZOOM})` } : undefined}
       className="motion-reduce:transition-none flex h-screen flex-col bg-white text-ink-900 dark:bg-ink-900 dark:text-ink-50"
     >
-      <Header name={displayName} monogram={monogram} onBack={onBack} onClose={close} />
+      <Header name={displayName} monogram={monogram} onClose={close} />
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-        {view.name === "home" && (
-          <Home
-            greeting={branding.greeting}
-            onSearch={(query) => {
-              recordEvent("searched");
-              setView({ name: "results", query });
-            }}
-            onCompose={() => compose()}
-          />
-        )}
-        {view.name === "results" && (
-          <Results
-            key={view.query}
-            widgetKey={widgetKey}
-            query={view.query}
-            onOpen={(path) => {
-              recordEvent("read");
-              setView({ name: "article", path });
-            }}
-            onCompose={() => compose()}
-          />
-        )}
-        {view.name === "article" && (
-          <Article
-            key={view.path}
-            widgetKey={widgetKey}
-            path={view.path}
-            onCompose={() => compose()}
-          />
-        )}
-        {view.name === "compose" && (
-          <Compose
-            showBack={!empty}
-            onBack={goHome}
-            onSent={() => {
-              recordEvent("submitted");
-              setView({ name: "sent" });
-            }}
-            onSubmit={onSubmit}
-            initialEmail={email}
-            initialName={name}
-            transcript={transcript}
-          />
-        )}
-        {view.name === "ask" && (
-          <Ask
-            widgetKey={widgetKey}
-            greeting={branding.greeting}
-            onDegrade={() => setView({ name: "home" })}
-            onCompose={compose}
-            onSubmit={onSubmit}
-          />
-        )}
-        {view.name === "sent" && <Sent onHome={goHome} />}
+        {/* Both tabs stay mounted regardless of which is showing --
+            `hidden` only toggles `display`, not presence -- so switching
+            tabs never loses where the visitor was: a conversation
+            mid-stream, a half-typed message, or (once Help is real)
+            wherever its own search left off. */}
+        <div className={tab === "home" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
+          {homeView.name === "home" && (
+            <Home
+              workspaceName={displayName}
+              name={name}
+              aiEnabled={aiEnabled}
+              articleCount={articleCount}
+              onAsk={() => setHomeView({ name: "ask" })}
+              onCompose={() => compose()}
+              onSearchHelp={() => setTab("help")}
+            />
+          )}
+          {homeView.name === "compose" && (
+            <Compose
+              showBack={!empty}
+              onBack={goHome}
+              onSent={() => {
+                recordEvent("submitted");
+                setHomeView({ name: "sent" });
+              }}
+              onSubmit={onSubmit}
+              initialEmail={email}
+              initialName={name}
+              transcript={transcript}
+            />
+          )}
+          {homeView.name === "ask" && (
+            <Ask
+              widgetKey={widgetKey}
+              greeting={branding.greeting}
+              onDegrade={() => setHomeView({ name: "home" })}
+              onCompose={compose}
+              onSubmit={onSubmit}
+            />
+          )}
+          {homeView.name === "sent" && <Sent onHome={goHome} />}
+        </div>
+
+        <div className={tab === "help" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
+          {/* TODO(help-tab): swap for the real `Help` component from
+              `./help` once it lands -- see help-placeholder.tsx for the
+              contract it should honour (`onFullScreenChange`, `onCompose`,
+              the `Search for an answer` placeholder string). */}
+          <HelpTabPlaceholder articleCount={articleCount} />
+        </div>
       </div>
+      {!fullScreen && <TabBar tab={tab} onChange={setTab} />}
       <Footer />
     </div>
   );

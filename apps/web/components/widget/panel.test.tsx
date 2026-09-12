@@ -6,16 +6,19 @@ import { Panel } from "@/components/widget/panel";
 const workspace = { workspaceName: "Beacon", monogram: "BE", settings: {} };
 
 describe("Panel", () => {
-  it("offers search when the knowledge base has articles", () => {
+  it("offers a way to search when the knowledge base has articles", () => {
+    // The search box itself now lives behind the Help tab (built
+    // separately, in help.tsx) -- Home only ever offers the card that
+    // switches to it.
     render(<Panel {...workspace} articleCount={12} />);
-    expect(screen.getByPlaceholderText("Search for an answer")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /search for help/i })).toBeTruthy();
   });
 
-  it("skips search entirely when there are no articles", () => {
+  it("skips the search affordance entirely when there are no articles", () => {
     // The day-one state for every new customer: a search box over nothing
     // makes the product look broken on the day it is being judged.
     render(<Panel {...workspace} articleCount={0} />);
-    expect(screen.queryByPlaceholderText("Search for an answer")).toBeNull();
+    expect(screen.queryByRole("button", { name: /search for help/i })).toBeNull();
     expect(screen.getByLabelText("Your message")).toBeTruthy();
   });
 
@@ -44,31 +47,44 @@ describe("Panel", () => {
         articleCount={12}
       />,
     );
-    expect(screen.getByText("Acme Support")).toBeTruthy();
+    // Appears twice -- once in Header, once in Home's own dark band, which
+    // carries the display name alongside the greeting -- so this asserts
+    // presence rather than a single match.
+    expect(screen.getAllByText("Acme Support").length).toBeGreaterThan(0);
     expect(screen.queryByText("Beacon")).toBeNull();
   });
 
   it("falls back to the workspace name when no settings.name is configured", () => {
     // Absent means today's behaviour, unchanged.
     render(<Panel {...workspace} articleCount={12} />);
-    expect(screen.getByText("Beacon")).toBeTruthy();
+    expect(screen.getAllByText("Beacon").length).toBeGreaterThan(0);
   });
 
-  it("shows the configured greeting on Home instead of the default copy", () => {
+  // `settings.greeting` no longer surfaces on Home -- the new Home screen's
+  // copy is fixed ("How can we help?", plus "Hello {name}." when the
+  // visitor's own name is known). It still opens Ask's conversation,
+  // unchanged -- see "the panel's day-one view" below and ask.test.tsx.
+  it("still passes a configured greeting through to Ask, not Home", () => {
     render(
       <Panel
         {...workspace}
         settings={{ greeting: "Hi! Need a hand?" }}
         articleCount={12}
+        aiEnabled
       />,
     );
     expect(screen.getByText("Hi! Need a hand?")).toBeTruthy();
-    expect(screen.queryByText("Hi there. How can we help?")).toBeNull();
   });
 
-  it("falls back to the default greeting when none is configured", () => {
+  it("shows the fixed greeting on Home when no name is known", () => {
     render(<Panel {...workspace} articleCount={12} />);
-    expect(screen.getByText("Hi there. How can we help?")).toBeTruthy();
+    expect(screen.getByText("How can we help?")).toBeTruthy();
+  });
+
+  it("greets the visitor by name on Home, when the loader supplied one", () => {
+    render(<Panel {...workspace} articleCount={12} name="Ada" />);
+    expect(screen.getByText("Hello Ada.")).toBeTruthy();
+    expect(screen.getByText("How can we help?")).toBeTruthy();
   });
 
   it("still has nowhere to search after Sent sends an empty-knowledge-base visitor home", async () => {
@@ -93,7 +109,7 @@ describe("Panel", () => {
     await screen.findByText("Message sent");
     fireEvent.click(screen.getByRole("button", { name: /back to home/i }));
 
-    expect(screen.queryByPlaceholderText("Search for an answer")).toBeNull();
+    expect(screen.queryByRole("button", { name: /search for help/i })).toBeNull();
     expect(screen.getByLabelText("Your message")).toBeTruthy();
   });
 });
@@ -101,28 +117,20 @@ describe("Panel", () => {
 // The deflection baseline's write side (task 11): `searched`, `read` and
 // `submitted` posted to the panel's own `/widget/session` route, each at
 // most once per panel -- see panel.tsx's `recordEvent`.
+//
+// `searched` and `read` moved out of this file along with the search box,
+// results list and article view they instrument -- those now live behind
+// the Help tab, built separately in `help.tsx`. There is nothing left in
+// panel.tsx that fires either kind any more (see `recordEvent`'s comment),
+// so the two tests that exercised them are gone rather than updated: they
+// tested a code path this file no longer contains. Whoever wires the real
+// Help component in is the right place for that instrumentation to return.
+// `submitted` is untouched -- Compose still lives on the Home tab, exactly
+// as before.
 describe("Panel deflection events", () => {
-  const article = {
-    id: "a1",
-    title: "Refunds",
-    slug: "refunds",
-    excerpt: "",
-    path: "billing/refunds",
-    doc: { type: "doc", content: [] },
-    publishedAt: null,
-    updatedAt: "2026-01-01T00:00:00Z",
-    author: null,
-  };
-
-  function mockFetch(searchResults: unknown[] = [article]) {
+  function mockFetch() {
     return vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
-      if (url.startsWith("/widget/kb/search")) {
-        return new Response(JSON.stringify(searchResults), { status: 200 });
-      }
-      if (url.startsWith("/widget/kb/article")) {
-        return new Response(JSON.stringify(article), { status: 200 });
-      }
       if (url === "/widget/session") {
         return new Response(null, { status: 204 });
       }
@@ -144,57 +152,6 @@ describe("Panel deflection events", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-  });
-
-  it("posts searched once, not once per search, and never on every keystroke", async () => {
-    const fetchMock = mockFetch();
-    vi.stubGlobal("fetch", fetchMock);
-    render(<Panel {...workspace} articleCount={12} widgetKey="rdw_test" />);
-
-    fireEvent.change(screen.getByPlaceholderText("Search for an answer"), {
-      target: { value: "billing" },
-    });
-    // Typing alone must never fire the counter -- only a submitted search.
-    expect(sessionCalls(fetchMock)).toHaveLength(0);
-
-    fireEvent.submit(screen.getByRole("search"));
-    await waitFor(() => expect(sessionCalls(fetchMock)).toHaveLength(1));
-    expect(sessionBody(fetchMock, 0)).toMatchObject({ kind: "searched" });
-
-    // Back to Home and search again: still one `searched` post in total.
-    fireEvent.click(screen.getByRole("button", { name: "Back to home" }));
-    fireEvent.change(screen.getByPlaceholderText("Search for an answer"), {
-      target: { value: "refunds" },
-    });
-    fireEvent.submit(screen.getByRole("search"));
-    await screen.findByText(/results for/i);
-    expect(sessionCalls(fetchMock)).toHaveLength(1);
-  });
-
-  it("posts read once, on the first article opened, not on a second", async () => {
-    const fetchMock = mockFetch();
-    vi.stubGlobal("fetch", fetchMock);
-    render(<Panel {...workspace} articleCount={12} widgetKey="rdw_test" />);
-
-    fireEvent.change(screen.getByPlaceholderText("Search for an answer"), {
-      target: { value: "billing" },
-    });
-    fireEvent.submit(screen.getByRole("search"));
-    fireEvent.click(await screen.findByText("Refunds"));
-
-    // Two posts so far: `searched` (from the search above) then `read`.
-    await waitFor(() => expect(sessionCalls(fetchMock)).toHaveLength(2));
-    expect(sessionBody(fetchMock, 1)).toMatchObject({ kind: "read" });
-
-    // Back out and open the same article again: no further `read` post.
-    fireEvent.click(screen.getByRole("button", { name: "Back to home" }));
-    fireEvent.change(screen.getByPlaceholderText("Search for an answer"), {
-      target: { value: "billing" },
-    });
-    fireEvent.submit(screen.getByRole("search"));
-    fireEvent.click(await screen.findByText("Refunds"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(sessionCalls(fetchMock)).toHaveLength(2);
   });
 
   it("posts submitted after a successful send", async () => {
@@ -230,13 +187,18 @@ describe("Panel deflection events", () => {
       throw new Error("must not be called");
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<Panel {...workspace} articleCount={12} />);
+    const onSubmit = vi.fn().mockResolvedValue({ ok: true });
+    render(<Panel {...workspace} articleCount={0} onSubmit={onSubmit} />);
 
-    fireEvent.change(screen.getByPlaceholderText("Search for an answer"), {
-      target: { value: "billing" },
+    fireEvent.change(screen.getByLabelText("Email"), {
+      target: { value: "ada@example.com" },
     });
-    fireEvent.submit(screen.getByRole("search"));
-    await screen.findByText(/results for/i);
+    fireEvent.change(screen.getByLabelText("Your message"), {
+      target: { value: "Where is my order?" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await screen.findByText("Message sent");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -244,20 +206,26 @@ describe("Panel deflection events", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url === "/widget/session") return Promise.reject(new Error("network down"));
-      return new Response(JSON.stringify([]), { status: 200 });
+      return new Response(null, { status: 404 });
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<Panel {...workspace} articleCount={12} widgetKey="rdw_test" />);
+    const onSubmit = vi.fn().mockResolvedValue({ ok: true });
+    render(
+      <Panel {...workspace} articleCount={0} widgetKey="rdw_test" onSubmit={onSubmit} />,
+    );
 
-    fireEvent.change(screen.getByPlaceholderText("Search for an answer"), {
-      target: { value: "billing" },
+    fireEvent.change(screen.getByLabelText("Email"), {
+      target: { value: "ada@example.com" },
     });
-    fireEvent.submit(screen.getByRole("search"));
+    fireEvent.change(screen.getByLabelText("Your message"), {
+      target: { value: "Where is my order?" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
-    // The visible flow (the search results screen) must render regardless
+    // The visible flow (the "Message sent" screen) must render regardless
     // of the counter post's outcome -- a support request can never depend
     // on it.
-    await screen.findByText(/results for/i);
+    await screen.findByText("Message sent");
   });
 });
 
@@ -267,7 +235,7 @@ describe("the panel's day-one view", () => {
     expect(screen.getByPlaceholderText("Ask a question")).toBeTruthy();
   });
 
-  it("opens on search when AI is not configured", () => {
+  it("opens on Home when AI is not configured", () => {
     // Without this the panel would show a question box that could only
     // bounce the visitor back to search after they typed.
     render(<Panel {...workspace} articleCount={12} />);
@@ -279,6 +247,111 @@ describe("the panel's day-one view", () => {
     // in cannot answer either.
     render(<Panel {...workspace} articleCount={0} aiEnabled />);
     expect(screen.queryByPlaceholderText("Ask a question")).toBeNull();
+  });
+});
+
+describe("the panel's tab bar", () => {
+  it("shows Home, Messages and Help, with Home active by default", () => {
+    render(<Panel {...workspace} articleCount={12} />);
+    const home = screen.getByRole("button", { name: "Home" });
+    expect(home.getAttribute("aria-current")).toBe("page");
+    expect(screen.getByRole("button", { name: /Messages/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Help" }).getAttribute("aria-current")).toBeNull();
+  });
+
+  it("disables Messages -- no way to read a conversation back without identity", () => {
+    // A visitor's past thread cannot be shown safely until there is some
+    // way to verify who is asking; an unsigned `data-email` would let
+    // anyone read a different customer's history. A disabled tab, not a
+    // conversation list with nothing in it.
+    render(<Panel {...workspace} articleCount={12} />);
+    const messages = screen.getByRole("button", { name: /Messages/ }) as HTMLButtonElement;
+    expect(messages.disabled).toBe(true);
+  });
+
+  it("switches to the Help tab and marks it current", () => {
+    render(<Panel {...workspace} articleCount={12} />);
+    fireEvent.click(screen.getByRole("button", { name: "Help" }));
+    expect(screen.getByRole("button", { name: "Help" }).getAttribute("aria-current")).toBe(
+      "page",
+    );
+    expect(screen.getByRole("button", { name: "Home" }).getAttribute("aria-current")).toBeNull();
+  });
+
+  it("hides the tab bar once a conversation is under way, and restores it going home", async () => {
+    render(<Panel {...workspace} articleCount={12} aiEnabled />);
+    // Opens straight on the conversation (day-one rule, above) -- the tab
+    // bar must already be gone, not just after some later transition.
+    expect(screen.queryByRole("button", { name: "Home" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /Talk to a person instead/i }));
+    expect(screen.getByLabelText("Your message")).toBeTruthy();
+    // Compose is a full-height screen with its own back control too.
+    expect(screen.queryByRole("button", { name: "Home" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByRole("button", { name: "Home" })).toBeTruthy();
+  });
+
+  it("keeps the tab bar visible on Home's own landing screen", () => {
+    render(<Panel {...workspace} articleCount={12} />);
+    expect(screen.getByRole("button", { name: "Home" })).toBeTruthy();
+  });
+
+  it("keeps the Home tab mounted, not remounted, after switching to Help and back", () => {
+    // The mechanism behind "switching tabs does not lose where the
+    // visitor was": each tab's content stays mounted the whole time and
+    // only its CSS visibility toggles. Proven here by identity -- if
+    // switching tabs tore Home down and rebuilt it, this would be a
+    // different DOM node with the same text, not the same one.
+    render(<Panel {...workspace} articleCount={12} />);
+    const before = screen.getByText("Search for help");
+
+    fireEvent.click(screen.getByRole("button", { name: "Help" }));
+    // `getByText` does not filter on CSS visibility the way `getByRole`
+    // does -- it still finds Home's content here precisely because this
+    // is a hidden, still-mounted screen rather than an absent one.
+    expect(screen.getByText("Search for help")).toBe(before);
+
+    fireEvent.click(screen.getByRole("button", { name: "Home" }));
+    expect(screen.getByText("Search for help")).toBe(before);
+  });
+});
+
+describe("the panel's Home screen", () => {
+  it("offers Send us a message, not Ask a question, without AI", () => {
+    render(<Panel {...workspace} articleCount={12} />);
+    expect(screen.getByText("Send us a message")).toBeTruthy();
+    expect(screen.queryByText("Ask a question")).toBeNull();
+    fireEvent.click(screen.getByText("Send us a message"));
+    expect(screen.getByLabelText("Your message")).toBeTruthy();
+  });
+
+  it("shows Ask a question once back on Home, when AI is configured", async () => {
+    // `aiEnabled` opens straight on the conversation (day-one rule) --
+    // reached back here the same way a real total failure would: no
+    // widget key, so asking anything degrades straight to Home.
+    render(<Panel {...workspace} articleCount={12} aiEnabled />);
+    fireEvent.change(screen.getByPlaceholderText("Ask a question"), {
+      target: { value: "Hi" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+    const card = await screen.findByRole("button", { name: /Ask a question/ });
+    expect(card).toBeTruthy();
+    expect(screen.queryByText("Send us a message")).toBeNull();
+    fireEvent.click(card);
+    expect(screen.getByPlaceholderText("Ask a question")).toBeTruthy();
+  });
+
+  it("names the article count on the Search for help card", () => {
+    render(<Panel {...workspace} articleCount={21} />);
+    expect(screen.getByText("Browse 21 articles")).toBeTruthy();
+  });
+
+  it("uses the singular for exactly one article", () => {
+    render(<Panel {...workspace} articleCount={1} />);
+    expect(screen.getByText("Browse 1 article")).toBeTruthy();
   });
 });
 
