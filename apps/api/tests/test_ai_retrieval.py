@@ -77,7 +77,7 @@ async def _publish(
     is the only thing retrieval's match runs against.
     """
     category = KbCategory(
-        workspace_id=workspace.id, name="Billing", slug="billing",
+        workspace_id=workspace.id, name=f"Billing {slug}", slug=f"billing-{slug}",
         scope=scope, position=0,
     )
     db_session.add(category)
@@ -192,3 +192,34 @@ async def test_a_long_pasted_question_does_not_blow_the_stack(db_session) -> Non
     question = " ".join(f"word{index}" for index in range(260))[:2000]
 
     assert await retrieve(db_session, workspace.id, question) == []
+
+
+async def test_retrieval_is_bounded_in_sources_and_in_body(db_session) -> None:
+    """The per-call cost bound, which nothing else asserts.
+
+    What a question costs is decided here: at most five articles, each
+    trimmed to `BODY_LIMIT`. Spec D5 calls cost an abuse surface, and both
+    halves of that bound moved into `kb_public` when retrieval became
+    disjunctive -- further from the tests that might have noticed. Raising
+    the limit to 100, or `BODY_LIMIT` to 200000, previously passed the
+    entire suite.
+    """
+    workspace = await make_workspace(db_session)
+    for index in range(8):
+        await _publish(
+            db_session,
+            workspace,
+            title=f"Refunds {index}",
+            slug=f"refunds-{index}",
+            body="We refund any plan in full within 14 days. " * 400,
+        )
+
+    sources = await retrieve(db_session, workspace.id, "refund")
+
+    assert len(sources) <= 5, "a question must not pull in unbounded sources"
+    # A literal, not `BODY_LIMIT`. Asserting against the constant makes the
+    # bound move with the thing under test: raising it to 200000 passed
+    # this test unchanged, because both sides moved together.
+    assert all(len(source.body) <= 2000 for source in sources), (
+        "an article's body must be trimmed before it reaches the model"
+    )
