@@ -80,8 +80,23 @@
   });
 
   window.addEventListener("message", function (event) {
-    if (event.origin !== origin || event.data !== "relaydesk:close") return;
-    if (open) hide();
+    if (event.origin !== origin) return;
+    if (event.data === "relaydesk:close") {
+      if (open) hide();
+      return;
+    }
+    // The panel asks to grow when a visitor is reading or in a
+    // conversation, and to shrink coming back. Only on a screen with the
+    // room: below 1024px the panel is already as large as it gets, and on
+    // a phone it is the whole screen.
+    if (event.data === "relaydesk:expand" || event.data === "relaydesk:collapse") {
+      if (window.innerWidth < 1024) return;
+      var big = event.data === "relaydesk:expand";
+      if (frame) {
+        frame.style.width = big ? "min(720px,calc(100vw - 48px))" : "440px";
+        frame.style.height = big ? "min(820px,calc(100vh - 120px))" : "min(700px,calc(100vh - 140px))";
+      }
+    }
   });
 
   mount(launcher);

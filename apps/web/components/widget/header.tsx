@@ -1,4 +1,4 @@
-import { ArrowLeft, X } from "lucide-react";
+import { ArrowLeft, Maximize2, Minimize2, X } from "lucide-react";
 
 /**
  * The bar every screen shares: who this is, a way back to Home from
@@ -9,12 +9,21 @@ export function Header({
   monogram,
   onBack,
   onClose,
+  expanded,
+  onToggleExpand,
 }: {
   name: string;
   monogram: string;
   /** Present only on Results and Article -- see panel.tsx. */
   onBack?: () => void;
   onClose: () => void;
+  /**
+   * Present only where there is room to grow -- a laptop-sized host page.
+   * Absent on a phone, where the panel is already the whole screen and a
+   * control that does nothing is worse than no control.
+   */
+  expanded?: boolean;
+  onToggleExpand?: () => void;
 }) {
   return (
     <header className="flex shrink-0 items-center gap-2 border-b border-ink-200 bg-ink-950 px-4 py-3 dark:border-ink-800">
@@ -38,6 +47,20 @@ export function Header({
       <span className="min-w-0 flex-1 truncate text-[14px] font-semibold tracking-tight text-white">
         {name}
       </span>
+      {onToggleExpand && (
+        <button
+          type="button"
+          onClick={onToggleExpand}
+          aria-label={expanded ? "Shrink" : "Expand"}
+          className="flex size-7 shrink-0 items-center justify-center rounded-md text-ink-300 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+        >
+          {expanded ? (
+            <Minimize2 className="size-4" aria-hidden />
+          ) : (
+            <Maximize2 className="size-4" aria-hidden />
+          )}
+        </button>
+      )}
       <button
         type="button"
         onClick={onClose}

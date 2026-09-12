@@ -279,8 +279,33 @@ export function Panel({
   // Results and Article, which have both moved behind the Help tab -- so it
   // is passed as `undefined` unconditionally until that component defines
   // its own equivalent.
+  // Bigger while reading or in a conversation, back to normal on the way
+  // out -- the two places a visitor is doing something that wants room.
+  // A visitor who works the control themselves has said what they want,
+  // so `chosen` stops the automatic behaviour second-guessing them for
+  // the rest of the session.
+  const [expanded, setExpanded] = useState(false);
+  const chosen = useRef(false);
+
   const fullScreen =
     (tab === "home" && homeView.name !== "home") || (tab === "help" && helpFullScreen);
+
+  // Only where there is room: the loader ignores these below 1024px, and
+  // offering a control that does nothing is worse than offering none.
+  const resizable = Boolean(wide);
+
+  function setSize(next: boolean) {
+    setExpanded(next);
+    window.parent?.postMessage(next ? "relaydesk:expand" : "relaydesk:collapse", "*");
+  }
+
+  useEffect(() => {
+    if (!resizable || chosen.current) return;
+    setSize(fullScreen);
+    // `setSize` is stable enough for this: it only closes over setState and
+    // `window`, neither of which changes across renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fullScreen, resizable]);
 
   return (
     <div
@@ -303,7 +328,24 @@ export function Panel({
       style={wide ? { zoom: PANEL_ZOOM, height: `calc(100vh / ${PANEL_ZOOM})` } : undefined}
       className="motion-reduce:transition-none flex h-screen flex-col bg-white text-ink-900 dark:bg-ink-900 dark:text-ink-50"
     >
-      <Header name={displayName} monogram={monogram} onClose={close} />
+      <Header
+        name={displayName}
+        monogram={monogram}
+        // A conversation hides the tab bar, so without this there is no
+        // way back to Home short of the answer failing. Compose and Sent
+        // carry their own back controls; Ask did not carry any.
+        onBack={tab === "home" && homeView.name === "ask" ? goHome : undefined}
+        onClose={close}
+        expanded={expanded}
+        onToggleExpand={
+          resizable
+            ? () => {
+                chosen.current = true;
+                setSize(!expanded);
+              }
+            : undefined
+        }
+      />
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         {/* Both tabs stay mounted regardless of which is showing --
             `hidden` only toggles `display`, not presence -- so switching

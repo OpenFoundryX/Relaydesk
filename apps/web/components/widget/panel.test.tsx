@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Panel } from "@/components/widget/panel";
@@ -386,5 +386,56 @@ describe("the panel on a laptop", () => {
     const root = container.querySelector('[role="dialog"]') as HTMLElement;
     expect(root.style.zoom).toBe("");
     expect(root.style.height).toBe("");
+  });
+});
+
+describe("the panel growing when it needs room", () => {
+  function messages() {
+    const sent: unknown[] = [];
+    vi.spyOn(window.parent, "postMessage").mockImplementation((message) => {
+      sent.push(message);
+    });
+    return sent;
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("asks to grow on entering a conversation and to shrink on the way out", () => {
+    const sent = messages();
+    render(<Panel {...workspace} articleCount={12} aiEnabled wide />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Ask a question/ }));
+    expect(sent).toContain("relaydesk:expand");
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to home" }));
+    expect(sent).toContain("relaydesk:collapse");
+  });
+
+  it("offers the control only where there is room to grow", () => {
+    // Below a laptop the panel is already as large as it gets, and on a
+    // phone it is the whole screen. A control that does nothing is worse
+    // than no control.
+    render(<Panel {...workspace} articleCount={12} wide />);
+    expect(screen.getByRole("button", { name: "Expand" })).toBeTruthy();
+
+    cleanup();
+    render(<Panel {...workspace} articleCount={12} />);
+    expect(screen.queryByRole("button", { name: "Expand" })).toBeNull();
+  });
+
+  it("stops guessing once the visitor has said what they want", () => {
+    const sent = messages();
+    render(<Panel {...workspace} articleCount={12} aiEnabled wide />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand" }));
+    expect(screen.getByRole("button", { name: "Shrink" })).toBeTruthy();
+
+    // Entering a conversation would normally expand; the visitor has
+    // already chosen, so nothing more is sent on their behalf.
+    const before = sent.length;
+    fireEvent.click(screen.getByRole("button", { name: /Ask a question/ }));
+    expect(sent.length).toBe(before);
   });
 });

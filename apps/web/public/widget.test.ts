@@ -311,3 +311,29 @@ describe("panel size", () => {
     expect(source).toContain("inset:0");
   });
 });
+
+describe("resizing on request", () => {
+  it("grows and shrinks when the panel asks", () => {
+    const source = readFileSync("public/widget.js", "utf8");
+    expect(source).toContain("relaydesk:expand");
+    expect(source).toContain("relaydesk:collapse");
+  });
+
+  it("ignores the request where there is no room", () => {
+    // Below a laptop the panel is already as large as it gets, and on a
+    // phone it is the whole screen -- growing it there would be a no-op at
+    // best and a broken layout at worst.
+    const source = readFileSync("public/widget.js", "utf8");
+    expect(source).toContain("window.innerWidth < 1024");
+  });
+
+  it("still only trusts messages from its own origin", () => {
+    // Two message types now instead of one; the origin check must gate
+    // both, not just the close it was written for.
+    const source = readFileSync("public/widget.js", "utf8");
+    const guard = source.indexOf("event.origin !== origin");
+    expect(guard).toBeGreaterThan(-1);
+    expect(source.indexOf("relaydesk:expand")).toBeGreaterThan(guard);
+    expect(source.indexOf("relaydesk:close")).toBeGreaterThan(guard);
+  });
+});
