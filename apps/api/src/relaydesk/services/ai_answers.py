@@ -105,26 +105,30 @@ async def answer(
     model = config.model if config else "claude-opus-5"
 
     async def degrade(reason: str) -> Attempt:
-        """Record the degrade, then hand back the reason.
+        """Record the degrade, commit it, and hand back the reason.
 
-        On its own session and committed, like the stream's writes, but
-        for a different reason: this one runs inside the handler, where
-        the request's session is still open -- yet ``get_session`` has no
-        commit on exit, so a row merely added to it is rolled back when
-        the request ends. These are the commonest exits by far, and this
-        module's promise that EVERY exit writes exactly one ``AiCall`` row
-        is worth nothing if the deflection table is missing all of them.
+        **This commits**, on the request's own session, for the same reason
+        ``ratelimit.check`` does: ``get_session`` rolls back any session
+        that ends without an explicit commit, so a row merely added here
+        would vanish when the request ends. ``not_configured``,
+        ``over_budget`` and ``no_sources`` are the exits a real deployment
+        hits most often, and a deflection table missing exactly those is
+        worse than no table.
+
+        The request's session rather than a fresh one because this runs
+        INSIDE the handler, while that session is still open -- unlike
+        ``stream()`` below, which outlives the request and therefore cannot
+        borrow it.
         """
-        async with audit_factory() as audit:
-            await _record(
-                audit,
-                workspace.id,
-                widget_key.id,
-                model=model,
-                outcome=AiOutcome.degraded,
-                reason=reason,
-            )
-            await audit.commit()
+        await _record(
+            session,
+            workspace.id,
+            widget_key.id,
+            model=model,
+            outcome=AiOutcome.degraded,
+            reason=reason,
+        )
+        await session.commit()
         return Attempt(degraded=True, reason=reason)
 
     if config is None:

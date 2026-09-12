@@ -1,5 +1,7 @@
 from contextlib import asynccontextmanager
 
+from unittest import mock
+
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
@@ -54,7 +56,6 @@ async def test_no_key_degrades_without_calling_anything(db_session) -> None:
 
     attempt = await answer(
         db_session, workspace, key, "how do refunds work",
-        audit_sessions=_audit_sessions(db_session),
     )
 
     assert attempt.degraded is True
@@ -67,8 +68,7 @@ async def test_empty_knowledge_base_degrades_without_calling_the_model(db_sessio
     provider = FakeProvider(chunks=["should never run"])
 
     attempt = await answer(
-        db_session, workspace, key, "how do refunds work", provider=provider,
-        audit_sessions=_audit_sessions(db_session),
+        db_session, workspace, key, "how do refunds work", provider=provider
     )
 
     assert attempt.degraded is True
@@ -93,7 +93,6 @@ async def test_exhausted_budget_degrades(db_session) -> None:
 
     attempt = await answer(
         db_session, workspace, key, "anything",
-        audit_sessions=_audit_sessions(db_session),
     )
 
     assert attempt.degraded is True
@@ -107,7 +106,6 @@ async def test_every_degradation_writes_exactly_one_audit_row(db_session) -> Non
 
     await answer(
         db_session, workspace, key, "how do refunds work",
-        audit_sessions=_audit_sessions(db_session),
     )
 
     rows = list(await db_session.scalars(sa.select(AiCall)))
@@ -241,26 +239,29 @@ async def test_the_stream_audit_write_does_not_borrow_the_request_session(
         [chunk async for chunk in attempt.stream]
 
 
-async def test_a_degrade_audit_write_does_not_borrow_the_request_session(
-    db_session,
-) -> None:
-    """The same guarantee as the stream's write, for the commonest exits.
+async def test_a_degrade_commits_its_audit_row(db_session) -> None:
+    """`degrade()` must commit, not merely add.
 
-    `degrade()` runs inside the handler, where the request's session is
-    still open -- which makes it look safe, and is why this was missed.
-    But `get_session` has no commit on exit, so a row merely added there
-    is rolled back when the request ends. `not_configured`, `over_budget`
-    and `no_sources` are the exits a real deployment hits most, so the
-    deflection table would have been missing precisely the rows it exists
-    to count.
+    `get_session` has no commit on exit, so a row only added to the
+    request's session is rolled back when the request ends -- and
+    `not_configured`, `over_budget` and `no_sources` are the exits a real
+    deployment hits most. Slice 8 shipped this exact defect: console routes
+    that added rows and never committed, with a green suite.
 
-    Pinned the same way as the stream's write, and for the same reason:
-    without this, reverting `degrade()` to the request's session passes
-    every other test in this file. Verified -- it did.
+    Committed-ness is not observable under a fixture that rolls everything
+    back, so this observes the call instead. That is testing an
+    implementation detail on purpose: "this must commit" is a statement
+    about the call, and it is the only assertion that fails when the commit
+    is removed.
     """
     workspace, config, key = await _setup(db_session)
     config.api_key = None
     await db_session.flush()
 
-    with pytest.raises(IntegrityError):
-        await answer(db_session, workspace, key, "how do refunds work")
+    with mock.patch.object(
+        db_session, "commit", wraps=db_session.commit
+    ) as committed:
+        attempt = await answer(db_session, workspace, key, "how do refunds work")
+
+    assert attempt.degraded is True
+    assert committed.called, "the degrade row was added but never committed"
