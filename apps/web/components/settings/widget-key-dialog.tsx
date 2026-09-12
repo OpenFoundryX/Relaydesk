@@ -121,6 +121,32 @@ function WidgetKeyForm({
 
   const accentValid = isValidAccentColour(accentColour);
 
+  // A fixed palette rather than a hex box. Every one of these has enough
+  // contrast against white to sit on a launcher and still read as a
+  // button; a free-text field let someone pick #FFFDF5 and quietly ship an
+  // invisible widget, and nothing downstream checks contrast.
+  //
+  // A colour already saved on this key is kept as an extra swatch even if
+  // it is not in the palette -- narrowing the choices must not silently
+  // restyle an embed that is already live on someone's site.
+  const saved = widgetKey?.settings.accentColour?.trim() ?? "";
+  const swatches = [
+    { value: "", label: "Default", swatch: "#18181B" },
+    { value: "#4F46E5", label: "Indigo", swatch: "#4F46E5" },
+    { value: "#7C3AED", label: "Violet", swatch: "#7C3AED" },
+    { value: "#2563EB", label: "Blue", swatch: "#2563EB" },
+    { value: "#0D9488", label: "Teal", swatch: "#0D9488" },
+    { value: "#16A34A", label: "Green", swatch: "#16A34A" },
+    { value: "#D97706", label: "Amber", swatch: "#D97706" },
+    { value: "#E11D48", label: "Rose", swatch: "#E11D48" },
+  ];
+  if (
+    saved &&
+    !swatches.some((swatch) => swatch.value.toUpperCase() === saved.toUpperCase())
+  ) {
+    swatches.push({ value: saved, label: `Current (${saved})`, swatch: saved });
+  }
+
   function save() {
     setError(null);
     start(async () => {
@@ -196,20 +222,42 @@ function WidgetKeyForm({
             />
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="widget-key-accent">Accent colour</Label>
-            <Input
-              id="widget-key-accent"
-              placeholder="#18181B"
-              value={accentColour}
-              onChange={(event) => setAccentColour(event.target.value)}
-            />
-            {!accentValid && (
-              <p className="text-[12px] text-danger-700">
-                Enter a hex colour, like #4F46E5.
-              </p>
-            )}
-          </div>
+          <fieldset className="space-y-1.5">
+            <legend className="text-[13px] text-ink-700">Accent colour</legend>
+            <div className="flex flex-wrap gap-2 pt-0.5">
+              {swatches.map((swatch) => {
+                const selected =
+                  accentColour.trim().toUpperCase() === swatch.value.toUpperCase();
+                return (
+                  <label
+                    key={swatch.value || "default"}
+                    title={swatch.label}
+                    className="cursor-pointer"
+                  >
+                    <input
+                      type="radio"
+                      name="widget-key-accent"
+                      className="sr-only peer"
+                      checked={selected}
+                      onChange={() => setAccentColour(swatch.value)}
+                    />
+                    <span
+                      aria-hidden
+                      style={{ background: swatch.swatch }}
+                      className="block size-7 rounded-full ring-1 ring-ink-300 ring-offset-2 transition-all peer-checked:ring-2 peer-checked:ring-ink-900 peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500"
+                    />
+                    <span className="sr-only">{swatch.label}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <p className="text-[12px] text-ink-500">
+              {swatches.find(
+                (swatch) =>
+                  accentColour.trim().toUpperCase() === swatch.value.toUpperCase(),
+              )?.label ?? "Default"}
+            </p>
+          </fieldset>
 
           <fieldset className="space-y-1.5">
             <legend className="text-[13px] text-ink-700">Launcher position</legend>

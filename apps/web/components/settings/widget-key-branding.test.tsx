@@ -38,7 +38,8 @@ describe("WidgetKeyDialog branding section", () => {
 
     expect(screen.getByLabelText("Display name")).toBeTruthy();
     expect(screen.getByLabelText("Greeting")).toBeTruthy();
-    expect(screen.getByLabelText("Accent colour")).toBeTruthy();
+    expect(screen.getByLabelText("Default")).toBeTruthy();
+    expect(screen.getByLabelText("Indigo")).toBeTruthy();
     expect(screen.getByLabelText("Right (default)")).toBeTruthy();
     expect(screen.getByLabelText("Left")).toBeTruthy();
   });
@@ -71,9 +72,7 @@ describe("WidgetKeyDialog branding section", () => {
     expect((screen.getByLabelText("Greeting") as HTMLInputElement).value).toBe(
       "Hi! Need a hand?",
     );
-    expect((screen.getByLabelText("Accent colour") as HTMLInputElement).value).toBe(
-      "#4F46E5",
-    );
+    expect((screen.getByLabelText("Indigo") as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText("Left") as HTMLInputElement).checked).toBe(true);
   });
 
@@ -85,9 +84,7 @@ describe("WidgetKeyDialog branding section", () => {
     fireEvent.change(screen.getByLabelText("Display name"), {
       target: { value: "Acme Support" },
     });
-    fireEvent.change(screen.getByLabelText("Accent colour"), {
-      target: { value: "#4F46E5" },
-    });
+    fireEvent.click(screen.getByLabelText("Indigo"));
     fireEvent.click(screen.getByLabelText("Left"));
     fireEvent.click(screen.getByRole("button", { name: "Create embed" }));
 
@@ -98,17 +95,32 @@ describe("WidgetKeyDialog branding section", () => {
     );
   });
 
-  it("disables saving when the accent colour is not a valid hex colour", () => {
-    render(<WidgetKeyDialog open onOpenChange={() => {}} />);
+  it("keeps a colour saved outside the palette", () => {
+    // Narrowing the choices must not silently restyle an embed already
+    // live on someone's site, so whatever it was saved with stays
+    // selectable and selected.
+    render(
+      <WidgetKeyDialog
+        widgetKey={{ ...baseKey, settings: { accentColour: "#123456" } }}
+        open
+        onOpenChange={() => {}}
+      />,
+    );
 
+    const current = screen.getByLabelText(/Current \(#123456\)/) as HTMLInputElement;
+    expect(current.checked).toBe(true);
+  });
+
+  it("cannot produce an invalid colour at all", () => {
+    // The old free-text field let someone type #FFFDF5 and ship an
+    // invisible launcher. Every swatch is a known-good value, so the
+    // failure mode is gone rather than guarded.
+    render(<WidgetKeyDialog open onOpenChange={() => {}} />);
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Site" } });
-    fireEvent.change(screen.getByLabelText("Accent colour"), {
-      target: { value: "not-a-colour" },
-    });
+    fireEvent.click(screen.getByLabelText("Amber"));
 
     expect(
       (screen.getByRole("button", { name: "Create embed" }) as HTMLButtonElement).disabled,
-    ).toBe(true);
-    expect(screen.getByText(/hex colour/i)).toBeTruthy();
+    ).toBe(false);
   });
 });
