@@ -1,7 +1,10 @@
+from types import SimpleNamespace
+
 import pytest
 
 from relaydesk.models.ai_config import AiConfig
 from relaydesk.services.ai_provider import (
+    AnthropicProvider,
     FakeProvider,
     ProviderRefused,
     ProviderUnavailable,
@@ -128,3 +131,52 @@ def test_disabled_beats_a_present_key():
         provider="anthropic", model="claude-opus-5", api_key="sk-test", enabled=False
     )
     assert for_config(config) is None
+
+
+async def test_the_real_provider_raises_refused_not_unavailable_on_a_refusal() -> None:
+    """The distinction has to hold in the line that actually runs.
+
+    Every other test of this behaviour drives `FakeProvider`, so reverting
+    `AnthropicProvider`'s `ProviderRefused` to `ProviderUnavailable` -- the
+    literal defect, in the only line production reaches -- passed the whole
+    suite. A guarantee proven only against a test double is a guarantee
+    about the test double.
+
+    No network: the client's `messages.stream` is replaced with a context
+    manager that yields one chunk and reports a refusal at the end, which
+    is the shape the SDK produces.
+    """
+
+    class _FinalMessage:
+        stop_reason = "refusal"
+        usage = SimpleNamespace(input_tokens=11, output_tokens=0)
+
+    class _Stream:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        @property
+        async def text_stream(self):  # pragma: no cover - replaced below
+            raise AssertionError("unused")
+
+        async def get_final_message(self):
+            return _FinalMessage()
+
+    async def _chunks():
+        yield "I am not able to help with that."
+
+    stream = _Stream()
+    type(stream).text_stream = property(lambda self: _chunks())
+
+    provider = AnthropicProvider(api_key="sk-test")
+    provider._client = SimpleNamespace(
+        messages=SimpleNamespace(stream=lambda **kwargs: stream)
+    )
+
+    with pytest.raises(ProviderRefused):
+        [chunk async for chunk in provider.complete(
+            system="s", question="q", model="claude-opus-5"
+        )]
