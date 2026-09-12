@@ -6,7 +6,7 @@ import { Ask } from "@/components/widget/ask";
 import { Compose } from "@/components/widget/compose";
 import { Footer } from "@/components/widget/footer";
 import { Header } from "@/components/widget/header";
-import { HelpTabPlaceholder } from "@/components/widget/help-placeholder";
+import { Help } from "@/components/widget/help";
 import { Home } from "@/components/widget/home";
 import { Sent } from "@/components/widget/sent";
 import { TabBar, type PanelTab } from "@/components/widget/tab-bar";
@@ -76,8 +76,7 @@ export type PanelProps = {
 // (secondary, or the whole of the primary card without AI) and from Ask's
 // escalate button; Ask is reachable only from Home's primary card, only
 // when `aiEnabled`; Sent is terminal. Search, results and reading an
-// article used to be here too -- they now live behind the Help tab (see
-// `help-placeholder.tsx`), which a second agent is building concurrently
+// article used to be here too -- they now live behind the Help tab
 // in `help.tsx`.
 type HomeView =
   | { name: "home" }
@@ -148,7 +147,7 @@ export function Panel({
     return aiEnabled ? { name: "ask" } : { name: "home" };
   });
 
-  // Whether the (still unbuilt) Help tab is showing a full-height screen
+  // Whether the Help tab is showing a full-height screen
   // of its own -- reading an article, the same way Article used to. Set by
   // nothing today (the placeholder never calls it), but wired through so
   // the real Help component has a working `onFullScreenChange` the moment
@@ -345,11 +344,11 @@ export function Panel({
         </div>
 
         <div className={tab === "help" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
-          {/* TODO(help-tab): swap for the real `Help` component from
-              `./help` once it lands -- see help-placeholder.tsx for the
-              contract it should honour (`onFullScreenChange`, `onCompose`,
-              the `Search for an answer` placeholder string). */}
-          <HelpTabPlaceholder articleCount={articleCount} />
+          <Help
+            widgetKey={widgetKey}
+            onCompose={() => setTab("home")}
+            onEvent={recordEvent}
+          />
         </div>
       </div>
       {!fullScreen && <TabBar tab={tab} onChange={setTab} />}

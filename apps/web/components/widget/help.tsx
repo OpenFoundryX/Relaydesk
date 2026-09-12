@@ -51,9 +51,18 @@ type View =
 export function Help({
   widgetKey,
   onCompose,
+  onEvent,
 }: {
   widgetKey: string | undefined;
   onCompose: () => void;
+  /**
+   * Slice 8's deflection counters. Searching and reading are two of the
+   * three things a workspace counts to know whether the widget is saving
+   * them tickets; the third is filing one. They moved in here when Help
+   * became its own tab, and a metric nobody fires is worse than no metric
+   * -- it reads as "nobody searched" rather than as "nothing is counting".
+   */
+  onEvent?: (kind: "searched" | "read") => void;
 }) {
   const [typed, setTyped] = useState("");
   // Committed only on submit, same as Home/Results (spec D8: search runs
@@ -63,7 +72,10 @@ export function Help({
 
   function submitSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setQuery(typed.trim());
+    const next = typed.trim();
+    // An empty submit is not a search and must not be counted as one.
+    if (next !== "") onEvent?.("searched");
+    setQuery(next);
   }
 
   function onTypedChange(value: string) {
@@ -111,7 +123,10 @@ export function Help({
           key={query}
           widgetKey={widgetKey}
           query={query}
-          onOpen={(path) => setView({ name: "article", path, back: { name: "browse" } })}
+          onOpen={(path) => {
+            onEvent?.("read");
+            setView({ name: "article", path, back: { name: "browse" } });
+          }}
           onCompose={onCompose}
         />
       )}
@@ -123,7 +138,14 @@ export function Help({
           collection={view.collection}
           onBack={() => setView({ name: "browse" })}
           onOpen={(path) =>
-            setView({ name: "article", path, back: { name: "collection", collection: view.collection } })
+            {
+              onEvent?.("read");
+              setView({
+                name: "article",
+                path,
+                back: { name: "collection", collection: view.collection },
+              });
+            }
           }
           onCompose={onCompose}
         />

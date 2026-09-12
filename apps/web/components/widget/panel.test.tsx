@@ -11,14 +11,14 @@ describe("Panel", () => {
     // separately, in help.tsx) -- Home only ever offers the card that
     // switches to it.
     render(<Panel {...workspace} articleCount={12} />);
-    expect(screen.getByRole("button", { name: /search for help/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /browse help articles/i })).toBeTruthy();
   });
 
   it("skips the search affordance entirely when there are no articles", () => {
     // The day-one state for every new customer: a search box over nothing
     // makes the product look broken on the day it is being judged.
     render(<Panel {...workspace} articleCount={0} />);
-    expect(screen.queryByRole("button", { name: /search for help/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /browse help articles/i })).toBeNull();
     expect(screen.getByLabelText("Your message")).toBeTruthy();
   });
 
@@ -109,7 +109,7 @@ describe("Panel", () => {
     await screen.findByText("Message sent");
     fireEvent.click(screen.getByRole("button", { name: /back to home/i }));
 
-    expect(screen.queryByRole("button", { name: /search for help/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /browse help articles/i })).toBeNull();
     expect(screen.getByLabelText("Your message")).toBeTruthy();
   });
 });
@@ -305,16 +305,16 @@ describe("the panel's tab bar", () => {
     // switching tabs tore Home down and rebuilt it, this would be a
     // different DOM node with the same text, not the same one.
     render(<Panel {...workspace} articleCount={12} />);
-    const before = screen.getByText("Search for help");
+    const before = screen.getByText("Browse help articles");
 
     fireEvent.click(screen.getByRole("button", { name: "Help" }));
     // `getByText` does not filter on CSS visibility the way `getByRole`
     // does -- it still finds Home's content here precisely because this
     // is a hidden, still-mounted screen rather than an absent one.
-    expect(screen.getByText("Search for help")).toBe(before);
+    expect(screen.getByText("Browse help articles")).toBe(before);
 
     fireEvent.click(screen.getByRole("button", { name: "Home" }));
-    expect(screen.getByText("Search for help")).toBe(before);
+    expect(screen.getByText("Browse help articles")).toBe(before);
   });
 });
 
@@ -344,7 +344,7 @@ describe("the panel's Home screen", () => {
     expect(screen.getByPlaceholderText("Ask a question")).toBeTruthy();
   });
 
-  it("names the article count on the Search for help card", () => {
+  it("names the article count on the Browse help articles card", () => {
     render(<Panel {...workspace} articleCount={21} />);
     expect(screen.getByText("Browse 21 articles")).toBeTruthy();
   });

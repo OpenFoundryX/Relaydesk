@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Help } from "@/components/widget/help";
@@ -283,5 +283,38 @@ describe("Help, searching", () => {
     fireEvent.change(screen.getByPlaceholderText("Search for help"), { target: { value: "" } });
 
     expect(await screen.findByText("Billing")).toBeTruthy();
+  });
+});
+
+describe("Help, the deflection counters", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("counts a search", async () => {
+    // Slice 8 counts searched / read / submitted to tell a workspace
+    // whether the widget is saving them tickets. These two moved in here
+    // when Help became a tab and stopped firing entirely -- which reads as
+    // "nobody searched", not as "nothing is counting".
+    const onEvent = vi.fn();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
+    render(<Help widgetKey="rdw_test" onCompose={() => {}} onEvent={onEvent} />);
+
+    fireEvent.change(screen.getByPlaceholderText("Search for help"), {
+      target: { value: "refunds" },
+    });
+    fireEvent.submit(screen.getByPlaceholderText("Search for help").closest("form")!);
+
+    await waitFor(() => expect(onEvent).toHaveBeenCalledWith("searched"));
+  });
+
+  it("does not count an empty search", async () => {
+    const onEvent = vi.fn();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
+    render(<Help widgetKey="rdw_test" onCompose={() => {}} onEvent={onEvent} />);
+
+    fireEvent.submit(screen.getByPlaceholderText("Search for help").closest("form")!);
+
+    expect(onEvent).not.toHaveBeenCalled();
   });
 });

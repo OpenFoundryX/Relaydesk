@@ -87,7 +87,11 @@ export function Home({
             className="rounded-xl border border-ink-200 bg-white px-3.5 py-2.5 text-left text-[13px] transition-colors hover:border-ink-300 hover:bg-ink-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 dark:border-ink-700 dark:bg-ink-800 dark:hover:border-ink-600"
           >
             <span className="block font-medium text-ink-900 dark:text-white">
-              Search for help
+              {/* Not "Search for help": that is the Help tab's own search
+                  field, and two controls with the same name in one panel
+                  is ambiguous to a screen reader and to a test. This card
+                  opens the shelf; the field inside it searches. */}
+              Browse help articles
             </span>
             <span className="block text-[12px] text-ink-500 dark:text-ink-400">
               Browse {articleCount} {articleCount === 1 ? "article" : "articles"}
