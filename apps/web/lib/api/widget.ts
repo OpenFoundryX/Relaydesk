@@ -23,6 +23,19 @@ export interface WidgetBootstrap {
   settings: Record<string, unknown>;
   /** Drives the empty-knowledge-base screen (spec D7). */
   articleCount: number;
+  /**
+   * Whether this workspace can actually answer a question -- AI switched on
+   * AND a key installed. Decides whether the panel opens on the
+   * conversation view or on search.
+   *
+   * Optional because a workspace that has never configured AI is the
+   * ordinary case, not an error. Declared here rather than left to the
+   * untyped `JSON.parse` it arrives through: the value reaches `Panel` via
+   * a `{...bootstrap}` spread, so without this line a refactor to explicit
+   * props would drop it silently, with no compiler error and no failing
+   * test.
+   */
+  aiEnabled?: boolean;
 }
 
 /**
