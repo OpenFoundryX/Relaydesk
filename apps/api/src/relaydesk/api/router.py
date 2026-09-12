@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from relaydesk.api.analytics import router as analytics_router
 from relaydesk.api.api_keys import router as api_keys_router
+from relaydesk.api.ai_configs import router as ai_configs_router
 from relaydesk.api.attachments import router as attachments_router
 from relaydesk.api.auth import router as auth_router
 from relaydesk.api.channels import router as channels_router
@@ -36,6 +37,7 @@ api_router.include_router(
 )
 api_router.include_router(kb_router, prefix="/kb", tags=["knowledge-base"])
 api_router.include_router(analytics_router, prefix="/analytics", tags=["analytics"])
+api_router.include_router(ai_configs_router, prefix="/ai-config", tags=["ai"])
 # Tools something inside Relaydesk calls, not event subscriptions -- the
 # distinction is spec D1, and event delivery will need its own surface.
 api_router.include_router(webhooks_router, prefix="/webhooks", tags=["webhooks"])
