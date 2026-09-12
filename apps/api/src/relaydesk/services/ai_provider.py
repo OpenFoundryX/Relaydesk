@@ -19,18 +19,41 @@ from relaydesk.models.ai_config import AiConfig
 class ProviderUnavailable(Exception):
     """The model could not be reached, or refused to answer.
 
-    Deliberately one exception for both. The caller's response is the same
-    either way -- degrade to the widget that already works (spec D4) -- and
-    a visitor must not be able to tell an outage from a refusal. That
-    guarantee covers ``str(exc)`` too: it is always the same fixed message,
-    regardless of cause. The SDK's own text (or any other operator-useful
-    detail) still reaches logs via ``exc.detail``, which never becomes part
-    of the exception's public string.
+    One base type for both, because the caller's *response to a visitor* is
+    the same either way -- degrade to the widget that already works (spec
+    D4) -- and a visitor must not be able to tell an outage from a refusal.
+    That guarantee covers ``str(exc)`` too: it is always the same fixed
+    message, regardless of cause. The SDK's own text (or any other
+    operator-useful detail) still reaches logs via ``exc.detail``, which
+    never becomes part of the exception's public string.
+
+    A caller that needs to tell the two apart -- ``ai_answers.stream``, for
+    the audit row and the circuit breaker -- catches ``ProviderRefused``
+    below *before* this one, rather than parsing ``.detail``: the type is
+    the distinction, not the message, so nothing downstream of the visitor
+    boundary can leak by accident.
     """
 
     def __init__(self, detail: str = "") -> None:
         super().__init__("the model is unavailable")
         self.detail = detail
+
+
+class ProviderRefused(ProviderUnavailable):
+    """The model declined to answer. A healthy outcome, not a failure.
+
+    Still a ``ProviderUnavailable`` -- and still hides behind the same
+    fixed ``str()`` -- so a caller that only catches the parent class (the
+    visitor-facing degrade path) needs no changes and a visitor still
+    cannot tell this from an outage. What changes is that a caller which
+    *does* care, namely ``ai_answers.stream``, can catch this subclass
+    first and record ``outcome=refused`` instead of ``degraded /
+    provider_unavailable`` -- and, critically, the circuit breaker
+    (``ai_budget.breaker_open``, which counts only genuine failures) never
+    sees it. A refusal is a normal thing a model does when nothing
+    grounded backs an answer; it must not look like the provider being
+    down, or five declined questions turn AI off for the whole workspace.
+    """
 
 
 @dataclass
@@ -62,14 +85,25 @@ class FakeProvider:
 
     chunks: list[str] = field(default_factory=list)
     fails: bool = False
+    refuses: bool = False
+    received_system: str | None = field(default=None, init=False)
+    received_question: str | None = field(default=None, init=False)
     _usage: Completion = field(default_factory=Completion)
 
     async def complete(
         self, *, system: str, question: str, model: str
     ) -> AsyncIterator[str]:
+        # Recorded before either failure branch, exactly as a real provider
+        # would have already received both by the time it decides to fail
+        # or refuse -- callers assert on these to prove what actually
+        # crossed this boundary (spec D6), not merely what was intended to.
+        self.received_system = system
+        self.received_question = question
         self._usage = Completion()
         if self.fails:
             raise ProviderUnavailable("scripted failure")
+        if self.refuses:
+            raise ProviderRefused("scripted refusal")
         for chunk in self.chunks:
             self._usage.text += chunk
             yield chunk
@@ -106,9 +140,13 @@ class AnthropicProvider:
     ) -> AsyncIterator[str]:
         """Stream the answer, chunk by chunk.
 
-        A mid-stream API error, or a refusal discovered only once the stream
-        ends, both raise ``ProviderUnavailable`` after chunks may already
-        have been yielded -- text already sent to the caller is not undone.
+        A mid-stream API error raises ``ProviderUnavailable``; a refusal
+        discovered only once the stream ends raises ``ProviderRefused``
+        instead -- a subclass, so a caller that only wants the visitor-facing
+        degrade still catches one type, while ``ai_answers.stream`` catches
+        the subclass first to keep it out of the outage count. Either can be
+        raised after chunks have already been yielded -- text already sent
+        to the caller is not undone.
         """
         import anthropic
 
@@ -137,7 +175,7 @@ class AnthropicProvider:
             raise ProviderUnavailable(str(error)) from error
 
         if final.stop_reason == "refusal":
-            raise ProviderUnavailable("refused")
+            raise ProviderRefused("refused")
         self._usage.input_tokens = final.usage.input_tokens
         self._usage.output_tokens = final.usage.output_tokens
 

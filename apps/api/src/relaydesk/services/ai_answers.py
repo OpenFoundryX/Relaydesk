@@ -37,7 +37,12 @@ from relaydesk.models.ai_config import AiConfig
 from relaydesk.models.widget_key import WidgetKey
 from relaydesk.models.workspace import Workspace
 from relaydesk.services import ai_budget, ai_redact, ai_retrieval
-from relaydesk.services.ai_provider import Provider, ProviderUnavailable, for_config
+from relaydesk.services.ai_provider import (
+    Provider,
+    ProviderRefused,
+    ProviderUnavailable,
+    for_config,
+)
 from relaydesk.services.ai_retrieval import Source
 
 SYSTEM = """You answer questions for {workspace} using only the numbered \
@@ -283,6 +288,25 @@ async def answer(
                 system=system, question=asked, model=model
             ):
                 yield chunk
+        except ProviderRefused:
+            # Caught ahead of ProviderUnavailable below -- it is a subclass,
+            # and a refusal is a healthy outcome, not a provider failure.
+            # Recorded as `refused`, not `degraded/provider_unavailable`, so
+            # ai_budget.breaker_open (which counts only that reason) cannot
+            # be tripped by an attacker sending five questions the model
+            # declines to answer. Its own session, not the request's -- see
+            # the docstring above.
+            async with audit_factory() as audit:
+                await _settle(
+                    audit,
+                    call_id,
+                    outcome=AiOutcome.refused,
+                    reason="declined",
+                    input_tokens=input_tokens,
+                    output_tokens=0,
+                    latency_ms=int((time.monotonic() - started) * 1000),
+                )
+            return
         except ProviderUnavailable:
             # Its own session, not the request's -- see the docstring above.
             async with audit_factory() as audit:

@@ -163,6 +163,54 @@ async def test_a_provider_failure_mid_stream_is_recorded_and_silent(db_session) 
     assert rows[0].reason == "provider_unavailable"
 
 
+async def test_a_model_refusal_is_recorded_as_refused_not_an_outage(db_session) -> None:
+    """I1: a refusal must not be filed as `provider_unavailable`.
+
+    Before the fix, `AnthropicProvider` raised the same `ProviderUnavailable`
+    for a refusal as for a real outage, so this row landed as
+    `degraded/provider_unavailable` -- which is exactly what
+    `ai_budget.breaker_open` counts. Five refusals would then read as five
+    provider failures and open the breaker for the whole workspace.
+    """
+    workspace, config, key = await _setup(db_session)
+    await _publish(db_session, workspace)
+
+    attempt = await answer(
+        db_session, workspace, key, "refund", provider=FakeProvider(refuses=True),
+        audit_sessions=_audit_sessions(db_session),
+    )
+    assert attempt.degraded is False  # retrieval succeeded; the model declined downstream
+    assert [chunk async for chunk in attempt.stream] == []
+
+    rows = list(await db_session.scalars(sa.select(AiCall)))
+    assert len(rows) == 1
+    assert rows[0].outcome == AiOutcome.refused
+    assert rows[0].reason == "declined"
+
+
+async def test_five_refusals_do_not_open_the_breaker(db_session) -> None:
+    """I1's actual consequence: refusals must not count towards the breaker.
+
+    `ai_budget.breaker_open` opens at `BREAKER_THRESHOLD` (5)
+    `provider_unavailable` rows in the window. Five refusals in a row must
+    leave it closed -- an attacker choosing questions the model declines
+    must not be able to turn AI off for every other visitor.
+    """
+    from relaydesk.services import ai_budget
+
+    workspace, config, key = await _setup(db_session)
+    await _publish(db_session, workspace)
+
+    for _ in range(5):
+        attempt = await answer(
+            db_session, workspace, key, "refund", provider=FakeProvider(refuses=True),
+            audit_sessions=_audit_sessions(db_session),
+        )
+        [chunk async for chunk in attempt.stream]
+
+    assert await ai_budget.breaker_open(db_session, workspace.id) is False
+
+
 async def test_a_cited_answer_is_recorded_as_answered(db_session) -> None:
     workspace, config, key = await _setup(db_session)
     await _publish(db_session, workspace)

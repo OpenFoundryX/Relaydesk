@@ -1,7 +1,12 @@
 import pytest
 
 from relaydesk.models.ai_config import AiConfig
-from relaydesk.services.ai_provider import FakeProvider, ProviderUnavailable, for_config
+from relaydesk.services.ai_provider import (
+    FakeProvider,
+    ProviderRefused,
+    ProviderUnavailable,
+    for_config,
+)
 
 
 async def test_fake_streams_its_script():
@@ -51,6 +56,46 @@ def test_provider_unavailable_hides_the_cause_in_its_message():
     refusal = ProviderUnavailable("refused")
     connection_failure = ProviderUnavailable("Connection reset by peer")
     assert str(refusal) == str(connection_failure)
+
+
+async def test_fake_can_be_scripted_to_refuse():
+    """A caller must have a way to exercise the refusal path, distinctly."""
+    provider = FakeProvider(refuses=True)
+    with pytest.raises(ProviderRefused):
+        [chunk async for chunk in provider.complete(
+            system="s", question="q", model="claude-opus-5"
+        )]
+
+
+def test_provider_refused_is_a_provider_unavailable():
+    """I1: the visitor-facing degrade path must not need to change.
+
+    A caller that only catches `ProviderUnavailable` -- the type spec D4's
+    single degrade path is built on -- must still catch a refusal, so
+    `ProviderRefused` has to be a subclass, not a sibling.
+    """
+    assert issubclass(ProviderRefused, ProviderUnavailable)
+
+
+def test_provider_refused_hides_the_cause_in_its_message_too():
+    """The visitor-facing uniform message (I1's other half) must survive
+    the type split: a caller inspecting only `str(exc)` still cannot tell
+    a refusal from an outage."""
+    refusal = ProviderRefused("refused")
+    outage = ProviderUnavailable("Connection reset by peer")
+    assert str(refusal) == str(outage)
+
+
+async def test_fake_records_what_it_was_given():
+    """D6's caller-level guarantee needs a fake that can prove what crossed
+    the boundary -- see I3/test_ai_answers.py for the caller-level test
+    this exists for."""
+    provider = FakeProvider(chunks=["ok"])
+    [chunk async for chunk in provider.complete(
+        system="sys-prompt", question="a@b.com wants a refund", model="claude-opus-5"
+    )]
+    assert provider.received_system == "sys-prompt"
+    assert provider.received_question == "a@b.com wants a refund"
 
 
 def test_no_key_means_no_provider():
