@@ -200,7 +200,12 @@ describe("Ask escalation offer", () => {
     expect(sent.get("message")).toBe("How do refunds work?");
     const transcript = sent.get("transcript") as string;
     expect(transcript).toContain("Visitor: How do refunds work?");
-    expect(transcript).toContain("Visitor: ada@example.com");
+    // The escalation dialogue is deliberately NOT in the transcript. An
+    // agent already has the address in the From field, and a page of the
+    // bot asking for it buries the one thing they need to read.
+    expect(transcript).not.toContain("ada@example.com");
+    expect(transcript).not.toContain("Ada Lovelace");
+    expect(transcript).not.toContain("best email address");
 
     expect(await screen.findByText(/team has it/i)).toBeTruthy();
   });
@@ -393,5 +398,59 @@ describe("Ask, opening choices", () => {
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: /Create a support ticket/ })).toBeNull(),
     );
+  });
+});
+
+describe("Ask, the transcript an agent reads", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("names the articles the bot already showed", async () => {
+    // Otherwise an agent's first instinct is to send a link the visitor
+    // has already read and bounced off, which is the most annoying
+    // possible reply.
+    const onSubmit = vi.fn(async () => ({ ok: true }) as const);
+    const answered = [
+      { event: "text", data: { text: "Within 14 days [1]." } },
+      {
+        event: "done",
+        data: {
+          outcome: "answered",
+          citations: [{ number: 1, title: "Refunds", path: "billing/refunds" }],
+        },
+      },
+    ];
+    const refused = [{ event: "done", data: { outcome: "refused", citations: [] } }];
+    let call = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        call += 1;
+        return new Response(sseStream(call === 1 ? answered : refused), { status: 200 });
+      }),
+    );
+
+    render(
+      <Ask
+        widgetKey="rdw_test"
+        onDegrade={() => {}}
+        onCompose={() => {}}
+        onSubmit={onSubmit}
+      />,
+    );
+    await askQuestion("How do refunds work?");
+    await screen.findByText(/Within 14 days/);
+
+    await askQuestion("What about annually?");
+    await screen.findByText(/couldn't find an answer/i);
+
+    fireEvent.click(screen.getByRole("button", { name: "Yes" }));
+    await reply("ada@example.com");
+    await reply("skip");
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const [sent] = onSubmit.mock.calls[0] as unknown as [FormData];
+    expect(sent.get("transcript") as string).toContain("articles shown: Refunds");
   });
 });

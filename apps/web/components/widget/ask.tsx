@@ -11,9 +11,15 @@ import { Answer, type Citation } from "@/components/widget/answer";
 
 import type { SubmitWidgetTicketResult } from "@/app/(widget)/widget/frame/actions";
 
+/** `collecting` marks a turn that belongs to the escalation dialogue --
+ *  the bot asking for an email, the visitor giving one -- rather than to
+ *  the conversation about the problem. It stays on screen (the visitor
+ *  just had it) and is kept OUT of the transcript an agent reads: they
+ *  already have the address in the From field, and a page of the bot
+ *  collecting it buries the one thing they need. */
 type Turn =
-  | { role: "visitor"; text: string }
-  | { role: "assistant"; text: string; citations: Citation[] };
+  | { role: "visitor"; text: string; collecting?: boolean }
+  | { role: "assistant"; text: string; citations: Citation[]; collecting?: boolean };
 
 /**
  * Where the escalation offer is, in the conversation. `closed` is "not
@@ -106,9 +112,19 @@ function isSkip(value: string): boolean {
 const OFFER_AFTER_ANSWERS = 3;
 
 function transcriptText(turns: Turn[]): string {
-  return turns
-    .map((turn) => `${turn.role === "visitor" ? "Visitor" : "Assistant"}: ${turn.text}`)
-    .join("\n");
+  const lines: string[] = [];
+  for (const turn of turns) {
+    if (turn.collecting) continue;
+    lines.push(`${turn.role === "visitor" ? "Visitor" : "Assistant"}: ${turn.text}`);
+    // The articles the bot already put in front of them. Without these an
+    // agent's first instinct is to send a link the visitor has read and
+    // bounced off, which is the most annoying possible reply.
+    if (turn.role === "assistant" && turn.citations.length > 0) {
+      const titles = turn.citations.map((citation) => citation.title).join(", ");
+      lines.push(`  (articles shown: ${titles})`);
+    }
+  }
+  return lines.join("\n");
 }
 
 export function Ask({
@@ -313,11 +329,12 @@ export function Ask({
   // that ever moves `escalation` into `email`.
   function acceptEscalation() {
     if (escalation.stage !== "offer") return;
-    appendTurn({ role: "visitor", text: "Yes" });
+    appendTurn({ role: "visitor", text: "Yes", collecting: true });
     appendTurn({
       role: "assistant",
       text: "Sure — what's your email address? I'll pass this on to the team so they can get back to you.",
       citations: [],
+      collecting: true,
     });
     setEscalation({ stage: "email", question: escalation.question });
   }
@@ -326,11 +343,12 @@ export function Ask({
   // would have if nothing had gone wrong.
   function declineEscalation() {
     if (escalation.stage !== "offer") return;
-    appendTurn({ role: "visitor", text: "No" });
+    appendTurn({ role: "visitor", text: "No", collecting: true });
     appendTurn({
       role: "assistant",
       text: "No problem — ask away if anything else comes to mind.",
       citations: [],
+      collecting: true,
     });
     setEscalation({ stage: "closed" });
   }
@@ -343,6 +361,7 @@ export function Ask({
       role: "assistant",
       text: "Of course. What's the problem? A sentence or two is plenty — I'll pass it to the team.",
       citations: [],
+      collecting: true,
     });
     setEscalation({ stage: "issue" });
   }
@@ -351,11 +370,12 @@ export function Ask({
    *  problem itself, which becomes the ticket's message. */
   function submitIssue(raw: string) {
     if (escalation.stage !== "issue") return;
-    appendTurn({ role: "visitor", text: raw });
+    appendTurn({ role: "visitor", text: raw, collecting: true });
     appendTurn({
       role: "assistant",
       text: "Thanks. What's the best email address to reach you on?",
       citations: [],
+      collecting: true,
     });
     setEscalation({ stage: "email", question: raw });
   }
@@ -366,12 +386,13 @@ export function Ask({
   // later, after a round trip the visitor has no way to see coming.
   function submitEmail(raw: string) {
     if (escalation.stage !== "email") return;
-    appendTurn({ role: "visitor", text: raw });
+    appendTurn({ role: "visitor", text: raw, collecting: true });
     if (!looksLikeEmail(raw)) {
       appendTurn({
         role: "assistant",
         text: "That doesn't quite look like an email address — mind trying again?",
         citations: [],
+        collecting: true,
       });
       return;
     }
@@ -379,6 +400,7 @@ export function Ask({
       role: "assistant",
       text: 'Thanks. And your name, if you\'d like to share it — or just say "skip".',
       citations: [],
+      collecting: true,
     });
     setEscalation({ stage: "name", question: escalation.question, email: raw });
   }
@@ -389,7 +411,7 @@ export function Ask({
   function submitName(raw: string) {
     if (escalation.stage !== "name") return;
     const skipped = isSkip(raw);
-    appendTurn({ role: "visitor", text: skipped ? "Skip" : raw });
+    appendTurn({ role: "visitor", text: skipped ? "Skip" : raw, collecting: true });
     void fileTicket(escalation.question, escalation.email, skipped ? "" : raw.trim());
   }
 
@@ -403,6 +425,7 @@ export function Ask({
       role: "assistant",
       text: `Sending this to the team now, as ${email}${name ? ` (${name})` : ""}.`,
       citations: [],
+      collecting: true,
     });
 
     if (!onSubmit) {
@@ -410,6 +433,7 @@ export function Ask({
         role: "assistant",
         text: "This widget isn't set up to send messages right now, so that hasn't gone anywhere. Sorry about that.",
         citations: [],
+        collecting: true,
       });
       setEscalation({
         stage: "failed",
@@ -433,6 +457,7 @@ export function Ask({
           role: "assistant",
           text: "Done — the team has it and will follow up by email.",
           citations: [],
+          collecting: true,
         });
         setEscalation({ stage: "closed" });
       } else {
@@ -440,6 +465,7 @@ export function Ask({
           role: "assistant",
           text: `That didn't send: ${result.message} Want to try again?`,
           citations: [],
+          collecting: true,
         });
         setEscalation({ stage: "failed", question, email, name, message: result.message });
       }
@@ -448,6 +474,7 @@ export function Ask({
         role: "assistant",
         text: "I couldn't reach the server, so that hasn't sent yet. Want to try again?",
         citations: [],
+        collecting: true,
       });
       setEscalation({ stage: "failed", question, email, name, message: "network" });
     }
