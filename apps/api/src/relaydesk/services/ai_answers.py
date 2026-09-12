@@ -105,24 +105,14 @@ async def answer(
     model = config.model if config else "claude-opus-5"
 
     async def degrade(reason: str) -> Attempt:
-        """Record the degrade, then hand back the reason.
-
-        On its own session and committed, for the same reason the stream's
-        writes are: ``get_session`` has no commit on exit, so a row merely
-        added to the request's session is rolled back when the request
-        ends. This module's promise that EVERY exit writes exactly one
-        ``AiCall`` row is only true if the write outlives the request.
-        """
-        async with audit_factory() as audit:
-            await _record(
-                audit,
-                workspace.id,
-                widget_key.id,
-                model=model,
-                outcome=AiOutcome.degraded,
-                reason=reason,
-            )
-            await audit.commit()
+        await _record(
+            session,
+            workspace.id,
+            widget_key.id,
+            model=model,
+            outcome=AiOutcome.degraded,
+            reason=reason,
+        )
         return Attempt(degraded=True, reason=reason)
 
     if config is None:
@@ -169,7 +159,7 @@ async def answer(
             ):
                 yield chunk
         except ProviderUnavailable:
-            # Its own session, not the request's -- see _audit below.
+            # Its own session, not the request's -- see the docstring above.
             async with audit_factory() as audit:
                 await _record(
                     audit,
