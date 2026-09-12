@@ -31,6 +31,7 @@ from relaydesk.api.deps import DbSession
 from relaydesk.config import get_settings
 from relaydesk.email_parse.normalize import ParsedAttachment
 from relaydesk.errors import Invalid, NotFound, TooManyRequests
+from relaydesk.models.ai_config import AiConfig
 from relaydesk.schemas.kb import (
     PublicArticleSummary,
     PublicCollectionOut,
@@ -77,11 +78,13 @@ async def bootstrap(key: str, session: DbSession) -> WidgetBootstrapOut:
     workspace = widget_key.workspace
     article_count = await kb_public.count(session, workspace.id)
 
+    config = await session.get(AiConfig, workspace.id)
     return WidgetBootstrapOut(
         workspace_name=workspace.name,
         monogram=workspace.monogram,
         settings=widget_key.settings,
         article_count=article_count,
+        ai_enabled=bool(config and config.enabled and config.api_key),
     )
 
 

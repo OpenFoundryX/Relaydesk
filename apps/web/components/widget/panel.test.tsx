@@ -260,3 +260,24 @@ describe("Panel deflection events", () => {
     await screen.findByText(/results for/i);
   });
 });
+
+describe("the panel's day-one view", () => {
+  it("opens on the conversation when the workspace can answer", () => {
+    render(<Panel {...workspace} articleCount={12} aiEnabled />);
+    expect(screen.getByPlaceholderText("Ask a question")).toBeTruthy();
+  });
+
+  it("opens on search when AI is not configured", () => {
+    // Without this the panel would show a question box that could only
+    // bounce the visitor back to search after they typed.
+    render(<Panel {...workspace} articleCount={12} />);
+    expect(screen.queryByPlaceholderText("Ask a question")).toBeNull();
+  });
+
+  it("still opens on the form when the knowledge base is empty", () => {
+    // Slice 8's rule outranks AI: a model with nothing to ground an answer
+    // in cannot answer either.
+    render(<Panel {...workspace} articleCount={0} aiEnabled />);
+    expect(screen.queryByPlaceholderText("Ask a question")).toBeNull();
+  });
+});

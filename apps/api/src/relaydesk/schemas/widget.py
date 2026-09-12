@@ -9,6 +9,14 @@ class WidgetBootstrapOut(CamelModel):
     settings: dict
     # Drives the empty-knowledge-base screen (spec D7).
     article_count: int
+    # Whether this workspace can actually answer questions -- `enabled` AND a
+    # key installed, the same pair `ai_provider.for_config` requires. The
+    # panel opens on the conversation view only when this is true; without
+    # it every visitor would be shown a question box that could never answer,
+    # and would bounce them to search after typing. Deliberately a bare boolean:
+    # which provider, which model and what it costs are nobody's business
+    # outside the console.
+    ai_enabled: bool = False
 
 
 class WidgetEventIn(CamelModel):

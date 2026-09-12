@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Article } from "@/components/widget/article";
+import { Ask } from "@/components/widget/ask";
 import { Compose } from "@/components/widget/compose";
 import { Footer } from "@/components/widget/footer";
 import { Header } from "@/components/widget/header";
@@ -31,6 +32,13 @@ export type PanelProps = {
   monogram: string;
   settings: Record<string, unknown>;
   articleCount: number;
+  /**
+   * Whether this workspace can actually answer a question -- AI switched on
+   * AND a key installed. Absent or false means the panel opens exactly as
+   * it did before AI existed: a visitor is never shown a question box that
+   * could only bounce them back to search.
+   */
+  aiEnabled?: boolean;
   /**
    * The credential this panel opened with -- absent only in a test that
    * renders `Panel` on its own, where nothing reaches the network. The
@@ -65,6 +73,7 @@ type View =
   | { name: "results"; query: string }
   | { name: "article"; path: string }
   | { name: "compose" }
+  | { name: "ask" }
   | { name: "sent" };
 
 /**
@@ -86,6 +95,7 @@ export function Panel({
   monogram,
   settings,
   articleCount,
+  aiEnabled,
   widgetKey,
   email,
   name,
@@ -105,9 +115,16 @@ export function Panel({
   // articleCount rather than from a failed search is what stops a new
   // workspace ever rendering a search box over nothing.
   const empty = articleCount === 0;
-  const [view, setView] = useState<View>(() =>
-    empty ? { name: "compose" } : { name: "home" },
-  );
+  // Three day-one states, in priority order. An empty knowledge base still
+  // opens on `compose` and never mounts a search field (spec D7, slice 8)
+  // -- that rule is untouched, and it outranks AI because a model with
+  // nothing to ground an answer in cannot answer either. Otherwise a
+  // workspace that has configured AI opens on the conversation, and one
+  // that has not opens on search exactly as before.
+  const [view, setView] = useState<View>(() => {
+    if (empty) return { name: "compose" };
+    return aiEnabled ? { name: "ask" } : { name: "home" };
+  });
 
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -258,6 +275,13 @@ export function Panel({
             onSubmit={onSubmit}
             initialEmail={email}
             initialName={name}
+          />
+        )}
+        {view.name === "ask" && (
+          <Ask
+            widgetKey={widgetKey}
+            onDegrade={() => setView({ name: "home" })}
+            onCompose={() => setView({ name: "compose" })}
           />
         )}
         {view.name === "sent" && <Sent onHome={goHome} />}
