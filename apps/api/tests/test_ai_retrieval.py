@@ -174,3 +174,21 @@ async def test_retrieve_never_crosses_workspaces(db_session) -> None:
 
     sources = await retrieve(db_session, workspace.id, "how do refunds work")
     assert sources == []
+
+
+async def test_a_long_pasted_question_does_not_blow_the_stack(db_session) -> None:
+    """A 2000-character question is inside the schema's own limit.
+
+    The first disjunctive query accumulated one nesting level per word and
+    SQLAlchemy compiled that recursively, so a 160-word question raised
+    `RecursionError` -- half the length `WidgetAskIn` advertises. The route
+    turned it into a silent degrade with no audit row, which is the exact
+    symptom the disjunctive query was written to cure.
+    """
+    workspace = await make_workspace(db_session)
+    # DISTINCT words, not a repeated phrase: the query deduplicates, so a
+    # question repeating nine words builds a nine-node tree however long it
+    # is, and would pass this test while the defect was wide open.
+    question = " ".join(f"word{index}" for index in range(260))[:2000]
+
+    assert await retrieve(db_session, workspace.id, question) == []

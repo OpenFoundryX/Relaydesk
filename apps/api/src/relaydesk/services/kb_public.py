@@ -412,6 +412,22 @@ async def search(
     )
 
 
+# The most distinct words a question contributes to its own retrieval.
+_MAX_QUESTION_TOKENS = 40
+
+# There is deliberately NO ts_rank floor here, and it is worth saying why,
+# because adding one is the obvious next idea. A review found that a vague
+# question ("please contact me") matches every article sharing one
+# incidental word, and proposed a floor. Measured against this database:
+# a genuine single-word hit on a short article scores 0.0608, and an
+# incidental one-word match scores 0.0608 -- the same number. ts_rank is
+# frequency-and-proximity over one document, not a relevance judgement, so
+# no threshold separates them. Any floor high enough to drop the noise also
+# drops real answers, which is exactly the failure this module was just
+# fixed for. Over-retrieval is bounded instead by the ranked LIMIT and paid
+# for by one model call; under-retrieval means the product does not work.
+
+
 def _disjunctive_tsquery(question: str):
     """A tsquery matching an article that shares *any* significant word.
 
@@ -437,11 +453,30 @@ def _disjunctive_tsquery(question: str):
     tokens = re.findall(r"\w+", question)
     if not tokens:
         return None
-    return functools.reduce(
-        lambda acc, token: acc.op("||")(sa.func.plainto_tsquery("english", token)),
-        tokens[1:],
-        sa.func.plainto_tsquery("english", tokens[0]),
-    )
+
+    # Deduplicated and capped. A question is a question, not a corpus: the
+    # first few dozen distinct words carry the intent, and every extra one
+    # is another `plainto_tsquery` call in the same statement for no gain.
+    seen: dict[str, None] = {}
+    for token in tokens:
+        seen.setdefault(token.lower(), None)
+        if len(seen) == _MAX_QUESTION_TOKENS:
+            break
+
+    nodes = [sa.func.plainto_tsquery("english", token) for token in seen]
+
+    # Folded in half repeatedly rather than accumulated left to right.
+    # `functools.reduce` builds one nesting level per token, and SQLAlchemy
+    # compiles that structure recursively -- a 160-word question raised
+    # RecursionError, well under the 2000 characters the schema accepts,
+    # and the route turned it into a silent degrade with no audit row.
+    # Halving makes the depth logarithmic: 40 tokens nest 6 deep, not 40.
+    while len(nodes) > 1:
+        nodes = [
+            nodes[i].op("||")(nodes[i + 1]) if i + 1 < len(nodes) else nodes[i]
+            for i in range(0, len(nodes), 2)
+        ]
+    return nodes[0]
 
 
 async def search_any(
