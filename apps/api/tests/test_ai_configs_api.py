@@ -1,4 +1,5 @@
 from relaydesk.models import Role
+from relaydesk.models.ai_config import AiConfig
 from tests.factories import make_member, make_workspace, sign_in
 
 
@@ -76,3 +77,58 @@ async def test_write_route_really_commits(client, db_session, commit_spy) -> Non
 
     assert response.status_code == 200, response.text
     assert len(commit_spy) >= 1
+
+
+async def test_an_unconfigured_workspace_reads_the_real_defaults(
+    client, db_session
+) -> None:
+    """A workspace that has never configured AI sees what it would get.
+
+    SQLAlchemy column defaults are applied at INSERT, not at construction,
+    so answering this from an unsaved `AiConfig` would return None for
+    every field and render the screen blank -- the same trap that once let
+    a `for_config` test pass with a real key in place.
+    """
+    workspace = await make_workspace(db_session)
+    headers = await admin_headers(client, db_session, workspace)
+
+    response = await client.get("/api/ai-config", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provider"] == "anthropic"
+    assert body["model"] == "claude-opus-5"
+    assert body["dailyTokenBudget"] == 200_000
+    assert body["enabled"] is False
+    assert body["keySuffix"] is None
+
+
+async def test_reading_does_not_create_a_row(client, db_session) -> None:
+    """A settings screen is a read. A monitor polling it must not write."""
+    workspace = await make_workspace(db_session)
+    headers = await admin_headers(client, db_session, workspace)
+
+    await client.get("/api/ai-config", headers=headers)
+
+    assert await db_session.get(AiConfig, workspace.id) is None
+
+
+async def test_a_short_key_is_not_echoed_back_as_its_own_suffix(
+    client, db_session
+) -> None:
+    """`keySuffix` must identify a key, never reveal one.
+
+    The last four characters of a two-character key are the key. Real
+    provider keys are far longer, so this guards a mistake rather than an
+    attack -- but "never returned" is the promise this screen exists to
+    keep, and a promise with an exception is a different promise.
+    """
+    workspace = await make_workspace(db_session)
+    headers = await admin_headers(client, db_session, workspace)
+
+    response = await client.put(
+        "/api/ai-config", json={"apiKey": "ab"}, headers=headers
+    )
+
+    assert response.status_code == 200
+    assert response.json()["keySuffix"] is None
