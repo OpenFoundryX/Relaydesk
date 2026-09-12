@@ -266,6 +266,38 @@ async def test_a_provider_that_fails_after_yielding_still_records_once(
     assert rows[0].reason == "provider_unavailable"
 
 
+async def test_a_visitor_who_disconnects_still_leaves_a_charged_row(db_session) -> None:
+    """Charge before the work: closing the stream early must not erase it.
+
+    Reproduces the review's C2 finding directly: read one chunk from a live
+    ``Attempt``, then ``aclose()`` the stream, the way Starlette closes the
+    generator when a visitor's connection drops mid-answer. Before the fix
+    this left zero rows in ``ai_calls`` -- the abandoned tokens did not
+    exist as far as ``ai_budget`` was concerned. The provisional row
+    ``_charge`` writes before the provider is ever called must survive
+    this exactly as it would a real disconnect.
+    """
+    workspace, config, key = await _setup(db_session)
+    await _publish(db_session, workspace)
+
+    attempt = await answer(
+        db_session, workspace, key, "refund",
+        provider=FakeProvider(chunks=["Within ", "14 days [1]."]),
+        audit_sessions=_audit_sessions(db_session),
+    )
+    assert attempt.stream is not None
+
+    first = await attempt.stream.__anext__()
+    assert first
+    await attempt.stream.aclose()
+
+    rows = list(await db_session.scalars(sa.select(AiCall)))
+    assert len(rows) == 1
+    assert rows[0].outcome == AiOutcome.degraded
+    assert rows[0].reason == "incomplete"
+    assert rows[0].input_tokens > 0
+
+
 async def test_a_degrade_commits_its_audit_row(db_session) -> None:
     """`degrade()` must commit, not merely add.
 
