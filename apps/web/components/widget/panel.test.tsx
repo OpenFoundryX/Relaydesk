@@ -281,3 +281,19 @@ describe("the panel's day-one view", () => {
     expect(screen.queryByPlaceholderText("Ask a question")).toBeNull();
   });
 });
+
+describe("the panel on a laptop", () => {
+  it("scales itself up when the host page is wide", () => {
+    const { container } = render(<Panel {...workspace} articleCount={12} wide />);
+    const root = container.querySelector('[role="dialog"]') as HTMLElement;
+    expect(root.style.zoom).toBe("1.12");
+  });
+
+  it("leaves a phone alone", () => {
+    // There the panel is already a full-screen takeover at the reader's
+    // own text size; scaling it would fight the device, not help it.
+    const { container } = render(<Panel {...workspace} articleCount={12} />);
+    const root = container.querySelector('[role="dialog"]') as HTMLElement;
+    expect(root.style.zoom).toBe("");
+  });
+});

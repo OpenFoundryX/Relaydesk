@@ -45,8 +45,9 @@
   style.textContent =
     "#rdw{position:fixed;" + side + ":24px;bottom:96px;width:380px;height:600px;" +
     "border:0;border-radius:16px;z-index:2147480000;box-shadow:0 10px 38px" +
-    " -10px rgba(9,9,11,.2)}@media(max-width:480px){#rdw{inset:0;" +
-    "width:100%;height:100%;border-radius:0}}";
+    " -10px rgba(9,9,11,.2)}@media(min-width:1024px){#rdw{width:440px;" +
+    "height:min(700px,calc(100vh - 140px))}}@media(max-width:480px){#rdw{" +
+    "inset:0;width:100%;height:100%;border-radius:0}}";
   document.head.appendChild(style);
 
   function panel() {
@@ -59,7 +60,8 @@
       "/widget/frame?key=" +
       encodeURIComponent(key) +
       (email ? "&email=" + encodeURIComponent(email) : "") +
-      (person ? "&name=" + encodeURIComponent(person) : "");
+      (person ? "&name=" + encodeURIComponent(person) : "") +
+      (window.innerWidth >= 1024 ? "&wide=1" : "");
     mount(frame);
     return frame;
   }

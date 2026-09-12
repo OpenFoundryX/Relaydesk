@@ -288,3 +288,26 @@ describe("launcher branding", () => {
     expect(source).toContain(".catch(function () {})");
   });
 });
+
+describe("panel size", () => {
+  it("gives the panel more room on a laptop", () => {
+    const source = readFileSync("public/widget.js", "utf8");
+    expect(source).toContain("@media(min-width:1024px)");
+    expect(source).toContain("width:440px");
+  });
+
+  it("tells the frame, because the frame cannot tell on its own", () => {
+    // Inside the iframe the viewport IS the iframe -- about 400px wide on
+    // a laptop panel and on a phone alike -- so a breakpoint there sees
+    // the one thing it must not use.
+    const source = readFileSync("public/widget.js", "utf8");
+    expect(source).toContain("window.innerWidth >= 1024");
+    expect(source).toContain("&wide=1");
+  });
+
+  it("still takes the whole screen on a phone", () => {
+    const source = readFileSync("public/widget.js", "utf8");
+    expect(source).toContain("@media(max-width:480px)");
+    expect(source).toContain("inset:0");
+  });
+});

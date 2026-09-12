@@ -33,6 +33,12 @@ export type PanelProps = {
   settings: Record<string, unknown>;
   articleCount: number;
   /**
+   * The host page is on a laptop-sized screen, so the panel is drawn
+   * larger and its contents scale to match. Absent on a phone, where the
+   * panel is already a full-screen takeover at the reader's own text size.
+   */
+  wide?: boolean;
+  /**
    * Whether this workspace can actually answer a question -- AI switched on
    * AND a key installed. Absent or false means the panel opens exactly as
    * it did before AI existed: a visitor is never shown a question box that
@@ -97,6 +103,7 @@ export function Panel({
   settings,
   articleCount,
   aiEnabled,
+  wide,
   widgetKey,
   email,
   name,
@@ -243,6 +250,12 @@ export function Panel({
       aria-modal="true"
       aria-label={`${displayName} support`}
       tabIndex={-1}
+      // `zoom` rather than a second set of sizes on every element: the
+      // panel is a self-contained document at a width we choose, so
+      // scaling it whole keeps type, spacing and hit targets in the
+      // proportions they were designed in. `transform: scale` would blur
+      // text and leave the layout at the old size; `zoom` re-lays out.
+      style={wide ? { zoom: 1.12 } : undefined}
       className="motion-reduce:transition-none flex h-screen flex-col bg-white text-ink-900 dark:bg-ink-900 dark:text-ink-50"
     >
       <Header name={displayName} monogram={monogram} onBack={onBack} onClose={close} />

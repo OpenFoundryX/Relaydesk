@@ -17,9 +17,14 @@ import { getWidgetBootstrap } from "@/lib/api/widget";
 export default async function WidgetFramePage({
   searchParams,
 }: {
-  searchParams: Promise<{ key?: string; email?: string; name?: string }>;
+  searchParams: Promise<{
+    key?: string;
+    email?: string;
+    name?: string;
+    wide?: string;
+  }>;
 }) {
-  const { key, email, name } = await searchParams;
+  const { key, email, name, wide } = await searchParams;
   if (!key) notFound();
 
   const bootstrap = await getWidgetBootstrap(key);
@@ -35,6 +40,12 @@ export default async function WidgetFramePage({
       email={email}
       name={name}
       onSubmit={submitWidgetTicketAction.bind(null, key)}
+      // Set by the loader when the HOST page is on a laptop-sized screen.
+      // A media query here cannot tell: inside this iframe the viewport is
+      // the iframe, about 400px wide on a desktop panel and on a phone
+      // alike, so the one thing a breakpoint would need to see is the one
+      // thing it cannot.
+      wide={wide === "1"}
     />
   );
 }
