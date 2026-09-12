@@ -50,6 +50,24 @@ describe("Ask", () => {
     await waitFor(() => expect(onDegrade).toHaveBeenCalledTimes(1));
   });
 
+  it("falls back when the stream ends without ever saying it is done", async () => {
+    // The server guarantees a `done` frame on every path it controls, but
+    // it does not control every way a stream ends -- a dropped connection,
+    // a crashed upstream, a proxy giving up mid-answer. Without a fallback
+    // here the visitor's question hangs with nothing to do next, which is
+    // worse than an error.
+    const onDegrade = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      mockAskFetch([{ event: "text", data: { text: "Refunds land within" } }]),
+    );
+
+    render(<Ask widgetKey="rdw_test" onDegrade={onDegrade} onCompose={() => {}} />);
+    await askQuestion("How do refunds work?");
+
+    await waitFor(() => expect(onDegrade).toHaveBeenCalledTimes(1));
+  });
+
   it("renders a citation as a link to the article", async () => {
     vi.stubGlobal(
       "fetch",

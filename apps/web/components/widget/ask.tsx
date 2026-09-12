@@ -135,7 +135,17 @@ export function Ask({
           boundary = buffer.indexOf("\n\n");
         }
 
-        if (done) return;
+        // The stream ended without a `done` frame ever arriving. Task 8
+        // guarantees the server emits one on every path it controls, but
+        // the server does not control every way a stream ends: a dropped
+        // connection, a crashed upstream, a proxy timing out mid-answer.
+        // Without this the visitor's question simply hangs, which is the
+        // one outcome spec D4 exists to prevent -- worse than an error,
+        // because nothing tells them to try something else.
+        if (done) {
+          onDegrade();
+          return;
+        }
       }
     } catch {
       // A rejected `fetch` (offline, blocked) or a reader that throws --
@@ -179,6 +189,12 @@ export function Ask({
                     <li key={citation.path}>
                       <a
                         href={`/help/${citation.path}`}
+                        // The panel lives in the loader's iframe (spec
+                        // D5), which has no chrome and no way back. A
+                        // same-frame navigation would replace the widget
+                        // with the article and strand the visitor there.
+                        target="_blank"
+                        rel="noreferrer"
                         className="text-[12px] text-accent-950 underline dark:text-accent-400"
                       >
                         {citation.title}
