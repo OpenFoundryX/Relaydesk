@@ -92,6 +92,16 @@ class Settings(BaseSettings):
     # Questions one embed may ask the model per hour. Lower than the ticket
     # cap because each of these spends the workspace's money.
     widget_ask_hourly_cap: int = 20
+    # Questions one address may ask per hour, on top of the per-key cap
+    # above -- the same second axis `ticket_ip_hourly_cap` adds to
+    # `widget_key_hourly_cap`, and for the same reason: the key is public
+    # (anyone who views the customer's page source has it), so the per-key
+    # cap alone bounds the workspace but not any one caller. Set at less
+    # than half of `widget_ask_hourly_cap` so a single address can never
+    # consume the majority of one embed's hourly allowance on its own, while
+    # still giving one visitor room for a real back-and-forth (a handful of
+    # follow-up questions in one sitting) without tripping it.
+    widget_ask_ip_hourly_cap: int = 8
     ticket_message_max_chars: int = 10000
     ticket_attachment_max_count: int = 5
 

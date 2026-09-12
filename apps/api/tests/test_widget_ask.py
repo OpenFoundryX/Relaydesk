@@ -82,6 +82,48 @@ async def test_the_hourly_cap_bounds_how_many_questions_are_answered(
     get_settings.cache_clear()
 
 
+async def test_the_per_ip_cap_bounds_how_many_questions_are_answered(
+    client, db_session, monkeypatch
+) -> None:
+    """I4: the sibling `submit` route caps per client IP as well as per key
+    (spec: an unattested identifier needs the other axis), because the key
+    is public -- anyone who views the customer's page source can use it.
+    Before this fix `ask` capped only per key, so one caller could consume
+    a whole workspace's hourly allowance alone.
+
+    The per-key cap is set high and the per-IP cap low, and two different
+    widget keys in the same workspace are used for the three calls: if the
+    cap this test is tripping were still keyed only on the widget key,
+    switching keys for the third call would reset the count and it would
+    succeed. The test client's peer address is the same for every call
+    here, so this only shows a real cap if it is genuinely per-address.
+    """
+    get_settings.cache_clear()
+    monkeypatch.setenv("WIDGET_ASK_IP_HOURLY_CAP", "2")
+    monkeypatch.setenv("WIDGET_ASK_HOURLY_CAP", "100")
+
+    workspace = await make_workspace(db_session)
+    key_a = await widget_keys.create(db_session, workspace.id, "Site A")
+    key_b = await widget_keys.create(db_session, workspace.id, "Site B")
+    await db_session.commit()
+
+    for _ in range(2):
+        response = await client.post(
+            f"/api/widget/{key_a.key}/ask", json={"question": "how do refunds work"}
+        )
+        assert response.status_code == 200
+
+    third = await client.post(
+        f"/api/widget/{key_b.key}/ask", json={"question": "how do refunds work"}
+    )
+    assert third.status_code == 200  # Silent, exactly like the first two.
+
+    count = await db_session.scalar(sa.select(sa.func.count()).select_from(AiCall))
+    assert count == 2  # The third call, on a different key, never reached ai_answers.answer.
+
+    get_settings.cache_clear()
+
+
 async def test_a_resolved_question_writes_no_conversation(client, db_session) -> None:
     """An inbox full of questions the AI answered is a triage problem."""
     workspace = await make_workspace(db_session)

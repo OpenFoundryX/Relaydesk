@@ -307,7 +307,9 @@ async def record_event(
 
 
 @router.post("/{key}/ask")
-async def ask(key: str, body: WidgetAskIn, session: DbSession) -> StreamingResponse:
+async def ask(
+    key: str, body: WidgetAskIn, session: DbSession, request: Request
+) -> StreamingResponse:
     """Answer from the knowledge base, or say plainly that this degraded.
 
     Always 200 once the key resolves. Every failure inside is a degradation
@@ -326,6 +328,22 @@ async def ask(key: str, body: WidgetAskIn, session: DbSession) -> StreamingRespo
     widget_key = await widget_keys.resolve(session, key)
 
     try:
+        # The per-address cap, ahead of the per-key one below -- same order
+        # `submit` above uses, and the same reason: the key is public, so it
+        # alone bounds the workspace but not any one caller. Each of these
+        # calls spends the workspace's money, unlike `submit`'s rows, which
+        # is why this cap exists at all rather than relying on the ticket
+        # route's precedent going unfollowed here.
+        within_ip = await ratelimit.check(
+            session,
+            "widget_ask_ip",
+            client_ip.resolve(request),
+            limit=get_settings().widget_ask_ip_hourly_cap,
+            window=timedelta(hours=1),
+        )
+        if not within_ip:
+            return _degraded("rate_limited")
+
         within = await ratelimit.check(
             session,
             "widget_ask",
