@@ -337,3 +337,29 @@ describe("resizing on request", () => {
     expect(source.indexOf("relaydesk:close")).toBeGreaterThan(guard);
   });
 });
+
+describe("resizing smoothly", () => {
+  it("eases between sizes rather than jumping", () => {
+    const source = readFileSync("public/widget.js", "utf8");
+    expect(source).toContain("transition:width");
+    expect(source).toContain("height .22s ease");
+  });
+
+  it("holds still for a visitor who asked for less motion", () => {
+    // A panel that resizes itself is exactly the kind of movement
+    // `prefers-reduced-motion` exists for, and this one does it without
+    // being asked.
+    const source = readFileSync("public/widget.js", "utf8");
+    expect(source).toContain("@media(prefers-reduced-motion:reduce){");
+    expect(source).toContain("#rdw{transition:none}");
+  });
+
+  it("keeps the reduced-motion rule at the top level, not nested", () => {
+    // Nesting an @media inside a rule needs CSS Nesting, which is not
+    // universal -- and a reduced-motion rule that silently does not apply
+    // is worse than none, because nobody will notice it failing.
+    const source = readFileSync("public/widget.js", "utf8");
+    expect(source).not.toContain("{transition:none}\" +");
+    expect(source).toContain("}@media(prefers-reduced-motion:reduce){");
+  });
+});
