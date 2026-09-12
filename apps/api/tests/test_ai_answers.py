@@ -9,8 +9,13 @@ from sqlalchemy.exc import IntegrityError
 from relaydesk.models.ai_call import AiCall, AiOutcome
 from relaydesk.models.ai_config import AiConfig
 from relaydesk.services import widget_keys
+from relaydesk.services import ai_answers
 from relaydesk.services.ai_answers import Attempt, answer
-from relaydesk.services.ai_provider import FakeProvider
+from relaydesk.services.ai_provider import (
+    Completion,
+    FakeProvider,
+    ProviderUnavailable,
+)
 from tests.factories import make_workspace
 
 
@@ -191,52 +196,74 @@ async def test_an_uncited_answer_is_recorded_as_refused(db_session) -> None:
     assert row.reason == "no_citation"
 
 
-async def test_the_stream_audit_write_does_not_borrow_the_request_session(
-    db_session,
-) -> None:
-    """The stream's audit row must outlive the request, so it is written on
-    its own session -- not the pre-stream degrade paths, which run inside
-    the handler while the request's session is still open and correctly
-    use it.
+async def test_the_stream_reaches_for_its_own_session(db_session) -> None:
+    """The stream's audit row must not go through the request's session.
 
-    `get_session` has no commit on exit, and the streaming generator runs
-    after FastAPI has torn it down -- so a row merely added to the
-    request's session would be rolled back, and the module's promise that
-    every exit writes exactly one `AiCall` row would be false.
+    A StreamingResponse body runs after the handler returns and after
+    FastAPI tears `get_session` down, so the request's session is closed by
+    then -- a write borrowing it would fail at the end of a stream the
+    visitor has already read, and no test under a shared-session fixture
+    would show it.
 
-    Asserting that structurally is awkward, because a shared-session
-    fixture cannot see the difference: both designs leave a visible row.
-    This test uses the test harness's own separation as the instrument
-    instead. Retrieval must succeed here (hence `_publish`) so the attempt
-    reaches `stream()` rather than degrading beforehand.
-
-    Called WITHOUT the `audit_sessions` seam, the stream's write goes
-    through the real `async_session_factory`, which is built from
-    `settings.database_url` and therefore connects to the `relaydesk`
-    database -- while this test runs against `relaydesk_test` (see
-    `conftest.TEST_DATABASE`). The workspace `_setup` just created does not
-    exist over there at all, so the insert fails its foreign key the moment
-    the stream is consumed.
-
-    That failure IS the evidence, and it is evidence of exactly one thing:
-    the write did not go through `db_session`. Revert the fix -- have
-    `stream()` close over `session` again -- and `pytest.raises` would not
-    fire; the row would land unremarkably in `db_session`. Note the
-    mechanism is the two DATABASES diverging, not merely two transactions;
-    committing this test's setup would not make the row visible to the
-    other one.
+    This observes the reach for `async_session_factory` rather than its
+    consequences. An earlier version asserted an `IntegrityError` instead,
+    on the reasoning that the real factory points at the `relaydesk`
+    database while the suite runs against `relaydesk_test`. That worked,
+    but it pinned the guarantee to an environmental coincidence -- the real
+    database happening to be migrated by the api container's entrypoint --
+    rather than to the mechanism. A spy says the same thing and keeps
+    saying it on a machine configured differently.
     """
     workspace, config, key = await _setup(db_session)
     await _publish(db_session, workspace)
 
-    attempt = await answer(
-        db_session, workspace, key, "refund",
-        provider=FakeProvider(chunks=["Within 14 days [1]."]),
-    )
-    assert attempt.degraded is False
-
-    with pytest.raises(IntegrityError):
+    with mock.patch.object(
+        ai_answers, "async_session_factory", wraps=_audit_sessions(db_session)
+    ) as factory:
+        attempt = await answer(
+            db_session, workspace, key, "refund",
+            provider=FakeProvider(chunks=["Within 14 days [1]."]),
+        )
         [chunk async for chunk in attempt.stream]
+
+    assert factory.called, "the stream borrowed the request's session"
+
+
+async def test_a_provider_that_fails_after_yielding_still_records_once(
+    db_session,
+) -> None:
+    """Partial text reaches the visitor, and exactly one row is still written.
+
+    `complete()` may raise after chunks have gone out -- a mid-stream error,
+    or the refusal check that runs once the stream ends. The visitor keeps
+    what they already saw; the audit must not end up with zero rows or two.
+    """
+
+    class YieldsThenFails:
+        def __init__(self):
+            self._usage = Completion()
+
+        async def complete(self, *, system, question, model):
+            yield "Within 14 days"
+            raise ProviderUnavailable("dropped mid-stream")
+
+        def usage(self):
+            return self._usage
+
+    workspace, config, key = await _setup(db_session)
+    await _publish(db_session, workspace)
+
+    attempt = await answer(
+        db_session, workspace, key, "refund", provider=YieldsThenFails(),
+        audit_sessions=_audit_sessions(db_session),
+    )
+    received = [chunk async for chunk in attempt.stream]
+
+    assert received == ["Within 14 days"], "the visitor lost text they had already seen"
+    rows = list(await db_session.scalars(sa.select(AiCall)))
+    assert len(rows) == 1
+    assert rows[0].outcome == AiOutcome.degraded
+    assert rows[0].reason == "provider_unavailable"
 
 
 async def test_a_degrade_commits_its_audit_row(db_session) -> None:
