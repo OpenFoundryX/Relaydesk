@@ -455,32 +455,53 @@ describe("Ask, the transcript an agent reads", () => {
   });
 });
 
-describe("Ask, passing it on from any answer", () => {
+describe("Ask, passing it on when the bot cannot help", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  const ANSWER = [
-    { event: "text", data: { text: "Try the export tab." } },
-    { event: "done", data: { outcome: "answered", citations: [] } },
+  const CLARIFIED = [
+    { event: "text", data: { text: "The articles don't cover that." } },
+    { event: "done", data: { outcome: "clarified", citations: [] } },
+  ];
+  const ANSWERED = [
+    { event: "text", data: { text: "Try the export tab [1]." } },
+    {
+      event: "done",
+      data: {
+        outcome: "answered",
+        citations: [{ number: 1, title: "Exporting", path: "data/exporting" }],
+      },
+    },
   ];
 
-  it("offers a person under an answer, without waiting for one to fail", async () => {
+  it("offers a person when it could not ground an answer", async () => {
     // The bot cannot escalate itself -- it has no way to file anything --
-    // so the visitor needs a control, on screen, after an answer that did
-    // not help.
-    vi.stubGlobal("fetch", mockAskFetch(ANSWER));
+    // so the visitor needs a control, on screen, right where the answer
+    // that did not help is.
+    vi.stubGlobal("fetch", mockAskFetch(CLARIFIED));
     render(<Ask widgetKey="rdw_test" onDegrade={() => {}} onCompose={() => {}} />);
-    await askQuestion("How do I export?");
+    await askQuestion("I get a 404 creating an expense");
 
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Pass this to the team" })).toBeTruthy(),
     );
   });
 
+  it("stays out of the way when the answer actually landed", async () => {
+    // An answer that helped should not be followed by an invitation to
+    // give up on it.
+    vi.stubGlobal("fetch", mockAskFetch(ANSWERED));
+    render(<Ask widgetKey="rdw_test" onDegrade={() => {}} onCompose={() => {}} />);
+    await askQuestion("How do I export?");
+    await screen.findByText(/Try the export tab/);
+
+    expect(screen.queryByRole("button", { name: "Pass this to the team" })).toBeNull();
+  });
+
   it("goes straight for an email, since the question is already known", async () => {
     const onSubmit = vi.fn(async () => ({ ok: true }) as const);
-    vi.stubGlobal("fetch", mockAskFetch(ANSWER));
+    vi.stubGlobal("fetch", mockAskFetch(CLARIFIED));
     render(
       <Ask
         widgetKey="rdw_test"
@@ -489,7 +510,7 @@ describe("Ask, passing it on from any answer", () => {
         onSubmit={onSubmit}
       />,
     );
-    await askQuestion("How do I export?");
+    await askQuestion("I get a 404 creating an expense");
     await screen.findByRole("button", { name: "Pass this to the team" });
 
     fireEvent.click(screen.getByRole("button", { name: "Pass this to the team" }));
@@ -499,20 +520,20 @@ describe("Ask, passing it on from any answer", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     const [sent] = onSubmit.mock.calls[0] as unknown as [FormData];
     // The visitor's own question, not the bot's reply and not their email.
-    expect(sent.get("message")).toBe("How do I export?");
+    expect(sent.get("message")).toBe("I get a 404 creating an expense");
   });
 
-  it("shows the button once, under the newest answer only", async () => {
-    vi.stubGlobal("fetch", mockAskFetch(ANSWER));
+  it("shows the button once, under the newest unanswered turn only", async () => {
+    vi.stubGlobal("fetch", mockAskFetch(CLARIFIED));
     render(<Ask widgetKey="rdw_test" onDegrade={() => {}} onCompose={() => {}} />);
     await askQuestion("one");
     await screen.findByRole("button", { name: "Pass this to the team" });
     await askQuestion("two");
 
     await waitFor(() =>
-      expect(screen.getAllByRole("button", { name: "Pass this to the team" })).toHaveLength(
-        1,
-      ),
+      expect(
+        screen.getAllByRole("button", { name: "Pass this to the team" }),
+      ).toHaveLength(1),
     );
   });
 });

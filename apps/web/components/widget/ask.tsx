@@ -19,7 +19,16 @@ import type { SubmitWidgetTicketResult } from "@/app/(widget)/widget/frame/actio
  *  collecting it buries the one thing they need. */
 type Turn =
   | { role: "visitor"; text: string; collecting?: boolean }
-  | { role: "assistant"; text: string; citations: Citation[]; collecting?: boolean };
+  | {
+      role: "assistant";
+      text: string;
+      citations: Citation[];
+      collecting?: boolean;
+      /** The bot had nothing grounded to answer with -- it greeted, asked
+       *  something back, or said plainly that the articles do not cover
+       *  this. The only turns worth offering a person under. */
+      unresolved?: boolean;
+    };
 
 /**
  * Where the escalation offer is, in the conversation. `closed` is "not
@@ -258,7 +267,12 @@ export function Ask({
                 outcome === "answered" && Array.isArray(parsed.data.citations)
                   ? (parsed.data.citations as Citation[])
                   : [];
-              appendTurn({ role: "assistant", text: full, citations });
+              appendTurn({
+                role: "assistant",
+                text: full,
+                citations,
+                unresolved: outcome === "clarified",
+              });
               // A visitor can be stuck while every answer technically
               // succeeds. Grounded answers keep coming, `refused` never
               // fires, and the offer below never opens -- so someone who
@@ -491,7 +505,9 @@ export function Ask({
   // the escalation dialogue -- the only one that carries the button.
   const lastAnswerIndex = turns.reduce(
     (found, turn, index) =>
-      turn.role === "assistant" && !turn.collecting ? index : found,
+      turn.role === "assistant" && !turn.collecting && turn.unresolved
+        ? index
+        : found,
     -1,
   );
 
@@ -595,13 +611,17 @@ export function Ask({
               <Bubble from="assistant">
                 <Answer text={turn.text} citations={turn.citations} />
               </Bubble>
-              {/* Under the latest answer, always. A visitor who has just
-                  read something that did not help should not have to work
-                  out that a person is reachable, and the bot cannot do it
-                  for them -- it has no way to file anything, and saying
-                  otherwise is how it ends up promising help that never
-                  comes. Only the latest, so the column does not fill with
-                  the same button after every turn. */}
+              {/* Only under an answer the bot could not ground -- a
+                  greeting, a question back, or a plain "the articles do
+                  not cover this". A grounded answer that did help should
+                  not be followed by an invitation to give up on it.
+                  `refused` and `degraded` already carry their own Yes/No
+                  offer, so this would duplicate them.
+
+                  It exists because the bot cannot escalate itself: it has
+                  no way to file anything, and saying otherwise is how it
+                  ends up promising help that never comes. Latest only, so
+                  the column does not fill with the same button. */}
               {!turn.collecting &&
                 index === lastAnswerIndex &&
                 escalation.stage === "closed" && (
