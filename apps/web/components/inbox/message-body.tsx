@@ -11,6 +11,8 @@
  * So the transcript gets a box. Everything else renders exactly as it did.
  */
 
+import { ChevronRight } from "lucide-react";
+
 const SEPARATOR = "--- Before contacting support ---";
 
 /** `Visitor: …`, `Assistant: …`, or the indented `(articles shown: …)`
@@ -26,17 +28,39 @@ export function MessageBody({ body }: { body: string }) {
 
   const message = body.slice(0, at).trimEnd();
   const transcript = body.slice(at + SEPARATOR.length).trim();
+  // Turns, not lines: the `(articles shown: …)` caption belongs to the
+  // answer above it and counting it would overstate how much is there.
+  const turnCount = transcript
+    .split("\n")
+    .filter((line) => SPEAKER.test(line)).length;
 
   return (
     <>
       {message && <p className="whitespace-pre-wrap">{message}</p>}
 
-      <div className="mt-3 rounded-lg border border-ink-200 bg-white/70 px-3.5 py-3">
-        <p className="mb-2.5 text-[11px] font-medium tracking-wide text-ink-500 uppercase">
-          Before contacting support
-        </p>
+      {/* Collapsed by default. An agent's eye should land on what the
+          person wants, not on a wall of what a bot already told them --
+          but the count in the summary is there so they can tell at a
+          glance whether it is worth opening, without having to.
 
-        <div className="space-y-2.5">
+          A native <details> rather than a state hook: it is keyboard
+          accessible, it survives with JavaScript still loading, and the
+          content stays in the DOM for the browser's own find-in-page. */}
+      <details className="group mt-3 rounded-lg border border-ink-200 bg-white/70 open:bg-white">
+        <summary className="flex cursor-pointer list-none items-center gap-1.5 px-3.5 py-2.5 text-[11px] font-medium tracking-wide text-ink-500 uppercase transition-colors hover:text-ink-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
+          <ChevronRight
+            className="size-3.5 shrink-0 transition-transform group-open:rotate-90"
+            aria-hidden
+          />
+          Before contacting support
+          {turnCount > 0 && (
+            <span className="font-normal normal-case">
+              · {turnCount} {turnCount === 1 ? "message" : "messages"}
+            </span>
+          )}
+        </summary>
+
+        <div className="space-y-2.5 border-t border-ink-200 px-3.5 py-3">
           {transcript.split("\n").map((line, index) => {
             const articles = ARTICLES.exec(line);
             if (articles) {
@@ -76,7 +100,7 @@ export function MessageBody({ body }: { body: string }) {
             );
           })}
         </div>
-      </div>
+      </details>
     </>
   );
 }

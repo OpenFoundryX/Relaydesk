@@ -43,3 +43,28 @@ describe("MessageBody", () => {
     expect(screen.getByText("odd line")).toBeTruthy();
   });
 });
+
+describe("MessageBody, collapsed", () => {
+  it("starts closed so the visitor's own words come first", () => {
+    const { container } = render(<MessageBody body={ESCALATED} />);
+    const details = container.querySelector("details");
+    expect(details).toBeTruthy();
+    expect(details?.hasAttribute("open")).toBe(false);
+  });
+
+  it("says how much is inside before an agent opens it", () => {
+    // Two turns here; the "(articles shown: …)" caption belongs to the
+    // answer above it and must not be counted as one.
+    render(<MessageBody body={ESCALATED} />);
+    expect(screen.getByText(/2 messages/)).toBeTruthy();
+  });
+
+  it("counts a single turn in the singular", () => {
+    render(
+      <MessageBody
+        body={"msg\n\n--- Before contacting support ---\nVisitor: just the one"}
+      />,
+    );
+    expect(screen.getByText(/1 message$/)).toBeTruthy();
+  });
+});
