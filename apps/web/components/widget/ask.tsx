@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
-import { WidgetButton } from "@/components/widget/button";
+import { ArrowUp } from "lucide-react";
 
 /** One resolved citation -- server-side only (spec D3): a model that
  * invents an article id produces no link, because the id resolves to
@@ -61,10 +61,13 @@ function transcriptText(turns: Turn[]): string {
 
 export function Ask({
   widgetKey,
+  greeting,
   onDegrade,
   onCompose,
 }: {
   widgetKey: string | undefined;
+  /** The workspace's own opening line, from its widget settings. */
+  greeting?: string;
   onDegrade: () => void;
   /** Escalating carries the transcript so far (spec D8) -- empty when the
    * visitor asked nothing before reaching for a human, which leaves the
@@ -75,6 +78,15 @@ export function Ask({
   const [typed, setTyped] = useState("");
   const [draft, setDraft] = useState("");
   const [asking, setAsking] = useState(false);
+
+  // Follow the conversation as it grows, the way a messenger does. Without
+  // this a streaming answer runs off the bottom of a short panel and the
+  // visitor watches a static first line while the rest arrives unseen.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const node = scrollRef.current;
+    if (node) node.scrollTop = node.scrollHeight;
+  }, [turns, draft, asking]);
 
   async function ask(question: string) {
     setTurns((prev) => [...prev, { role: "visitor", text: question }]);
@@ -166,25 +178,29 @@ export function Ask({
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-4 px-4 py-6">
-      <h1 className="text-[13px] text-ink-500 dark:text-ink-400">Ask a question</h1>
-
-      {/* Announces each answer as it streams in and settles -- the one
-          region spec D9's token-by-token output actually needs read out. */}
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* The transcript. Scrolls on its own so the composer stays put --
+          a chat whose input moves down the page as it fills is the thing
+          this panel is most often mistaken for and should not be. */}
       <div
+        ref={scrollRef}
         aria-live="polite"
-        className="flex flex-1 flex-col gap-3 text-[13px] leading-relaxed"
+        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4"
       >
+        <Bubble from="assistant">
+          {greeting?.trim() || "Hi! Ask a question and I'll answer from our help articles."}
+        </Bubble>
+
         {turns.map((turn, index) =>
           turn.role === "visitor" ? (
-            <p key={index} className="font-medium text-ink-900 dark:text-white">
+            <Bubble key={index} from="visitor">
               {turn.text}
-            </p>
+            </Bubble>
           ) : (
-            <div key={index}>
-              <p className="text-ink-800 dark:text-ink-200">{turn.text}</p>
+            <div key={index} className="flex flex-col items-start gap-1.5">
+              <Bubble from="assistant">{turn.text}</Bubble>
               {turn.citations.length > 0 && (
-                <ul className="mt-2 flex flex-col gap-1">
+                <ul className="flex flex-wrap gap-1.5 pl-1">
                   {turn.citations.map((citation) => (
                     <li key={citation.path}>
                       <a
@@ -195,7 +211,7 @@ export function Ask({
                         // with the article and strand the visitor there.
                         target="_blank"
                         rel="noreferrer"
-                        className="text-[12px] text-accent-950 underline dark:text-accent-400"
+                        className="inline-block rounded-full border border-ink-200 bg-white px-2.5 py-1 text-[11px] font-medium text-ink-700 transition-colors hover:border-ink-300 hover:text-ink-900 dark:border-ink-700 dark:bg-ink-800 dark:text-ink-200 dark:hover:text-white"
                       >
                         {citation.title}
                       </a>
@@ -206,10 +222,27 @@ export function Ask({
             </div>
           ),
         )}
-        {asking && <p className="text-ink-400">{draft || "Thinking…"}</p>}
+
+        {asking &&
+          (draft ? (
+            <Bubble from="assistant">{draft}</Bubble>
+          ) : (
+            <Bubble from="assistant">
+              <span className="flex gap-1 py-0.5" aria-label="Thinking">
+                <Dot delay="0ms" />
+                <Dot delay="150ms" />
+                <Dot delay="300ms" />
+              </span>
+            </Bubble>
+          ))}
       </div>
 
-      <form onSubmit={submit} className="flex flex-col gap-2">
+      {/* Pinned. Input and send sit on one line, the way every messenger a
+          visitor has already used puts them. */}
+      <form
+        onSubmit={submit}
+        className="flex shrink-0 items-end gap-2 border-t border-ink-200 px-3 py-3 dark:border-ink-800"
+      >
         <label htmlFor="widget-ask" className="sr-only">
           Ask a question
         </label>
@@ -220,22 +253,65 @@ export function Ask({
           onChange={(event) => setTyped(event.target.value)}
           placeholder="Ask a question"
           disabled={asking}
-          className="h-9 w-full rounded-md border border-ink-200 bg-white px-3 text-[13px] text-ink-900 placeholder:text-ink-400 transition-colors hover:border-ink-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:opacity-50 dark:border-ink-700 dark:bg-ink-800 dark:text-white dark:placeholder:text-ink-400"
+          className="h-10 min-w-0 flex-1 rounded-full border border-ink-200 bg-white px-4 text-[13px] text-ink-900 placeholder:text-ink-400 transition-colors hover:border-ink-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:opacity-50 dark:border-ink-700 dark:bg-ink-800 dark:text-white dark:placeholder:text-ink-400"
         />
-        <WidgetButton type="submit" variant="primary" disabled={asking || !typed.trim()}>
-          {asking ? "Asking…" : "Ask"}
-        </WidgetButton>
+        <button
+          type="submit"
+          aria-label="Ask"
+          disabled={asking || !typed.trim()}
+          className="flex size-10 shrink-0 items-center justify-center rounded-full bg-ink-950 text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:opacity-30 dark:bg-white dark:text-ink-900"
+        >
+          <ArrowUp className="size-4" aria-hidden />
+        </button>
       </form>
 
-      <div className="mt-auto pt-2">
-        <WidgetButton
+      {/* Quiet by design. Escalating is always available, but it is not
+          what the panel is inviting a visitor to do first. */}
+      <div className="shrink-0 px-4 pb-3 text-center">
+        <button
           type="button"
-          variant="secondary"
           onClick={() => onCompose(transcriptText(turns))}
+          className="text-[12px] text-ink-500 underline underline-offset-2 transition-colors hover:text-ink-900 dark:text-ink-400 dark:hover:text-white"
         >
-          Send a message
-        </WidgetButton>
+          Talk to a person instead
+        </button>
       </div>
     </div>
+  );
+}
+
+/** One message. Visitor right and filled, assistant left and quiet -- the
+ *  shape every messenger a visitor has already used settled on. */
+function Bubble({
+  from,
+  children,
+}: {
+  from: "visitor" | "assistant";
+  children: React.ReactNode;
+}) {
+  const visitor = from === "visitor";
+  return (
+    <div className={visitor ? "flex justify-end" : "flex justify-start"}>
+      <div
+        className={[
+          "max-w-[85%] whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-[13px] leading-relaxed",
+          visitor
+            ? "rounded-br-md bg-ink-950 text-white dark:bg-white dark:text-ink-900"
+            : "rounded-bl-md bg-ink-100 text-ink-900 dark:bg-ink-800 dark:text-ink-100",
+        ].join(" ")}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Dot({ delay }: { delay: string }) {
+  return (
+    <span
+      aria-hidden
+      style={{ animationDelay: delay }}
+      className="size-1.5 animate-bounce rounded-full bg-ink-400 motion-reduce:animate-none dark:bg-ink-500"
+    />
   );
 }

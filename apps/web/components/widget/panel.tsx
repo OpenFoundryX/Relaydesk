@@ -293,6 +293,7 @@ export function Panel({
         {view.name === "ask" && (
           <Ask
             widgetKey={widgetKey}
+            greeting={branding.greeting}
             onDegrade={() => setView({ name: "home" })}
             onCompose={compose}
           />
