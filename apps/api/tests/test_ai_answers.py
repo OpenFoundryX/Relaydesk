@@ -1,4 +1,27 @@
+import pytest
 import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
+from contextlib import asynccontextmanager
+
+
+def _audit_sessions(session):
+    """Hand the streaming generator the test's own session.
+
+    In production the generator opens a fresh session, because it outlives
+    the request. Under this fixture nothing is committed, so a fresh
+    session cannot see the workspace the test just created -- the audit
+    insert fails on its foreign key. Injecting the test session keeps the
+    assertions about WHAT is recorded meaningful; that the generator does
+    not borrow the request's session in production is a structural
+    property, not one this fixture can observe.
+    """
+
+    @asynccontextmanager
+    async def factory():
+        yield session
+
+    return factory
+
 
 from relaydesk.models.ai_call import AiCall, AiOutcome
 from relaydesk.models.ai_config import AiConfig
@@ -27,7 +50,10 @@ async def test_no_key_degrades_without_calling_anything(db_session) -> None:
     config.api_key = None
     await db_session.flush()
 
-    attempt = await answer(db_session, workspace, key, "how do refunds work")
+    attempt = await answer(
+        db_session, workspace, key, "how do refunds work",
+        audit_sessions=_audit_sessions(db_session),
+    )
 
     assert attempt.degraded is True
     assert attempt.reason == "not_configured"
@@ -39,7 +65,8 @@ async def test_empty_knowledge_base_degrades_without_calling_the_model(db_sessio
     provider = FakeProvider(chunks=["should never run"])
 
     attempt = await answer(
-        db_session, workspace, key, "how do refunds work", provider=provider
+        db_session, workspace, key, "how do refunds work", provider=provider,
+        audit_sessions=_audit_sessions(db_session),
     )
 
     assert attempt.degraded is True
@@ -62,7 +89,10 @@ async def test_exhausted_budget_degrades(db_session) -> None:
     )
     await db_session.flush()
 
-    attempt = await answer(db_session, workspace, key, "anything")
+    attempt = await answer(
+        db_session, workspace, key, "anything",
+        audit_sessions=_audit_sessions(db_session),
+    )
 
     assert attempt.degraded is True
     assert attempt.reason == "over_budget"
@@ -73,7 +103,10 @@ async def test_every_degradation_writes_exactly_one_audit_row(db_session) -> Non
     config.api_key = None
     await db_session.flush()
 
-    await answer(db_session, workspace, key, "how do refunds work")
+    await answer(
+        db_session, workspace, key, "how do refunds work",
+        audit_sessions=_audit_sessions(db_session),
+    )
 
     rows = list(await db_session.scalars(sa.select(AiCall)))
     assert len(rows) == 1
@@ -113,7 +146,8 @@ async def test_a_provider_failure_mid_stream_is_recorded_and_silent(db_session) 
     await _publish(db_session, workspace)
 
     attempt = await answer(
-        db_session, workspace, key, "refund", provider=FakeProvider(fails=True)
+        db_session, workspace, key, "refund", provider=FakeProvider(fails=True),
+        audit_sessions=_audit_sessions(db_session),
     )
     assert attempt.degraded is False  # retrieval succeeded; the failure is downstream
     assert [chunk async for chunk in attempt.stream] == []
@@ -131,6 +165,7 @@ async def test_a_cited_answer_is_recorded_as_answered(db_session) -> None:
     attempt = await answer(
         db_session, workspace, key, "refund",
         provider=FakeProvider(chunks=["Within 14 days [1]."]),
+        audit_sessions=_audit_sessions(db_session),
     )
     text = "".join([chunk async for chunk in attempt.stream])
 
@@ -147,9 +182,33 @@ async def test_an_uncited_answer_is_recorded_as_refused(db_session) -> None:
     attempt = await answer(
         db_session, workspace, key, "refund",
         provider=FakeProvider(chunks=["I am not sure."]),
+        audit_sessions=_audit_sessions(db_session),
     )
     [chunk async for chunk in attempt.stream]
 
     row = await db_session.scalar(sa.select(AiCall))
     assert row.outcome == AiOutcome.refused
     assert row.reason == "no_citation"
+
+
+async def test_the_audit_write_does_not_borrow_the_request_session(db_session) -> None:
+    """The audit row must outlive the request, so it is written on its own session.
+
+    `get_session` has no commit on exit, and the streaming generator runs
+    after FastAPI has torn it down -- so a row merely added to the
+    request's session is rolled back, and the module's promise that every
+    exit writes exactly one `AiCall` row would be false.
+
+    Asserting that structurally is awkward, because a shared-session
+    fixture cannot see the difference: both designs leave a visible row.
+    This test uses the fixture's own isolation as the instrument. Called
+    WITHOUT the `audit_sessions` seam, `answer` opens a real session, which
+    cannot see the workspace this uncommitted transaction just created --
+    so the insert fails its foreign key. That failure IS the evidence: it
+    can only happen if the write went somewhere other than `db_session`.
+    Revert the fix and this test passes silently instead.
+    """
+    workspace, config, key = await _setup(db_session)
+
+    with pytest.raises(IntegrityError):
+        await answer(db_session, workspace, key, "how do refunds work")

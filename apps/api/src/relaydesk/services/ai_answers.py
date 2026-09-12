@@ -13,11 +13,13 @@ has exhausted its AI budget is not a visitor's business.
 
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from relaydesk.db.session import async_session_factory
 from relaydesk.models.ai_call import AiCall, AiOutcome
 from relaydesk.models.ai_config import AiConfig
 from relaydesk.models.widget_key import WidgetKey
@@ -86,19 +88,41 @@ async def answer(
     question: str,
     *,
     provider: Provider | None = None,
+    audit_sessions: Callable[[], AbstractAsyncContextManager[AsyncSession]] | None = None,
 ) -> Attempt:
+    """Answer from the knowledge base, or say why this attempt degraded.
+
+    ``audit_sessions`` is a seam, defaulting to the real session factory.
+    The streaming generator cannot borrow the request's session (see
+    ``stream`` below), so it opens its own; a test that wants to observe
+    the audit row inside its own uncommitted transaction passes a factory
+    that hands back the test session instead. Same reason ``provider`` is
+    injectable: the alternative is a module that can only be exercised
+    against live infrastructure.
+    """
+    audit_factory = audit_sessions or async_session_factory
     config = await session.get(AiConfig, workspace.id)
     model = config.model if config else "claude-opus-5"
 
     async def degrade(reason: str) -> Attempt:
-        await _record(
-            session,
-            workspace.id,
-            widget_key.id,
-            model=model,
-            outcome=AiOutcome.degraded,
-            reason=reason,
-        )
+        """Record the degrade, then hand back the reason.
+
+        On its own session and committed, for the same reason the stream's
+        writes are: ``get_session`` has no commit on exit, so a row merely
+        added to the request's session is rolled back when the request
+        ends. This module's promise that EVERY exit writes exactly one
+        ``AiCall`` row is only true if the write outlives the request.
+        """
+        async with audit_factory() as audit:
+            await _record(
+                audit,
+                workspace.id,
+                widget_key.id,
+                model=model,
+                outcome=AiOutcome.degraded,
+                reason=reason,
+            )
+            await audit.commit()
         return Attempt(degraded=True, reason=reason)
 
     if config is None:
@@ -126,37 +150,53 @@ async def answer(
     started = time.monotonic()
 
     async def stream() -> AsyncIterator[str]:
+        """The answer, streamed, with its audit row written at the end.
+
+        The two writes below each open their own session rather than
+        closing over the request's. This generator is handed to a
+        ``StreamingResponse``, whose body runs AFTER the handler has
+        returned and after FastAPI has torn down ``get_session`` -- so the
+        request's session is closed by the time the stream ends. Borrowing
+        it would fail at the end of a stream the visitor has already read,
+        and no test under the shared-session fixture would show it.
+
+        The degrade paths above this point run inside the handler, while
+        the request's session is still open, and correctly use it.
+        """
         try:
             async for chunk in resolved.complete(
                 system=system, question=asked, model=model
             ):
                 yield chunk
         except ProviderUnavailable:
-            await _record(
-                session,
-                workspace.id,
-                widget_key.id,
-                model=model,
-                outcome=AiOutcome.degraded,
-                reason="provider_unavailable",
-                latency_ms=int((time.monotonic() - started) * 1000),
-            )
-            await session.commit()
+            # Its own session, not the request's -- see _audit below.
+            async with audit_factory() as audit:
+                await _record(
+                    audit,
+                    workspace.id,
+                    widget_key.id,
+                    model=model,
+                    outcome=AiOutcome.degraded,
+                    reason="provider_unavailable",
+                    latency_ms=int((time.monotonic() - started) * 1000),
+                )
+                await audit.commit()
             return
 
         usage = resolved.usage()
         cited = ai_retrieval.resolve_citations(usage.text, sources)
-        await _record(
-            session,
-            workspace.id,
-            widget_key.id,
-            model=model,
-            outcome=AiOutcome.answered if cited else AiOutcome.refused,
-            reason=None if cited else "no_citation",
-            input_tokens=usage.input_tokens,
-            output_tokens=usage.output_tokens,
-            latency_ms=int((time.monotonic() - started) * 1000),
-        )
-        await session.commit()
+        async with audit_factory() as audit:
+            await _record(
+                audit,
+                workspace.id,
+                widget_key.id,
+                model=model,
+                outcome=AiOutcome.answered if cited else AiOutcome.refused,
+                reason=None if cited else "no_citation",
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                latency_ms=int((time.monotonic() - started) * 1000),
+            )
+            await audit.commit()
 
     return Attempt(degraded=False, stream=stream(), sources=sources)
