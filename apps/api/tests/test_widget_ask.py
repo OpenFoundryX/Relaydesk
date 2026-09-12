@@ -1,7 +1,7 @@
 import sqlalchemy as sa
 
 from relaydesk.config import get_settings
-from relaydesk.models.ai_call import AiCall
+from relaydesk.models.ai_call import AiCall, AiOutcome
 from relaydesk.models.conversation import Conversation
 from relaydesk.models.message import Message
 from relaydesk.schemas.widget import QUESTION_MAX_CHARS
@@ -115,3 +115,127 @@ async def test_an_escalated_question_carries_its_transcript(client, db_session) 
     body = await db_session.scalar(sa.select(Message.body))
     assert "how do refunds work" in body
     assert "This did not help." in body
+
+
+async def test_a_long_message_and_transcript_still_files_the_ticket(
+    client, db_session
+) -> None:
+    """The transcript must yield to the message, never the other way round.
+
+    `tickets.submit` re-validates the combined body against
+    `ticket_message_max_chars` (10,000): a 7,000-character message plus an
+    untrimmed 5,000-character transcript would blow straight through that
+    and reject the whole ticket. The transcript is the one that gives way
+    -- the visitor wrote the message, the widget only generated the
+    transcript -- so the ticket must still be filed.
+    """
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
+    await db_session.commit()
+
+    response = await client.post(
+        f"/api/widget/{key.key}/tickets",
+        data={
+            "email": "wren@lantern.co",
+            "message": "M" * 7000,
+            "transcript": "T" * 5000,
+        },
+    )
+    assert response.status_code == 201, response.text
+
+    count = await db_session.scalar(
+        sa.select(sa.func.count()).select_from(Conversation)
+    )
+    assert count == 1
+
+
+async def test_no_room_at_all_drops_the_transcript_but_still_files_the_ticket(
+    client, db_session
+) -> None:
+    """A message that alone fills the ticket cap leaves nothing to append.
+
+    Losing the transcript is a degradation the agent can live without;
+    losing the ticket outright is a failure. A message at the cap must
+    still be accepted, with the transcript silently dropped.
+    """
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
+    await db_session.commit()
+
+    response = await client.post(
+        f"/api/widget/{key.key}/tickets",
+        data={
+            "email": "wren@lantern.co",
+            "message": "M" * get_settings().ticket_message_max_chars,
+            "transcript": "Visitor: how do refunds work",
+        },
+    )
+    assert response.status_code == 201, response.text
+
+    body = await db_session.scalar(sa.select(Message.body))
+    assert "how do refunds work" not in body
+
+
+async def test_transcript_truncation_keeps_the_tail(client, db_session) -> None:
+    """The turn just before a visitor gives up is what the agent needs to
+    see; the oldest part of a long conversation is the safest to drop."""
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
+    await db_session.commit()
+
+    transcript = "HEADMARKER" + ("A" * 5000) + "TAILMARKER"
+
+    response = await client.post(
+        f"/api/widget/{key.key}/tickets",
+        data={
+            "email": "wren@lantern.co",
+            "message": "This did not help.",
+            "transcript": transcript,
+        },
+    )
+    assert response.status_code == 201, response.text
+
+    body = await db_session.scalar(sa.select(Message.body))
+    assert "TAILMARKER" in body
+    assert "HEADMARKER" not in body
+
+
+async def test_an_escalation_writes_an_ai_call_row(client, db_session) -> None:
+    """Without this row, deflection cannot tell "asked the AI, gave up,
+    asked a human" apart from "never asked at all" -- most of the point of
+    measuring it."""
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
+    await db_session.commit()
+
+    response = await client.post(
+        f"/api/widget/{key.key}/tickets",
+        data={
+            "email": "wren@lantern.co",
+            "message": "This did not help.",
+            "transcript": "Visitor: how do refunds work\nAssistant: Within 14 days.",
+        },
+    )
+    assert response.status_code == 201
+
+    outcome = await db_session.scalar(sa.select(AiCall.outcome))
+    assert outcome == AiOutcome.escalated
+
+
+async def test_a_ticket_with_no_transcript_writes_no_ai_call_row(
+    client, db_session
+) -> None:
+    """A visitor who never touched the AI must not be counted as one who
+    gave up on it."""
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
+    await db_session.commit()
+
+    response = await client.post(
+        f"/api/widget/{key.key}/tickets",
+        data={"email": "wren@lantern.co", "message": "Where is my order?"},
+    )
+    assert response.status_code == 201
+
+    count = await db_session.scalar(sa.select(sa.func.count()).select_from(AiCall))
+    assert count == 0

@@ -24,6 +24,39 @@ async def test_submission_creates_a_conversation(client, db_session):
     assert count == 1
 
 
+async def test_submit_really_commits(client, db_session, commit_spy) -> None:
+    """`submit` must commit its own write, not just flush it.
+
+    `get_session` has no commit-on-exit, so an uncommitted flush vanishes
+    when the request ends and the ticket silently never exists. The shared
+    -session `client` fixture hides exactly this: a bare flush is already
+    visible to every other assertion in this file, committed or not,
+    because it is the same session and the same transaction. `commit_spy`
+    is the one thing here that can tell the two apart -- see
+    `test_widget_keys_api.py::test_create_really_commits`.
+
+    Asserted as ``>= 3`` rather than ``>= 1``: `ratelimit.check` commits on
+    its own (it must -- a charge has to outlive a request refused further
+    down), and this route calls it twice before it ever reaches
+    `tickets.submit`, so those two commits alone would satisfy a bare
+    ``>= 1`` even with the route's own commit deleted entirely. Only a
+    count that has to include the route's *own* commit -- the two rate
+    -limit commits plus this one -- actually pins it.
+    """
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
+    await db_session.commit()
+    commit_spy.clear()  # The setup above commits too.
+
+    response = await client.post(
+        f"/api/widget/{key.key}/tickets",
+        data={"email": "wren@lantern.co", "message": "Hello"},
+    )
+
+    assert response.status_code == 201, response.text
+    assert len(commit_spy) >= 3
+
+
 async def test_per_key_cap_refuses_beyond_its_budget(client, db_session, monkeypatch):
     """One abused embed exhausts its own budget, not the workspace's."""
     from relaydesk.config import get_settings

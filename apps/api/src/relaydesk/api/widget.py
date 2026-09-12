@@ -31,7 +31,8 @@ from relaydesk.api.deps import DbSession
 from relaydesk.config import get_settings
 from relaydesk.email_parse.normalize import ParsedAttachment
 from relaydesk.errors import Invalid, NotFound, TooManyRequests
-from relaydesk.models.ai_config import AiConfig
+from relaydesk.models.ai_call import AiCall, AiOutcome
+from relaydesk.models.ai_config import AiConfig, DEFAULT_MODEL
 from relaydesk.schemas.kb import (
     PublicArticleSummary,
     PublicCollectionOut,
@@ -199,11 +200,43 @@ async def submit(
     # The agent must see what the visitor was already told. Answering a
     # question the AI has already answered differently is worse than never
     # having answered it (spec D8). Truncated, not refused -- see
-    # `TRANSCRIPT_MAX_CHARS`.
+    # `TRANSCRIPT_MAX_CHARS` -- and it is the transcript that yields, never
+    # the ticket: the visitor wrote `message`, the widget only generated
+    # `transcript`, and `tickets.submit` re-validates the combined body
+    # against `ticket_message_max_chars`. Losing the transcript is a
+    # degradation; losing the whole ticket to a length limit neither side
+    # of this call chose is a failure.
     body = message
-    if transcript.strip():
-        clipped = transcript.strip()[-TRANSCRIPT_MAX_CHARS:]
-        body = f"{message}\n\n--- Before contacting support ---\n{clipped}"
+    stripped_transcript = transcript.strip()
+    if stripped_transcript:
+        separator = "\n\n--- Before contacting support ---\n"
+        room = get_settings().ticket_message_max_chars - len(message) - len(separator)
+        allowed = max(0, min(TRANSCRIPT_MAX_CHARS, room))
+        if allowed > 0:
+            clipped = stripped_transcript[-allowed:]
+            body = f"{message}{separator}{clipped}"
+        # else: no room left at all -- drop the transcript entirely rather
+        # than refuse the ticket itself.
+
+        # One `AiCall` row per escalation, so a deflection query can tell
+        # "asked the AI, gave up, asked a human" apart from "never asked at
+        # all" -- see `ai_answers._record` for the pattern this follows.
+        # Written for every non-blank `transcript`, even one dropped above
+        # for lack of room: what happened is still an escalation from an
+        # AI conversation, whatever became of the transcript text itself.
+        config = await session.get(AiConfig, widget_key.workspace_id)
+        session.add(
+            AiCall(
+                workspace_id=widget_key.workspace_id,
+                widget_key_id=widget_key.id,
+                model=config.model if config else DEFAULT_MODEL,
+                input_tokens=0,
+                output_tokens=0,
+                cost_micros=0,
+                latency_ms=0,
+                outcome=AiOutcome.escalated,
+            )
+        )
 
     await tickets.submit(
         session,
