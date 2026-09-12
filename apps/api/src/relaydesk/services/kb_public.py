@@ -5,6 +5,8 @@ subdomain and applies the same two predicates -- external scope, published
 status -- because this is the code path anonymous visitors reach.
 """
 
+import functools
+import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -408,6 +410,78 @@ async def search(
     return await kb_articles.search(
         session, workspace_id, query, scope=PUBLIC_SCOPE, status=PUBLIC_STATUS
     )
+
+
+def _disjunctive_tsquery(question: str):
+    """A tsquery matching an article that shares *any* significant word.
+
+    ``kb_articles.search`` builds ``websearch_to_tsquery``, which ANDs
+    every lexeme together -- correct for a search box, where a caller
+    typing several words means all of them, wrong for a whole sentence
+    handed to it whole, where most of the words are grammar rather than
+    intent. This instead builds one ``plainto_tsquery`` per token and ORs
+    them with the ``||`` tsquery operator, so a question matches an
+    article that contains any one of its significant words, not all.
+
+    ``plainto_tsquery`` on a single stop word (or on no word at all) is
+    Postgres' own empty tsquery, and ORing an empty tsquery in changes
+    nothing (``'' || x`` is ``x``). A question made entirely of stop
+    words therefore reduces to the empty tsquery, and ``@@`` never
+    matches an empty tsquery against anything -- the caller gets ``[]``,
+    not everything.
+
+    Returns ``None`` when the question has no word characters at all, so
+    the caller can skip the query rather than run one that can only find
+    nothing.
+    """
+    tokens = re.findall(r"\w+", question)
+    if not tokens:
+        return None
+    return functools.reduce(
+        lambda acc, token: acc.op("||")(sa.func.plainto_tsquery("english", token)),
+        tokens[1:],
+        sa.func.plainto_tsquery("english", tokens[0]),
+    )
+
+
+async def search_any(
+    session: AsyncSession, workspace_id: uuid.UUID, question: str, *, limit: int = 5
+) -> list[KbArticle]:
+    """Published external articles sharing any significant word with ``question``, best first.
+
+    For ``ai_retrieval.retrieve`` only. ``search()`` above is
+    ``kb_articles.search`` with this module's two visibility predicates
+    fixed in, and it is the help site's and the console's search box --
+    its all-terms-must-match query is correct there, where a caller types
+    keywords. A visitor's question is prose, and ANDing every one of its
+    words returns nothing for most ordinary phrasing (see
+    ``_disjunctive_tsquery``). This runs that disjunctive, ranked query
+    instead, through the exact same ``_visible()`` this module applies
+    everywhere else -- published status, external scope, nothing else --
+    rather than adding a second mode to ``kb_articles.search`` and risking
+    the help site inheriting a predicate meant only for retrieval.
+
+    An empty result means no published external article in this
+    workspace shares a significant word with the question -- including a
+    question that is only stop words, or empty.
+    """
+    tsquery = _disjunctive_tsquery(question)
+    if tsquery is None:
+        return []
+    rows = await session.scalars(
+        _visible(
+            sa.select(KbArticle)
+            .join(KbCategory, KbCategory.id == KbArticle.category_id)
+            .where(
+                KbArticle.workspace_id == workspace_id,
+                KbCategory.workspace_id == workspace_id,
+                KbArticle.search_vector.op("@@")(tsquery),
+            )
+        )
+        .order_by(sa.func.ts_rank(KbArticle.search_vector, tsquery).desc())
+        .limit(limit)
+    )
+    return list(rows.all())
 
 
 async def image(

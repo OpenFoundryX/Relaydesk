@@ -1,8 +1,8 @@
 """What the model is allowed to know, and how a citation becomes a link.
 
-Retrieval runs before the model does. If nothing clears the relevance floor
-the model is never called at all -- an answer with no source material is
-the failure this module exists to prevent, not an edge case to handle
+Retrieval runs before the model does. If nothing matches the question at
+all the model is never called -- an answer with no source material is the
+failure this module exists to prevent, not an edge case to handle
 afterwards.
 
 The retrieved articles are numbered, and the model is instructed to cite
@@ -75,24 +75,27 @@ async def retrieve(
 ) -> list[Source]:
     """The published articles this question may be answered from, numbered.
 
-    The relevance floor is Postgres\' own: ``kb_public.search`` filters on
-    ``search_vector @@ websearch_to_tsquery(...)``, so an article that comes
-    back matched the question and one that did not is already absent. There
-    is no separate score to threshold against here, and inventing one would
-    mean surfacing ``ts_rank`` out of ``kb_articles.search`` -- a change to
-    the help site\'s search, not to this module.
+    Matches on **any** significant word the question contains, ranked best
+    first, not on every word matching at once: ``kb_public.search_any`` is
+    built for a whole sentence, unlike ``kb_public.search`` (the help
+    site's and console's search box), whose all-terms-must-match query
+    returns nothing for most ordinary phrasing when handed prose instead
+    of keywords. See ``kb_public._disjunctive_tsquery`` for how the match
+    itself is built, and ``kb_public._visible`` for the visibility rules
+    it shares with everything else the public help site can reach --
+    published status, external scope, nothing else.
 
-    Returns an empty list when nothing matched, and the caller must treat
-    that as "do not call the model" rather than as "call it with no
-    context" -- a model given no sources will answer from its training
-    data, which is exactly what grounding exists to prevent.
+    Returns an empty list when nothing matched -- including a question
+    that is only stop words, or empty -- and the caller must treat that as
+    "do not call the model" rather than as "call it with no context": a
+    model given no sources will answer from its training data, which is
+    exactly what grounding exists to prevent.
     """
-    articles = await kb_public.search(session, workspace_id, question)
+    articles = await kb_public.search_any(session, workspace_id, question, limit=limit)
     if not articles:
         return []
 
-    kept = articles[:limit]
-    ancestors = await kb_public.paths_for(session, workspace_id, kept)
+    ancestors = await kb_public.paths_for(session, workspace_id, articles)
     return [
         Source(
             number=index,
@@ -101,7 +104,7 @@ async def retrieve(
             path=_path(ancestors.get(article.id, []), article),
             body=_body(article),
         )
-        for index, article in enumerate(kept, start=1)
+        for index, article in enumerate(articles, start=1)
     ]
 
 

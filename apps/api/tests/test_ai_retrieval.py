@@ -43,11 +43,134 @@ def test_citations_come_back_in_the_order_they_were_cited():
     assert [source.number for source in cited] == [3, 1]
 
 
+from relaydesk.models.kb import ArticleStatus, KbArticle, KbCategory, KbScope
 from relaydesk.services.ai_retrieval import retrieve
 from tests.factories import make_workspace
+
+REFUND_BODY = (
+    "We offer refunds within thirty days of your original payment. To "
+    "request a refund, contact support with your order number and we will "
+    "credit the original payment method. Refunds for annual subscriptions "
+    "are prorated based on the unused portion of the term. Refunds appear "
+    "on your statement within five to ten business days, depending on your "
+    "bank. Digital products purchased by mistake are refundable within "
+    "forty eight hours of purchase. Shipping charges on physical returns "
+    "are not refunded unless the item arrived damaged."
+)
+
+
+async def _publish(
+    db_session,
+    workspace,
+    *,
+    title: str = "Refunds and returns",
+    slug: str = "refunds-and-returns",
+    body: str = REFUND_BODY,
+    scope: KbScope = KbScope.external,
+    status: ArticleStatus = ArticleStatus.published,
+) -> KbArticle:
+    """A published, externally-scoped article with real body text.
+
+    Setting ``body_text`` directly rather than going through
+    ``kb_articles.update`` (which derives it from ``doc``): the generated
+    ``search_vector`` column is a pure function of ``body_text``, and that
+    is the only thing retrieval's match runs against.
+    """
+    category = KbCategory(
+        workspace_id=workspace.id, name="Billing", slug="billing",
+        scope=scope, position=0,
+    )
+    db_session.add(category)
+    await db_session.flush()
+    article = KbArticle(
+        workspace_id=workspace.id, category_id=category.id,
+        title=title, slug=slug,
+        excerpt="How refunds work.",
+        doc={"type": "doc", "content": []},
+        body_text=body,
+        status=status,
+    )
+    db_session.add(article)
+    await db_session.flush()
+    return article
 
 
 async def test_retrieve_returns_nothing_for_an_empty_knowledge_base(db_session) -> None:
     """No sources means the caller must not call the model at all."""
     workspace = await make_workspace(db_session)
     assert await retrieve(db_session, workspace.id, "how do refunds work") == []
+
+
+async def test_retrieve_matches_a_natural_language_question_on_any_word(
+    db_session,
+) -> None:
+    """The regression case: every word of the question need not appear.
+
+    `websearch_to_tsquery` (what the help site's search box uses) would AND
+    every lexeme together and find nothing here, because the article never
+    says the word "work". Retrieval must match on the words it shares --
+    "refunds" -- not demand all of them.
+    """
+    workspace = await make_workspace(db_session)
+    article = await _publish(db_session, workspace)
+
+    sources = await retrieve(db_session, workspace.id, "How do refunds work?")
+
+    assert [source.article_id for source in sources] == [article.id]
+    # The model reads the real article text, not the 400-character blurb.
+    assert sources[0].body == REFUND_BODY
+
+
+async def test_retrieve_returns_nothing_when_no_article_shares_a_word(
+    db_session,
+) -> None:
+    workspace = await make_workspace(db_session)
+    await _publish(db_session, workspace)
+
+    sources = await retrieve(
+        db_session, workspace.id, "what is the weather forecast in paris today"
+    )
+    assert sources == []
+
+
+async def test_retrieve_returns_nothing_for_a_stop_word_only_question(
+    db_session,
+) -> None:
+    workspace = await make_workspace(db_session)
+    await _publish(db_session, workspace)
+
+    assert await retrieve(db_session, workspace.id, "the a an is") == []
+
+
+async def test_retrieve_returns_nothing_for_an_empty_question(db_session) -> None:
+    workspace = await make_workspace(db_session)
+    await _publish(db_session, workspace)
+
+    assert await retrieve(db_session, workspace.id, "") == []
+
+
+async def test_retrieve_never_returns_a_draft_article(db_session) -> None:
+    """A draft is not public, however well its words match the question."""
+    workspace = await make_workspace(db_session)
+    await _publish(db_session, workspace, status=ArticleStatus.draft)
+
+    sources = await retrieve(db_session, workspace.id, "how do refunds work")
+    assert sources == []
+
+
+async def test_retrieve_never_returns_an_internal_scope_article(db_session) -> None:
+    """An internal article is for agents, not anonymous widget visitors."""
+    workspace = await make_workspace(db_session)
+    await _publish(db_session, workspace, scope=KbScope.internal)
+
+    sources = await retrieve(db_session, workspace.id, "how do refunds work")
+    assert sources == []
+
+
+async def test_retrieve_never_crosses_workspaces(db_session) -> None:
+    workspace = await make_workspace(db_session)
+    other = await make_workspace(db_session, slug="other")
+    await _publish(db_session, other)
+
+    sources = await retrieve(db_session, workspace.id, "how do refunds work")
+    assert sources == []
