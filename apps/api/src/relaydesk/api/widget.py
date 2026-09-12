@@ -15,12 +15,14 @@ fixed segment must be declared above the `{path:path}` catch-all or it is
 swallowed as an article path.
 """
 
+import json
 import uuid
+from collections.abc import AsyncIterator
 from datetime import timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, Request, UploadFile, status
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import EmailStr
 
 from relaydesk.api import public
@@ -35,8 +37,10 @@ from relaydesk.schemas.kb import (
     PublicSearchEntryOut,
     TicketSubmittedOut,
 )
-from relaydesk.schemas.widget import WidgetBootstrapOut, WidgetEventIn
+from relaydesk.schemas.widget import WidgetAskIn, WidgetBootstrapOut, WidgetEventIn
 from relaydesk.services import (
+    ai_answers,
+    ai_retrieval,
     client_ip,
     kb_public,
     ratelimit,
@@ -247,6 +251,69 @@ async def record_event(
     # in this slice shipped exactly that defect; `public.py:332` is the
     # pattern every mutating route here follows.
     await session.commit()
+
+
+@router.post("/{key}/ask")
+async def ask(
+    key: str, body: WidgetAskIn, session: DbSession, request: Request
+) -> StreamingResponse:
+    """Answer from the knowledge base, or say plainly that this degraded.
+
+    Always 200 once the key resolves. Every failure inside is a degradation
+    to the widget that already works (spec D4), not an error -- a visitor
+    who asked a question should never see a stack trace, and a workspace
+    that has not configured AI should see no change at all.
+    """
+    widget_key = await widget_keys.resolve(session, key)
+
+    within = await ratelimit.check(
+        session,
+        "widget_ask",
+        str(widget_key.id),
+        limit=get_settings().widget_ask_hourly_cap,
+        window=timedelta(hours=1),
+    )
+    if not within:
+        return _degraded("rate_limited")
+
+    attempt = await ai_answers.answer(
+        session, widget_key.workspace, widget_key, body.question.strip()
+    )
+    await session.commit()
+
+    if attempt.degraded:
+        return _degraded(attempt.reason or "unavailable")
+
+    async def events() -> AsyncIterator[str]:
+        assert attempt.stream is not None
+        answer_text = ""
+        async for chunk in attempt.stream:
+            answer_text += chunk
+            yield f"event: text\ndata: {json.dumps({'text': chunk})}\n\n"
+        cited = ai_retrieval.resolve_citations(answer_text, attempt.sources)
+        payload = {
+            "outcome": "answered" if cited else "refused",
+            "citations": [
+                {"title": source.title, "path": source.path} for source in cited
+            ],
+        }
+        yield f"event: done\ndata: {json.dumps(payload)}\n\n"
+
+    return StreamingResponse(events(), media_type="text/event-stream")
+
+
+def _degraded(reason: str) -> StreamingResponse:
+    """One terminal event and nothing else.
+
+    The reason travels for the audit's sake, and the panel ignores it: a
+    visitor learning that a workspace has spent its AI budget is
+    information they should not have.
+    """
+
+    async def once() -> AsyncIterator[str]:
+        yield f"event: done\ndata: {json.dumps({'outcome': 'degraded'})}\n\n"
+
+    return StreamingResponse(once(), media_type="text/event-stream")
 
 
 # Declared last: `{path:path}` matches anything, including the fixed

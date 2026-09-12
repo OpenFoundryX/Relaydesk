@@ -89,6 +89,9 @@ class Settings(BaseSettings):
     # baseline -- a caller who can read the customer's page source can poison
     # that baseline for free.
     widget_session_hourly_cap: int = 600
+    # Questions one embed may ask the model per hour. Lower than the ticket
+    # cap because each of these spends the workspace's money.
+    widget_ask_hourly_cap: int = 20
     ticket_message_max_chars: int = 10000
     ticket_attachment_max_count: int = 5
 

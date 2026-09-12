@@ -1,3 +1,5 @@
+from pydantic import Field
+
 from relaydesk.schemas.base import CamelModel
 
 
@@ -15,3 +17,16 @@ class WidgetEventIn(CamelModel):
     still refused, just by the same `Invalid` every other domain rule uses."""
 
     kind: str
+
+
+class WidgetAskTurn(CamelModel):
+    role: str  # "visitor" | "assistant"
+    text: str
+
+
+class WidgetAskIn(CamelModel):
+    question: str
+    # The client-held transcript, resent each turn -- the server keeps no
+    # session (spec D2). Bounded here rather than trusted: an unbounded
+    # history is an unbounded bill, on an endpoint anyone can reach.
+    history: list[WidgetAskTurn] = Field(default_factory=list, max_length=10)
