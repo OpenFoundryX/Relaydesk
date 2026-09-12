@@ -1,9 +1,13 @@
 """What the model is allowed to know, and how a citation becomes a link.
 
-Retrieval runs before the model does. If nothing matches the question at
-all the model is never called -- an answer with no source material is the
-failure this module exists to prevent, not an edge case to handle
-afterwards.
+Retrieval runs before the model decides how to answer. An answer stated as
+fact with no source material behind it is the failure this module exists
+to prevent, not an edge case to handle afterwards -- so when nothing
+matches the question, ``ai_answers`` does not hand the model a grounded
+prompt with an empty context and hope; it switches to a clarify-only
+prompt that is not allowed to state anything as fact either. Retrieval's
+job stops at reporting what matched -- the empty case still goes to the
+model, just never as if it had sources.
 
 The retrieved articles are numbered, and the model is instructed to cite
 them as ``[n]``. Those markers are mapped back to articles **here**, on the
@@ -87,9 +91,10 @@ async def retrieve(
 
     Returns an empty list when nothing matched -- including a question
     that is only stop words, or empty -- and the caller must treat that as
-    "do not call the model" rather than as "call it with no context": a
-    model given no sources will answer from its training data, which is
-    exactly what grounding exists to prevent.
+    "switch to the clarify-only prompt" rather than as "call the grounded
+    prompt with no context": a model given the grounded prompt with no
+    sources will answer from its training data, which is exactly what
+    grounding exists to prevent.
     """
     articles = await kb_public.search_any(session, workspace_id, question, limit=limit)
     if not articles:

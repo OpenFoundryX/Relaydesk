@@ -63,11 +63,39 @@ class Completion:
     output_tokens: int = 0
 
 
+@dataclass(frozen=True)
+class Turn:
+    """One prior turn of the conversation, as the model receives it.
+
+    ``role`` is ``"visitor"`` or ``"assistant"`` -- the wire vocabulary
+    ``WidgetTurnIn`` uses, not yet Anthropic's ``"user"``/``"assistant"``.
+    That mapping is ``AnthropicProvider``'s job, not this dataclass's: a
+    fake or a future self-hosted provider may have its own wire shape to
+    map onto instead.
+
+    Visitor-supplied and unverified. See ``ai_answers.SYSTEM`` for how the
+    system prompt keeps grounding absolute regardless of what a turn here
+    claims an assistant said.
+    """
+
+    role: str
+    text: str
+
+
 class Provider(Protocol):
     def complete(
-        self, *, system: str, question: str, model: str
+        self,
+        *,
+        system: str,
+        question: str,
+        model: str,
+        history: list[Turn] | None = None,
     ) -> AsyncIterator[str]:
         """Stream the answer, chunk by chunk.
+
+        ``history`` is prior turns of this conversation, oldest first, sent
+        as real messages ahead of ``question`` -- not folded into
+        ``system``. ``None`` and ``[]`` mean the same thing: no prior turns.
 
         ``ProviderUnavailable`` can be raised after one or more chunks have
         already been yielded -- a caller that streams chunks onward as they
@@ -88,10 +116,19 @@ class FakeProvider:
     refuses: bool = False
     received_system: str | None = field(default=None, init=False)
     received_question: str | None = field(default=None, init=False)
+    # Always a list, never `None` -- `None` and `[]` mean the same thing to
+    # a caller, so a test asserting what crossed this boundary should not
+    # have to tell them apart either.
+    received_history: list[Turn] = field(default_factory=list, init=False)
     _usage: Completion = field(default_factory=Completion)
 
     async def complete(
-        self, *, system: str, question: str, model: str
+        self,
+        *,
+        system: str,
+        question: str,
+        model: str,
+        history: list[Turn] | None = None,
     ) -> AsyncIterator[str]:
         # Recorded before either failure branch, exactly as a real provider
         # would have already received both by the time it decides to fail
@@ -99,6 +136,7 @@ class FakeProvider:
         # crossed this boundary (spec D6), not merely what was intended to.
         self.received_system = system
         self.received_question = question
+        self.received_history = list(history or [])
         self._usage = Completion()
         if self.fails:
             raise ProviderUnavailable("scripted failure")
@@ -136,9 +174,22 @@ class AnthropicProvider:
         self._usage = Completion()
 
     async def complete(
-        self, *, system: str, question: str, model: str
+        self,
+        *,
+        system: str,
+        question: str,
+        model: str,
+        history: list[Turn] | None = None,
     ) -> AsyncIterator[str]:
         """Stream the answer, chunk by chunk.
+
+        ``history`` becomes real prior messages, oldest first, ``question``
+        always last -- ``"visitor"`` maps to Anthropic's ``"user"``,
+        ``"assistant"`` passes straight through. Not folded into ``system``:
+        a message the model is shown as having said itself carries more
+        weight with it than the same words quoted inside the system prompt,
+        which is exactly why an untrusted, visitor-supplied "assistant" turn
+        must never land there instead.
 
         A mid-stream API error raises ``ProviderUnavailable``; a refusal
         discovered only once the stream ends raises ``ProviderRefused``
@@ -149,6 +200,15 @@ class AnthropicProvider:
         to the caller is not undone.
         """
         import anthropic
+
+        messages = [
+            {
+                "role": "user" if turn.role == "visitor" else "assistant",
+                "content": turn.text,
+            }
+            for turn in (history or [])
+        ]
+        messages.append({"role": "user", "content": question})
 
         try:
             async with self._client.messages.stream(
@@ -163,7 +223,7 @@ class AnthropicProvider:
                         "cache_control": {"type": "ephemeral"},
                     }
                 ],
-                messages=[{"role": "user", "content": question}],
+                messages=messages,
             ) as stream:
                 async for text in stream.text_stream:
                     self._usage.text += text

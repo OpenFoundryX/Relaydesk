@@ -1,4 +1,6 @@
-from pydantic import Field
+from typing import Literal
+
+from pydantic import Field, field_validator
 
 from relaydesk.schemas.base import CamelModel
 
@@ -38,14 +40,61 @@ class WidgetEventIn(CamelModel):
 QUESTION_MAX_CHARS = 2000
 
 
+# A prior draft carried a `history` field on `WidgetAskIn` and removed it as
+# dead input -- nothing consumed it, and escalation (Task 11) carries prior
+# turns as a separate `transcript` form field on the ticket route instead.
+# This is its real introduction: Task 10's follow-up questions ("what about
+# annually?") are unanswerable without the turn they follow, so the model
+# now receives this as real conversation, not just the ticket route.
+HISTORY_MAX_TURNS = 6
+HISTORY_TURN_MAX_CHARS = 1000
+
+
+class WidgetTurnIn(CamelModel):
+    """One prior turn of this browser session's conversation, as the
+    visitor's browser remembers it and resends on every question.
+
+    Visitor-supplied and unverified: a visitor's own browser is what wrote
+    even the "assistant" turns here, so nothing in this shape is proof that
+    an assistant ever said it. See `ai_answers.SYSTEM` for how the model is
+    told to treat it.
+    """
+
+    role: Literal["visitor", "assistant"]
+    text: str
+
+
 class WidgetAskIn(CamelModel):
     question: str = Field(max_length=QUESTION_MAX_CHARS)
-    # No client-held transcript field: an earlier draft carried one, but
-    # nothing in this slice reads it -- the panel (Task 10) sends only the
-    # question, and escalation (Task 11) carries prior turns as a separate
-    # `transcript` form field on the ticket route instead. A field neither
-    # produced nor consumed anywhere is worse than no field: it invites a
-    # caller to rely on context that is silently dropped.
+    # Prior turns of this session, oldest first. Bounded below rather than
+    # rejected: this is both a cost surface (every turn is billed, on every
+    # question, for the life of the conversation) and an abuse surface (an
+    # anonymous route whose key sits in any customer's page source), but a
+    # visitor must never be blocked by the length of their own conversation
+    # -- the same principle `QUESTION_MAX_CHARS` and `TRANSCRIPT_MAX_CHARS`
+    # already apply to the two other visitor-controlled text fields on this
+    # door. `_bound_history` truncates; nothing here raises 422 for it.
+    history: list[WidgetTurnIn] = Field(default_factory=list)
+
+    @field_validator("history", mode="after")
+    @classmethod
+    def _bound_history(cls, turns: list[WidgetTurnIn]) -> list[WidgetTurnIn]:
+        """Keep at most the last `HISTORY_MAX_TURNS` turns, oldest dropped
+        first, each clipped to `HISTORY_TURN_MAX_CHARS`.
+
+        The oldest turns are the safest to drop -- the same reasoning
+        `TRANSCRIPT_MAX_CHARS`'s truncation-from-the-front uses below, and
+        for the same reason: what a visitor asked a moment ago is what
+        "that" in a follow-up question refers to, not what they asked six
+        turns back.
+        """
+        kept = turns[-HISTORY_MAX_TURNS:]
+        return [
+            turn
+            if len(turn.text) <= HISTORY_TURN_MAX_CHARS
+            else turn.model_copy(update={"text": turn.text[:HISTORY_TURN_MAX_CHARS]})
+            for turn in kept
+        ]
 
 
 # The ticket route's `transcript` field is truncated to this many

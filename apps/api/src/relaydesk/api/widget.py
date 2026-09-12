@@ -57,6 +57,7 @@ from relaydesk.services import (
     widget_origins,
     widget_sessions,
 )
+from relaydesk.services.ai_provider import Turn
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -354,8 +355,13 @@ async def ask(
         if not within:
             return _degraded("rate_limited")
 
+        history = [Turn(role=turn.role, text=turn.text) for turn in body.history]
         attempt = await ai_answers.answer(
-            session, widget_key.workspace, widget_key, body.question.strip()
+            session,
+            widget_key.workspace,
+            widget_key,
+            body.question.strip(),
+            history=history,
         )
     except Exception:
         logger.exception("widget ask: unexpected failure before streaming")
@@ -381,11 +387,33 @@ async def ask(
             logger.exception("widget ask: mid-stream failure")
             yield f"event: done\ndata: {json.dumps({'outcome': 'degraded'})}\n\n"
             return
-        cited = ai_retrieval.resolve_citations(answer_text, attempt.sources)
+
+        # `attempt.sources` is empty in exactly two shapes: retrieval found
+        # nothing, so `ai_answers.answer` called the model in clarify-only
+        # mode (see its docstring) -- the citation concept does not apply,
+        # and any non-blank text back is `clarified`, telling the frontend
+        # not to offer a ticket over a question the bot just asked back.
+        # Blank text back (a stream that produced nothing) has no home in
+        # the three named outcomes and falls through to `degraded`, the
+        # same as every other unnamed shape on this route.
+        if attempt.sources:
+            cited = ai_retrieval.resolve_citations(answer_text, attempt.sources)
+            outcome = "answered" if cited else "refused"
+        elif answer_text.strip():
+            cited = []
+            outcome = "clarified"
+        else:
+            cited = []
+            outcome = "degraded"
         payload = {
-            "outcome": "answered" if cited else "refused",
+            "outcome": outcome,
             "citations": [
-                {"title": source.title, "path": source.path} for source in cited
+                # `number` travels with the citation because the answer text
+                # carries inline `[n]` markers, and without it the browser
+                # cannot tell which article `[4]` meant -- it would render a
+                # dangling number beside a list of links it cannot join to.
+                {"number": source.number, "title": source.title, "path": source.path}
+                for source in cited
             ],
         }
         yield f"event: done\ndata: {json.dumps(payload)}\n\n"

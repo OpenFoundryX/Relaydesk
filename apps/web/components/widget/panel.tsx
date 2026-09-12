@@ -60,7 +60,8 @@ export type PanelProps = {
    * may take a Server Action as a prop, but importing the module that
    * defines one would pull `lib/api/widget.ts` -- `server-only` -- into
    * this file's module graph. See compose.tsx for the rest of that
-   * reasoning.
+   * reasoning. Forwarded to both Compose and Ask -- the inline escalation
+   * offer in Ask files a ticket the same way Compose's form does.
    */
   onSubmit?: (formData: FormData) => Promise<SubmitWidgetTicketResult>;
 };
@@ -296,6 +297,7 @@ export function Panel({
             greeting={branding.greeting}
             onDegrade={() => setView({ name: "home" })}
             onCompose={compose}
+            onSubmit={onSubmit}
           />
         )}
         {view.name === "sent" && <Sent onHome={goHome} />}

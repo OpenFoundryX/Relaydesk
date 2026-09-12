@@ -69,10 +69,14 @@ class AiCall(UUIDMixin, TimestampMixin, Base):
     )
     # More detail on `outcome`: which of spec D4's conditions applied when
     # `outcome` is `degraded` (e.g. "not_configured", "over_budget",
-    # "no_sources", "provider_unavailable"), or why the model produced
-    # nothing citable when `outcome` is `refused` ("no_citation" for an
-    # answer that cited nothing, "declined" for a genuine model refusal).
-    # `provider_unavailable` is reserved for real provider failures --
-    # `ai_budget.breaker_open` counts only that value, so a refusal must
-    # never be filed under it.
+    # "breaker_open", "provider_unavailable", or "incomplete" for a charge
+    # that never got the chance to settle), or why the model produced
+    # nothing citable when `outcome` is `refused` ("no_citation" for a
+    # grounded answer that cited nothing, "declined" for a genuine model
+    # refusal, "clarify" for a clarify-only turn -- the model was called
+    # with no retrieved sources and asked a question back rather than
+    # answering; the wire layer renders this as "clarified", but it is not
+    # a fourth `AiOutcome` value). `provider_unavailable` is reserved for
+    # real provider failures -- `ai_budget.breaker_open` counts only that
+    # value, so a refusal must never be filed under it.
     reason: Mapped[str | None] = mapped_column(String(32), nullable=True)

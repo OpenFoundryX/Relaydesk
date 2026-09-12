@@ -4,9 +4,44 @@ from relaydesk.config import get_settings
 from relaydesk.models.ai_call import AiCall, AiOutcome
 from relaydesk.models.conversation import Conversation
 from relaydesk.models.message import Message
-from relaydesk.schemas.widget import QUESTION_MAX_CHARS
-from relaydesk.services import widget_keys
+from relaydesk.schemas.widget import (
+    HISTORY_MAX_TURNS,
+    HISTORY_TURN_MAX_CHARS,
+    QUESTION_MAX_CHARS,
+    WidgetAskIn,
+)
+from relaydesk.services import ai_answers, widget_keys
+from relaydesk.services.ai_answers import Attempt
 from tests.factories import make_workspace
+
+
+def test_history_keeps_only_the_last_n_turns_dropping_the_oldest() -> None:
+    """Bounded, not rejected -- the oldest turns are the safest to drop, the
+    same reasoning `TRANSCRIPT_MAX_CHARS`'s front-truncation uses."""
+    turns = [
+        {"role": "visitor", "text": f"turn {i}"} for i in range(HISTORY_MAX_TURNS + 3)
+    ]
+
+    parsed = WidgetAskIn(question="q", history=turns)
+
+    assert len(parsed.history) == HISTORY_MAX_TURNS
+    assert parsed.history[0].text == "turn 3"
+    assert parsed.history[-1].text == f"turn {HISTORY_MAX_TURNS + 2}"
+
+
+def test_an_overlong_turn_is_truncated_not_rejected() -> None:
+    """A visitor must never be blocked by the length of their own
+    conversation -- unlike `question`, which uses `Field(max_length=...)`
+    and does reject, this field truncates."""
+    turns = [{"role": "visitor", "text": "A" * (HISTORY_TURN_MAX_CHARS + 500)}]
+
+    parsed = WidgetAskIn(question="q", history=turns)
+
+    assert len(parsed.history[0].text) == HISTORY_TURN_MAX_CHARS
+
+
+def test_history_defaults_to_empty() -> None:
+    assert WidgetAskIn(question="q").history == []
 
 
 async def test_an_unconfigured_workspace_degrades_rather_than_erroring(
@@ -46,6 +81,28 @@ async def test_an_overlong_question_is_rejected(client, db_session) -> None:
     )
 
     assert response.status_code == 422
+
+
+async def test_an_overlong_history_does_not_get_the_request_rejected(
+    client, db_session
+) -> None:
+    """A visitor must never be blocked by the length of their own
+    conversation -- `history` truncates at the schema, so a long one still
+    reaches `ai_answers.answer` (here, straight through to the ordinary
+    `not_configured` degrade, since this workspace has no `AiConfig`)."""
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
+    await db_session.commit()
+
+    history = [{"role": "visitor", "text": "x" * 5000} for _ in range(20)]
+
+    response = await client.post(
+        f"/api/widget/{key.key}/ask",
+        json={"question": "how do refunds work", "history": history},
+    )
+
+    assert response.status_code == 200
+    assert "degraded" in response.text
 
 
 async def test_the_hourly_cap_bounds_how_many_questions_are_answered(
@@ -278,6 +335,59 @@ async def test_a_ticket_with_no_transcript_writes_no_ai_call_row(
         data={"email": "wren@lantern.co", "message": "Where is my order?"},
     )
     assert response.status_code == 201
+
+
+def _fake_attempt(*, sources, chunks):
+    """A scripted `Attempt`, for exercising the route's own SSE rendering
+    without a real `AiConfig` or a network call -- `ai_answers.answer`
+    itself is exercised directly in `test_ai_answers.py`; this is only
+    about what `api/widget.py` does with what it hands back."""
+
+    async def stream():
+        for chunk in chunks:
+            yield chunk
+
+    return Attempt(degraded=False, stream=stream(), sources=sources)
+
+
+async def test_a_clarify_only_reply_reports_clarified(
+    client, db_session, monkeypatch
+) -> None:
+    """The new fourth wire outcome (spec: the SSE contract). `clarified`
+    tells the frontend not to offer a ticket while the bot has just asked
+    the visitor a question, rather than having answered one."""
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
+    await db_session.commit()
+
+    async def fake_answer(*args, **kwargs):
+        return _fake_attempt(sources=[], chunks=["Could you say a bit more?"])
+
+    monkeypatch.setattr(ai_answers, "answer", fake_answer)
+
+    response = await client.post(f"/api/widget/{key.key}/ask", json={"question": "hi"})
+
+    assert response.status_code == 200
+    assert '"outcome": "clarified"' in response.text
+
+
+async def test_a_blank_clarify_reply_degrades(client, db_session, monkeypatch) -> None:
+    """A clarify-only call that came back with nothing to say has no home
+    in the three named outcomes -- it falls through to `degraded`, the same
+    as every other unnamed shape on this route."""
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
+    await db_session.commit()
+
+    async def fake_answer(*args, **kwargs):
+        return _fake_attempt(sources=[], chunks=[])
+
+    monkeypatch.setattr(ai_answers, "answer", fake_answer)
+
+    response = await client.post(f"/api/widget/{key.key}/ask", json={"question": "hi"})
+
+    assert response.status_code == 200
+    assert '"outcome": "degraded"' in response.text
 
     count = await db_session.scalar(sa.select(sa.func.count()).select_from(AiCall))
     assert count == 0

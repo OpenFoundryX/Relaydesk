@@ -8,6 +8,7 @@ from relaydesk.services.ai_provider import (
     FakeProvider,
     ProviderRefused,
     ProviderUnavailable,
+    Turn,
     for_config,
 )
 
@@ -99,6 +100,28 @@ async def test_fake_records_what_it_was_given():
     )]
     assert provider.received_system == "sys-prompt"
     assert provider.received_question == "a@b.com wants a refund"
+
+
+async def test_fake_records_the_history_it_was_given():
+    """`FakeProvider` must let a caller assert on prior turns too, not only
+    on `system`/`question` -- Change 1's whole reason for existing."""
+    provider = FakeProvider(chunks=["ok"])
+    history = [Turn(role="visitor", text="how do refunds work")]
+    [chunk async for chunk in provider.complete(
+        system="s", question="q", model="claude-opus-5", history=history
+    )]
+    assert provider.received_history == history
+
+
+async def test_fake_defaults_to_no_history():
+    """`None` and `[]` mean the same thing -- a caller that never scripts
+    `history` must see an empty list, not `None`, so it need not special-case
+    the absence of the argument it did not pass."""
+    provider = FakeProvider(chunks=["ok"])
+    [chunk async for chunk in provider.complete(
+        system="s", question="q", model="claude-opus-5"
+    )]
+    assert provider.received_history == []
 
 
 def test_no_key_means_no_provider():
@@ -231,3 +254,98 @@ async def test_cached_input_tokens_count_towards_the_budget() -> None:
 
     assert provider.usage().input_tokens == 3010, "cached context must be counted"
     assert provider.usage().output_tokens == 138
+
+
+async def test_the_real_provider_sends_history_as_prior_messages_not_the_system_prompt() -> (
+    None
+):
+    """Change 1's actual requirement, in the only line production reaches.
+
+    `history` becomes real messages ahead of `question`, oldest first --
+    `"visitor"` maps to Anthropic's `"user"`, `"assistant"` passes straight
+    through -- rather than being folded into `system`.
+    """
+
+    class _FinalMessage:
+        stop_reason = "end_turn"
+        usage = SimpleNamespace(input_tokens=5, output_tokens=5)
+
+    class _Stream:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get_final_message(self):
+            return _FinalMessage()
+
+    async def _chunks():
+        yield "Same policy [1]."
+
+    stream = _Stream()
+    type(stream).text_stream = property(lambda self: _chunks())
+
+    captured: dict = {}
+
+    def _capture(**kwargs):
+        captured.update(kwargs)
+        return stream
+
+    provider = AnthropicProvider(api_key="sk-test")
+    provider._client = SimpleNamespace(messages=SimpleNamespace(stream=_capture))
+
+    [chunk async for chunk in provider.complete(
+        system="s",
+        question="what about annually?",
+        model="claude-opus-5",
+        history=[
+            Turn(role="visitor", text="how do refunds work"),
+            Turn(role="assistant", text="Within 14 days."),
+        ],
+    )]
+
+    assert captured["messages"] == [
+        {"role": "user", "content": "how do refunds work"},
+        {"role": "assistant", "content": "Within 14 days."},
+        {"role": "user", "content": "what about annually?"},
+    ]
+
+
+async def test_the_real_provider_with_no_history_sends_only_the_question() -> None:
+    """The ordinary, first-question-of-a-conversation shape must still work."""
+
+    class _FinalMessage:
+        stop_reason = "end_turn"
+        usage = SimpleNamespace(input_tokens=5, output_tokens=5)
+
+    class _Stream:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get_final_message(self):
+            return _FinalMessage()
+
+    async def _chunks():
+        yield "Within 14 days [1]."
+
+    stream = _Stream()
+    type(stream).text_stream = property(lambda self: _chunks())
+
+    captured: dict = {}
+
+    def _capture(**kwargs):
+        captured.update(kwargs)
+        return stream
+
+    provider = AnthropicProvider(api_key="sk-test")
+    provider._client = SimpleNamespace(messages=SimpleNamespace(stream=_capture))
+
+    [chunk async for chunk in provider.complete(
+        system="s", question="refund", model="claude-opus-5"
+    )]
+
+    assert captured["messages"] == [{"role": "user", "content": "refund"}]
