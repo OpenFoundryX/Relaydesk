@@ -395,6 +395,7 @@ export function Panel({
             widgetKey={widgetKey}
             onCompose={() => setTab("home")}
             onEvent={recordEvent}
+            onFullScreenChange={setHelpFullScreen}
           />
         </div>
       </div>

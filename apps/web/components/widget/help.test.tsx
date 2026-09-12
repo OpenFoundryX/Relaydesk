@@ -318,3 +318,61 @@ describe("Help, the deflection counters", () => {
     expect(onEvent).not.toHaveBeenCalled();
   });
 });
+
+describe("Help, asking for room to read", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("reports full-height while an article is open, and not before or after", async () => {
+    // The panel hides the tab bar and asks the loader to grow on this
+    // signal. Only Help knows which of its own screens is showing, so a
+    // panel deriving it from the outside would be wrong the moment Help
+    // grows another screen.
+    const onFullScreenChange = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        !url.includes("path=")
+          ? new Response(
+              JSON.stringify([
+                {
+                  id: "c",
+                  name: "Billing",
+                  slug: "billing",
+                  description: "",
+                  icon: "",
+                  articleCount: 1,
+                },
+              ]),
+              { status: 200 },
+            )
+          : new Response(
+              JSON.stringify({
+                collection: { id: "c", name: "Billing", slug: "billing" },
+                articles: [
+                  { id: "a", title: "Refunds", slug: "refunds", excerpt: "", path: "billing/refunds" },
+                ],
+              }),
+              { status: 200 },
+            ),
+      ),
+    );
+
+    render(
+      <Help
+        widgetKey="rdw_test"
+        onCompose={() => {}}
+        onFullScreenChange={onFullScreenChange}
+      />,
+    );
+
+    // Browsing is not full-height.
+    await waitFor(() => expect(onFullScreenChange).toHaveBeenCalledWith(false));
+
+    fireEvent.click(await screen.findByText("Billing"));
+    fireEvent.click(await screen.findByText("Refunds"));
+
+    await waitFor(() => expect(onFullScreenChange).toHaveBeenCalledWith(true));
+  });
+});

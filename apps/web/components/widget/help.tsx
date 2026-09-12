@@ -37,11 +37,12 @@ type View =
  * a collection's articles, and the article itself -- the same shape as
  * Intercom's Messenger Help pane.
  *
- * Self-contained by design: it takes only `widgetKey` and `onCompose`
- * (whatever shell mounts it, tabbed or otherwise, needs to know nothing
- * about search, collections or articles as separate screens) and owns
- * every transition between its four views itself, the way `panel.tsx`
- * used to own transitions between Home, Results and Article.
+ * Self-contained by design: whatever shell mounts it needs to know
+ * nothing about search, collections or articles as separate screens, and
+ * this owns every transition between its four views itself -- the way
+ * `panel.tsx` used to own transitions between Home, Results and Article.
+ * What it reports back is only what the shell cannot see: the deflection
+ * counters, and whether it is currently full-height.
  *
  * Reuses `Results` and `Article` rather than re-implementing a search
  * list or an article renderer -- both already do exactly this job, doc
@@ -52,6 +53,7 @@ export function Help({
   widgetKey,
   onCompose,
   onEvent,
+  onFullScreenChange,
 }: {
   widgetKey: string | undefined;
   onCompose: () => void;
@@ -63,12 +65,27 @@ export function Help({
    * -- it reads as "nobody searched" rather than as "nothing is counting".
    */
   onEvent?: (kind: "searched" | "read") => void;
+  /**
+   * Whether this tab is showing a full-height screen -- reading an
+   * article. The panel hides the tab bar and asks the loader to grow when
+   * it is, the same as it does for a conversation: both are screens where
+   * a visitor is reading rather than choosing.
+   */
+  onFullScreenChange?: (full: boolean) => void;
 }) {
   const [typed, setTyped] = useState("");
   // Committed only on submit, same as Home/Results (spec D8: search runs
   // on submit, not per keystroke) -- typing alone never fires a request.
   const [query, setQuery] = useState("");
   const [view, setView] = useState<View>({ name: "browse" });
+
+  // Reported rather than derived by the panel: only this component knows
+  // which of its own screens is showing, and a panel guessing from the
+  // outside would be wrong the moment Help grows another screen.
+  const full = view.name === "article";
+  useEffect(() => {
+    onFullScreenChange?.(full);
+  }, [full, onFullScreenChange]);
 
   function submitSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
