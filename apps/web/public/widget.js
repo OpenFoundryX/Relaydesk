@@ -11,7 +11,10 @@
   // Prefill only (spec D4).
   var email = tag.getAttribute("data-email") || "";
   var person = tag.getAttribute("data-name") || "";
-  // Colour/corner from attributes, not bootstrap (D6/D10).
+  // Attributes draw instantly, so a launcher needs no network at all --
+  // that is what D6/D10 bought. `/widget/launcher` then corrects them: a
+  // colour only changeable by every customer re-pasting their snippet is
+  // not really a setting.
   var accent = tag.getAttribute("data-accent") || "#18181B";
   var side = tag.getAttribute("data-position") === "left" ? "left" : "right";
   var frame = null;
@@ -37,8 +40,7 @@
     'stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.7 8.7 0 ' +
     '0 1-3.8-.9L3 20.5l1.6-4.9A8.4 8.4 0 0 1 12 3.1a8.4 8.4 0 0 1 9 8.4Z"/></svg>';
 
-  // Below ~480px: a full-screen takeover (spec 7); a <style> tag since an
-  // inline style can't carry a media query.
+  // Full-screen under 480px; a <style> tag carries the media query.
   var style = document.createElement("style");
   style.textContent =
     "#rdw{position:fixed;" + side + ":24px;bottom:96px;width:380px;height:600px;" +
@@ -81,4 +83,21 @@
   });
 
   mount(launcher);
+
+  // Console settings win once they arrive. Silent on failure: the
+  // launcher is already drawn, and nobody is owed a note about a colour.
+  fetch(origin + "/widget/launcher?key=" + encodeURIComponent(key))
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (s) {
+      if (!s) return;
+      if (s.accent && s.accent !== accent) launcher.style.background = s.accent;
+      if (s.position && s.position !== side) {
+        launcher.style[side] = "";
+        launcher.style[s.position] = "24px";
+        style.textContent = style.textContent.split(side + ":24px")
+          .join(s.position + ":24px");
+        side = s.position;
+      }
+    })
+    .catch(function () {});
 })();

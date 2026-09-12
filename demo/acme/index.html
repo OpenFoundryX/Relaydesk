@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Acme Analytics — dashboards your team will actually open</title>
+<style>
+  :root {
+    --ink: #18181b;
+    --muted: #52525b;
+    --line: #e4e4e7;
+    --accent: #7c3aed;
+    --bg: #ffffff;
+    --soft: #fafafa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 0 24px; }
+  header {
+    border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; background: rgba(255,255,255,.9);
+    backdrop-filter: blur(8px); z-index: 10;
+  }
+  nav { display: flex; align-items: center; gap: 28px; height: 64px; }
+  .brand { font-weight: 650; letter-spacing: -.01em; margin-right: auto; display: flex; align-items: center; gap: 9px; }
+  .mark {
+    width: 24px; height: 24px; border-radius: 6px; background: var(--accent);
+    display: grid; place-items: center; color: #fff; font-size: 13px; font-weight: 700;
+  }
+  nav a { color: var(--muted); text-decoration: none; font-size: 14.5px; }
+  nav a:hover { color: var(--ink); }
+  .btn {
+    display: inline-block; background: var(--ink); color: #fff; text-decoration: none;
+    padding: 9px 16px; border-radius: 8px; font-size: 14.5px; font-weight: 550;
+  }
+  .hero { padding: 92px 0 72px; }
+  h1 { font-size: clamp(34px, 5.2vw, 54px); line-height: 1.08; letter-spacing: -.028em; margin: 0 0 20px; max-width: 17ch; }
+  .lede { font-size: 19px; color: var(--muted); max-width: 56ch; margin: 0 0 32px; }
+  .cta { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .ghost { border: 1px solid var(--line); background: #fff; color: var(--ink); }
+  .note { font-size: 13.5px; color: var(--muted); }
+  section { padding: 64px 0; border-top: 1px solid var(--line); }
+  h2 { font-size: 25px; letter-spacing: -.02em; margin: 0 0 28px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(236px, 1fr)); gap: 22px; }
+  .card { border: 1px solid var(--line); border-radius: 12px; padding: 22px; background: var(--soft); }
+  .card h3 { margin: 0 0 7px; font-size: 16px; }
+  .card p { margin: 0; color: var(--muted); font-size: 14.5px; }
+  .prices { display: grid; grid-template-columns: repeat(auto-fit, minmax(216px, 1fr)); gap: 22px; }
+  .tier { border: 1px solid var(--line); border-radius: 12px; padding: 24px; }
+  .tier.mid { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .amount { font-size: 33px; font-weight: 650; letter-spacing: -.02em; }
+  .amount span { font-size: 14px; font-weight: 400; color: var(--muted); }
+  ul.ticks { list-style: none; padding: 0; margin: 16px 0 0; font-size: 14.5px; color: var(--muted); }
+  ul.ticks li { padding-left: 20px; position: relative; margin-bottom: 7px; }
+  ul.ticks li::before { content: "✓"; position: absolute; left: 0; color: var(--accent); }
+  footer { border-top: 1px solid var(--line); padding: 36px 0 80px; color: var(--muted); font-size: 14px; }
+  .banner {
+    background: #f4f1fe; border: 1px solid #ddd3fb; border-radius: 12px;
+    padding: 16px 18px; margin: 34px 0 0; font-size: 14.5px; color: #4c1d95;
+  }
+  .banner code { background: #fff; border: 1px solid #ddd3fb; border-radius: 5px; padding: 1px 6px; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <nav>
+      <div class="brand"><span class="mark">A</span> Acme Analytics</div>
+      <a href="#features">Features</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#docs">Docs</a>
+      <a class="btn" href="#">Start free</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="hero">
+    <h1>Dashboards your team will actually open.</h1>
+    <p class="lede">
+      Acme Analytics turns your product events into dashboards people check on a
+      Monday morning — without a data team, a warehouse, or a six-week rollout.
+    </p>
+    <div class="cta">
+      <a class="btn" href="#">Start free</a>
+      <a class="btn ghost" href="#">Book a walkthrough</a>
+      <span class="note">No card required · 14-day trial</span>
+    </div>
+
+    <div class="banner">
+      <strong>This page is a test harness, not a real product.</strong>
+      It exists to exercise the Relaydesk widget from a genuinely different
+      origin — this page is <code>http://localhost:8080</code>, the widget is
+      served from <code>http://localhost:3000</code>. Look for the launcher in
+      the bottom-<strong>right</strong> corner.
+    </div>
+  </div>
+
+  <section id="features">
+    <h2>What you get</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Event pipelines</h3>
+        <p>Point your SDK at one endpoint. Schema drift is handled for you.</p>
+      </div>
+      <div class="card">
+        <h3>Shared dashboards</h3>
+        <p>One link, everyone sees the same numbers. No screenshots in chat.</p>
+      </div>
+      <div class="card">
+        <h3>Alerts that matter</h3>
+        <p>Threshold and anomaly alerts into Slack, email, or a webhook.</p>
+      </div>
+      <div class="card">
+        <h3>Warehouse sync</h3>
+        <p>Mirror raw events to BigQuery or Snowflake when you outgrow us.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="pricing">
+    <h2>Pricing</h2>
+    <div class="prices">
+      <div class="tier">
+        <h3>Starter</h3>
+        <div class="amount">£0 <span>/ month</span></div>
+        <ul class="ticks">
+          <li>50k events / month</li>
+          <li>3 dashboards</li>
+          <li>Community support</li>
+        </ul>
+      </div>
+      <div class="tier mid">
+        <h3>Team</h3>
+        <div class="amount">£49 <span>/ month</span></div>
+        <ul class="ticks">
+          <li>2M events / month</li>
+          <li>Unlimited dashboards</li>
+          <li>Email support</li>
+          <li>Warehouse sync</li>
+        </ul>
+      </div>
+      <div class="tier">
+        <h3>Scale</h3>
+        <div class="amount">£199 <span>/ month</span></div>
+        <ul class="ticks">
+          <li>20M events / month</li>
+          <li>SSO and audit logs</li>
+          <li>Priority support</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="docs">
+    <h2>Try the support widget</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>1 · Open it</h3>
+        <p>Click the launcher, bottom left. It opens in an iframe, so nothing on this page can read it.</p>
+      </div>
+      <div class="card">
+        <h3>2 · Ask something</h3>
+        <p>The knowledge base behind it is Chronon's, with 21 published articles. Try a refund or billing question.</p>
+      </div>
+      <div class="card">
+        <h3>3 · Watch it degrade</h3>
+        <p>Until an API key is configured, every answer falls back to search and the message form. That is the design.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    © Acme Analytics — fictional. Widget by Relaydesk.
+  </footer>
+
+</div>
+
+<!--
+  The embed, exactly as a customer would paste it. `data-key` is a
+  publishable key: it is meant to be readable here. Everything it can reach
+  is either public or rate-limited, and the key is pinned to this origin.
+-->
+<script
+  async
+  src="http://localhost:3000/widget.js"
+  data-key="rdw_9b8b1ef92b5274cf380d3e8d3f4b7382"
+  data-accent="#0D9488"
+></script>
+
+</body>
+</html>
