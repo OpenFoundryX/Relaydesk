@@ -287,3 +287,58 @@ describe("Ask escalation offer", () => {
     expect(await screen.findByRole("button", { name: "Try again" })).toBeTruthy();
   });
 });
+
+describe("Ask, in conversation", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("sends the conversation so far with each question", async () => {
+    // Without this the model answers every follow-up with no idea what it
+    // follows. The API accepted `history` for a while before anything sent
+    // it, and every answer looked fine in isolation.
+    const fetchMock = mockAskFetch([
+      { event: "text", data: { text: "Within 14 days." } },
+      { event: "done", data: { outcome: "answered", citations: [] } },
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Ask widgetKey="rdw_test" onDegrade={() => {}} onCompose={() => {}} />);
+    await askQuestion("How do refunds work?");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await askQuestion("What about annually?");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    const second = JSON.parse(fetchMock.mock.calls[1][1].body as string);
+    expect(second.question).toBe("What about annually?");
+    expect(second.history).toEqual([
+      { role: "visitor", text: "How do refunds work?" },
+      { role: "assistant", text: "Within 14 days." },
+    ]);
+  });
+
+  it("offers a person once the answers stop landing", async () => {
+    // Every answer here succeeds, so `refused` never fires. A visitor
+    // asking the same thing four ways would otherwise be answered four
+    // times and never asked whether they want a human.
+    vi.stubGlobal(
+      "fetch",
+      mockAskFetch([
+        { event: "text", data: { text: "Try this." } },
+        { event: "done", data: { outcome: "answered", citations: [] } },
+      ]),
+    );
+
+    render(<Ask widgetKey="rdw_test" onDegrade={() => {}} onCompose={() => {}} />);
+    for (const question of ["one", "two", "three"]) {
+      await askQuestion(question);
+      await waitFor(() =>
+        expect(screen.getAllByText("Try this.").length).toBeGreaterThan(0),
+      );
+    }
+
+    await waitFor(() =>
+      expect(screen.getByText(/would you like me to pass this to the team/i)).toBeTruthy(),
+    );
+  });
+});

@@ -10,7 +10,7 @@ import { NextRequest } from "next/server";
  * so a new event type needs no change on this hop.
  */
 export async function POST(request: NextRequest) {
-  const { key, question } = await request.json();
+  const { key, question, history } = await request.json();
   if (!key || !question) return new Response(null, { status: 404 });
 
   const upstream = await fetch(
@@ -18,7 +18,10 @@ export async function POST(request: NextRequest) {
     {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ question }),
+      // `history` is forwarded, not rebuilt: the API caps and
+      // truncates it, and a proxy that quietly dropped it left the
+      // model answering every follow-up with no idea what it followed.
+      body: JSON.stringify({ question, history: history ?? [] }),
     },
   );
 

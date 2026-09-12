@@ -98,6 +98,12 @@ function isSkip(value: string): boolean {
  * widget.py`'s `submit`. Turns still in flight (the streaming draft) are
  * not included: this only ever runs once a turn has settled into state
  * one way or the other. */
+/** How many answers a visitor sits through before the bot asks whether
+ *  they would rather talk to someone. Three is "this is not landing"
+ *  without being so eager that a visitor reading a good answer is
+ *  interrupted by an offer to escalate. */
+const OFFER_AFTER_ANSWERS = 3;
+
 function transcriptText(turns: Turn[]): string {
   return turns
     .map((turn) => `${turn.role === "visitor" ? "Visitor" : "Assistant"}: ${turn.text}`)
@@ -145,6 +151,11 @@ export function Ask({
     setTurns(turnsRef.current);
   }
 
+  // Offered proactively at most once per conversation -- a ref rather than
+  // state because nothing renders from it and it must be readable inside
+  // the same handler that sets it.
+  const offeredRef = useRef(false);
+
   const [typed, setTyped] = useState("");
   const [draft, setDraft] = useState("");
   const [asking, setAsking] = useState(false);
@@ -178,10 +189,22 @@ export function Ask({
         return;
       }
 
+      // The conversation so far, so a follow-up means something. Read from
+      // the ref rather than the `turns` state: `ask` is called in the same
+      // handler that appended the visitor's turn, and state updates are not
+      // visible until the next render -- reading `turns` here would send a
+      // history one turn stale, every turn.
+      //
+      // The server caps and truncates this; nothing is trimmed here beyond
+      // dropping the turn just appended, which is the question itself.
+      const history = turnsRef.current
+        .slice(0, -1)
+        .map((turn) => ({ role: turn.role, text: turn.text }));
+
       const response = await fetch("/widget/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: widgetKey, question }),
+        body: JSON.stringify({ key: widgetKey, question, history }),
       });
 
       if (!response.body) {
@@ -218,6 +241,26 @@ export function Ask({
                   ? (parsed.data.citations as Citation[])
                   : [];
               appendTurn({ role: "assistant", text: full, citations });
+              // A visitor can be stuck while every answer technically
+              // succeeds. Grounded answers keep coming, `refused` never
+              // fires, and the offer below never opens -- so someone who
+              // asks the same thing four different ways is answered four
+              // times and never once asked whether they want a human.
+              // After enough back-and-forth, offer. Once: a bot that keeps
+              // asking is worse than one that asked and took no for an
+              // answer.
+              const answers = turnsRef.current.filter(
+                (turn) => turn.role === "assistant",
+              ).length;
+              if (answers >= OFFER_AFTER_ANSWERS && !offeredRef.current) {
+                offeredRef.current = true;
+                appendTurn({
+                  role: "assistant",
+                  text: "We've been at this a little while — would you like me to pass this to the team, so a person can pick it up?",
+                  citations: [],
+                });
+                setEscalation({ stage: "offer", question });
+              }
             } else if (outcome === "refused" || outcome === "degraded") {
               appendTurn({
                 role: "assistant",
