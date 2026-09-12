@@ -454,3 +454,65 @@ describe("Ask, the transcript an agent reads", () => {
     expect(sent.get("transcript") as string).toContain("articles shown: Refunds");
   });
 });
+
+describe("Ask, passing it on from any answer", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const ANSWER = [
+    { event: "text", data: { text: "Try the export tab." } },
+    { event: "done", data: { outcome: "answered", citations: [] } },
+  ];
+
+  it("offers a person under an answer, without waiting for one to fail", async () => {
+    // The bot cannot escalate itself -- it has no way to file anything --
+    // so the visitor needs a control, on screen, after an answer that did
+    // not help.
+    vi.stubGlobal("fetch", mockAskFetch(ANSWER));
+    render(<Ask widgetKey="rdw_test" onDegrade={() => {}} onCompose={() => {}} />);
+    await askQuestion("How do I export?");
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Pass this to the team" })).toBeTruthy(),
+    );
+  });
+
+  it("goes straight for an email, since the question is already known", async () => {
+    const onSubmit = vi.fn(async () => ({ ok: true }) as const);
+    vi.stubGlobal("fetch", mockAskFetch(ANSWER));
+    render(
+      <Ask
+        widgetKey="rdw_test"
+        onDegrade={() => {}}
+        onCompose={() => {}}
+        onSubmit={onSubmit}
+      />,
+    );
+    await askQuestion("How do I export?");
+    await screen.findByRole("button", { name: "Pass this to the team" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Pass this to the team" }));
+    await reply("ada@example.com");
+    await reply("skip");
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const [sent] = onSubmit.mock.calls[0] as unknown as [FormData];
+    // The visitor's own question, not the bot's reply and not their email.
+    expect(sent.get("message")).toBe("How do I export?");
+  });
+
+  it("shows the button once, under the newest answer only", async () => {
+    vi.stubGlobal("fetch", mockAskFetch(ANSWER));
+    render(<Ask widgetKey="rdw_test" onDegrade={() => {}} onCompose={() => {}} />);
+    await askQuestion("one");
+    await screen.findByRole("button", { name: "Pass this to the team" });
+    await askQuestion("two");
+
+    await waitFor(() =>
+      expect(screen.getAllByRole("button", { name: "Pass this to the team" })).toHaveLength(
+        1,
+      ),
+    );
+  });
+});

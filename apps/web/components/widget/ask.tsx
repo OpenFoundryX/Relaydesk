@@ -487,6 +487,34 @@ export function Ask({
 
   const busy = asking || escalation.stage === "filing";
 
+  // The last assistant turn that is part of the conversation rather than
+  // the escalation dialogue -- the only one that carries the button.
+  const lastAnswerIndex = turns.reduce(
+    (found, turn, index) =>
+      turn.role === "assistant" && !turn.collecting ? index : found,
+    -1,
+  );
+
+  /** "Pass this to the team", from under an answer. The visitor's own last
+   *  question is what the ticket is about, so it needs no collecting. */
+  function startTicketFromConversation() {
+    const asked = [...turnsRef.current]
+      .reverse()
+      .find((turn) => turn.role === "visitor" && !turn.collecting);
+    if (!asked) {
+      startTicket();
+      return;
+    }
+    offeredRef.current = true;
+    appendTurn({
+      role: "assistant",
+      text: "Of course. What's the best email address to reach you on?",
+      citations: [],
+      collecting: true,
+    });
+    setEscalation({ stage: "email", question: asked.text });
+  }
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const text = typed.trim();
@@ -567,6 +595,24 @@ export function Ask({
               <Bubble from="assistant">
                 <Answer text={turn.text} citations={turn.citations} />
               </Bubble>
+              {/* Under the latest answer, always. A visitor who has just
+                  read something that did not help should not have to work
+                  out that a person is reachable, and the bot cannot do it
+                  for them -- it has no way to file anything, and saying
+                  otherwise is how it ends up promising help that never
+                  comes. Only the latest, so the column does not fill with
+                  the same button after every turn. */}
+              {!turn.collecting &&
+                index === lastAnswerIndex &&
+                escalation.stage === "closed" && (
+                  <button
+                    type="button"
+                    onClick={startTicketFromConversation}
+                    className="rounded-full border border-ink-200 bg-white px-3 py-1.5 text-[12px] font-medium text-ink-700 transition-colors hover:border-ink-300 hover:text-ink-900 dark:border-ink-700 dark:bg-ink-800 dark:text-ink-200 dark:hover:text-white"
+                  >
+                    Pass this to the team
+                  </button>
+                )}
               {turn.citations.length > 0 && (
                 <ul className="flex flex-wrap gap-1.5 pl-1">
                   {turn.citations.map((citation) => (

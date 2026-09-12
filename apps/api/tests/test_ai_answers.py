@@ -558,3 +558,27 @@ async def test_a_degrade_commits_its_audit_row(db_session) -> None:
 
     assert attempt.degraded is True
     assert committed.called, "the degrade row was added but never committed"
+
+
+def test_neither_prompt_lets_the_model_claim_it_acted() -> None:
+    """Observed live: asked to escalate, the model replied "Passing this
+    over to the team now" and nothing happened, because it cannot file
+    anything. A visitor walked away believing help was coming.
+
+    Saying you have done something you cannot do is worse than declining,
+    so both prompts forbid it and name the control that can.
+    """
+    for prompt in (ai_answers.SYSTEM, ai_answers.CLARIFY_SYSTEM):
+        assert "cannot create a ticket" in prompt
+        assert "never say or imply" in prompt
+        assert "talk to a person" in prompt
+
+
+def test_neither_prompt_lets_the_model_discuss_citation_numbers() -> None:
+    """Same conversation: it apologised that "the article numbers I quoted
+    were off" and restated them. They are an internal handle the server
+    resolves into links -- a visitor should never see one, let alone a
+    correction to one.
+    """
+    for prompt in (ai_answers.SYSTEM, ai_answers.CLARIFY_SYSTEM):
+        assert "never correct or apologise for them" in prompt
