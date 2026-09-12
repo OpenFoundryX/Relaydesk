@@ -146,6 +146,59 @@ async def _publish(db_session, workspace):
     return article
 
 
+async def test_a_question_with_pii_reaches_the_provider_redacted(db_session) -> None:
+    """I3 / spec D6, at the caller.
+
+    `ai_redact.redact` has extensive unit tests of the pure function, but
+    nothing previously asserted `ai_answers` actually calls it before the
+    provider sees the question -- this is that guarantee, checked at the
+    boundary it is supposed to hold at. `FakeProvider.received_question`
+    records exactly what crossed it.
+    """
+    workspace, config, key = await _setup(db_session)
+    await _publish(db_session, workspace)
+    provider = FakeProvider(chunks=["Within 14 days [1]."])
+
+    attempt = await answer(
+        db_session, workspace, key,
+        "refund please, my email is a@b.com and my card is 4111 1111 1111 1111",
+        provider=provider,
+        audit_sessions=_audit_sessions(db_session),
+    )
+    assert attempt.degraded is False
+    [chunk async for chunk in attempt.stream]
+
+    assert provider.received_question is not None
+    assert "a@b.com" not in provider.received_question
+    assert "4111 1111 1111 1111" not in provider.received_question
+    assert "[email]" in provider.received_question
+    assert "[number]" in provider.received_question
+
+
+async def test_a_configured_base_url_skips_redaction(db_session) -> None:
+    """The other half of D6's caller-level guarantee: a workspace that has
+    asserted its own `base_url` gets the question unredacted, on the
+    reasoning that the text never leaves that deployment (see
+    `ai_configs._validate_base_url` for what is, and is not, checked about
+    that assertion)."""
+    workspace, config, key = await _setup(db_session)
+    config.base_url = "https://gateway.internal.example/v1"
+    await db_session.flush()
+    await _publish(db_session, workspace)
+    provider = FakeProvider(chunks=["Within 14 days [1]."])
+
+    attempt = await answer(
+        db_session, workspace, key,
+        "refund please, my email is a@b.com",
+        provider=provider,
+        audit_sessions=_audit_sessions(db_session),
+    )
+    assert attempt.degraded is False
+    [chunk async for chunk in attempt.stream]
+
+    assert provider.received_question == "refund please, my email is a@b.com"
+
+
 async def test_a_provider_failure_mid_stream_is_recorded_and_silent(db_session) -> None:
     workspace, config, key = await _setup(db_session)
     await _publish(db_session, workspace)
