@@ -105,14 +105,26 @@ async def answer(
     model = config.model if config else "claude-opus-5"
 
     async def degrade(reason: str) -> Attempt:
-        await _record(
-            session,
-            workspace.id,
-            widget_key.id,
-            model=model,
-            outcome=AiOutcome.degraded,
-            reason=reason,
-        )
+        """Record the degrade, then hand back the reason.
+
+        On its own session and committed, like the stream's writes, but
+        for a different reason: this one runs inside the handler, where
+        the request's session is still open -- yet ``get_session`` has no
+        commit on exit, so a row merely added to it is rolled back when
+        the request ends. These are the commonest exits by far, and this
+        module's promise that EVERY exit writes exactly one ``AiCall`` row
+        is worth nothing if the deflection table is missing all of them.
+        """
+        async with audit_factory() as audit:
+            await _record(
+                audit,
+                workspace.id,
+                widget_key.id,
+                model=model,
+                outcome=AiOutcome.degraded,
+                reason=reason,
+            )
+            await audit.commit()
         return Attempt(degraded=True, reason=reason)
 
     if config is None:

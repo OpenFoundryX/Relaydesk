@@ -52,7 +52,10 @@ async def test_no_key_degrades_without_calling_anything(db_session) -> None:
     config.api_key = None
     await db_session.flush()
 
-    attempt = await answer(db_session, workspace, key, "how do refunds work")
+    attempt = await answer(
+        db_session, workspace, key, "how do refunds work",
+        audit_sessions=_audit_sessions(db_session),
+    )
 
     assert attempt.degraded is True
     assert attempt.reason == "not_configured"
@@ -64,7 +67,8 @@ async def test_empty_knowledge_base_degrades_without_calling_the_model(db_sessio
     provider = FakeProvider(chunks=["should never run"])
 
     attempt = await answer(
-        db_session, workspace, key, "how do refunds work", provider=provider
+        db_session, workspace, key, "how do refunds work", provider=provider,
+        audit_sessions=_audit_sessions(db_session),
     )
 
     assert attempt.degraded is True
@@ -87,7 +91,10 @@ async def test_exhausted_budget_degrades(db_session) -> None:
     )
     await db_session.flush()
 
-    attempt = await answer(db_session, workspace, key, "anything")
+    attempt = await answer(
+        db_session, workspace, key, "anything",
+        audit_sessions=_audit_sessions(db_session),
+    )
 
     assert attempt.degraded is True
     assert attempt.reason == "over_budget"
@@ -98,7 +105,10 @@ async def test_every_degradation_writes_exactly_one_audit_row(db_session) -> Non
     config.api_key = None
     await db_session.flush()
 
-    await answer(db_session, workspace, key, "how do refunds work")
+    await answer(
+        db_session, workspace, key, "how do refunds work",
+        audit_sessions=_audit_sessions(db_session),
+    )
 
     rows = list(await db_session.scalars(sa.select(AiCall)))
     assert len(rows) == 1
@@ -198,16 +208,25 @@ async def test_the_stream_audit_write_does_not_borrow_the_request_session(
 
     Asserting that structurally is awkward, because a shared-session
     fixture cannot see the difference: both designs leave a visible row.
-    This test uses the fixture's own isolation as the instrument instead.
-    Retrieval must succeed here (hence `_publish`) so the attempt reaches
-    `stream()` rather than degrading beforehand. Called WITHOUT the
-    `audit_sessions` seam, the stream's write opens a real session, which
-    cannot see the workspace this uncommitted transaction just created --
-    so the insert fails its foreign key the moment the stream is consumed.
-    That failure IS the evidence: it can only happen if the write went
-    somewhere other than `db_session`. Revert the fix -- have `stream()`
-    close over `session` again -- and this test's `pytest.raises` would not
-    fire; the row would just land, unremarkably, in `db_session`.
+    This test uses the test harness's own separation as the instrument
+    instead. Retrieval must succeed here (hence `_publish`) so the attempt
+    reaches `stream()` rather than degrading beforehand.
+
+    Called WITHOUT the `audit_sessions` seam, the stream's write goes
+    through the real `async_session_factory`, which is built from
+    `settings.database_url` and therefore connects to the `relaydesk`
+    database -- while this test runs against `relaydesk_test` (see
+    `conftest.TEST_DATABASE`). The workspace `_setup` just created does not
+    exist over there at all, so the insert fails its foreign key the moment
+    the stream is consumed.
+
+    That failure IS the evidence, and it is evidence of exactly one thing:
+    the write did not go through `db_session`. Revert the fix -- have
+    `stream()` close over `session` again -- and `pytest.raises` would not
+    fire; the row would land unremarkably in `db_session`. Note the
+    mechanism is the two DATABASES diverging, not merely two transactions;
+    committing this test's setup would not make the row visible to the
+    other one.
     """
     workspace, config, key = await _setup(db_session)
     await _publish(db_session, workspace)
@@ -220,3 +239,28 @@ async def test_the_stream_audit_write_does_not_borrow_the_request_session(
 
     with pytest.raises(IntegrityError):
         [chunk async for chunk in attempt.stream]
+
+
+async def test_a_degrade_audit_write_does_not_borrow_the_request_session(
+    db_session,
+) -> None:
+    """The same guarantee as the stream's write, for the commonest exits.
+
+    `degrade()` runs inside the handler, where the request's session is
+    still open -- which makes it look safe, and is why this was missed.
+    But `get_session` has no commit on exit, so a row merely added there
+    is rolled back when the request ends. `not_configured`, `over_budget`
+    and `no_sources` are the exits a real deployment hits most, so the
+    deflection table would have been missing precisely the rows it exists
+    to count.
+
+    Pinned the same way as the stream's write, and for the same reason:
+    without this, reverting `degrade()` to the request's session passes
+    every other test in this file. Verified -- it did.
+    """
+    workspace, config, key = await _setup(db_session)
+    config.api_key = None
+    await db_session.flush()
+
+    with pytest.raises(IntegrityError):
+        await answer(db_session, workspace, key, "how do refunds work")
