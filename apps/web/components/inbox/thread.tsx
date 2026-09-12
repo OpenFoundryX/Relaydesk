@@ -1,5 +1,6 @@
 import { Paperclip, TriangleAlert } from "lucide-react";
 
+import { MessageBody } from "@/components/inbox/message-body";
 import type { Conversation, Message } from "@/lib/types";
 import { cn, formatFileSize } from "@/lib/utils";
 
@@ -62,7 +63,7 @@ export function Thread({
                 <p className="mb-1.5 text-[11px] text-ink-500">
                   <span className="font-medium text-ink-700">To</span> {message.to}
                 </p>
-                <p className="whitespace-pre-wrap">{message.body}</p>
+                <MessageBody body={message.body} />
 
                 {message.attachments.length > 0 && (
                   <div className="mt-2 space-y-1">
