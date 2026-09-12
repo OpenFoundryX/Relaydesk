@@ -113,6 +113,60 @@ async def test_reading_does_not_create_a_row(client, db_session) -> None:
     assert await db_session.get(AiConfig, workspace.id) is None
 
 
+async def test_a_non_https_base_url_is_rejected_with_422(client, db_session) -> None:
+    """I2: a plain host or an http:// URL must not reach the Anthropic client.
+
+    Before validation, `AnthropicProvider.__init__` would accept anything
+    here unchecked, and this workspace's API key -- plus, unless `base_url`
+    is also what disables redaction, its visitors' unredacted questions --
+    would be POSTed to whatever the admin typed, in the clear for a
+    non-https value.
+    """
+    workspace = await make_workspace(db_session)
+    headers = await admin_headers(client, db_session, workspace)
+
+    response = await client.put(
+        "/api/ai-config",
+        json={"baseUrl": "gateway.example.com"},
+        headers=headers,
+    )
+
+    assert response.status_code == 422
+    config = await db_session.get(AiConfig, workspace.id)
+    assert config is None or config.base_url is None
+
+
+async def test_an_http_base_url_is_rejected_with_422(client, db_session) -> None:
+    """The clean-422 half of I2, specifically for a plaintext scheme."""
+    workspace = await make_workspace(db_session)
+    headers = await admin_headers(client, db_session, workspace)
+
+    response = await client.put(
+        "/api/ai-config",
+        json={"baseUrl": "http://gateway.example.com"},
+        headers=headers,
+    )
+
+    assert response.status_code == 422
+
+
+async def test_a_well_formed_https_base_url_is_accepted(client, db_session) -> None:
+    """The field must still work for its legitimate use -- a self-hosted or
+    gateway endpoint reachable over https, including one on a private
+    network (this is not rejected -- see `ai_configs._validate_base_url`)."""
+    workspace = await make_workspace(db_session)
+    headers = await admin_headers(client, db_session, workspace)
+
+    response = await client.put(
+        "/api/ai-config",
+        json={"baseUrl": "https://10.0.0.4:8443/v1"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["baseUrl"] == "https://10.0.0.4:8443/v1"
+
+
 async def test_a_short_key_is_not_echoed_back_as_its_own_suffix(
     client, db_session
 ) -> None:

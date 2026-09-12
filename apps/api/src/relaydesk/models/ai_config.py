@@ -31,9 +31,14 @@ class AiConfig(Base, TimestampMixin):
     ``enabled`` is separate from ``api_key`` being present so a workspace
     can switch the feature off without discarding what it configured.
 
-    ``base_url`` set means the workspace is pointing at inference it hosts
-    itself, which is what makes redaction skippable (spec D6): the text
-    never leaves their deployment.
+    ``base_url`` set is read as the admin asserting that this workspace is
+    pointing at inference it hosts itself, which is what makes redaction
+    skippable (spec D6): the text never leaves their deployment. That is a
+    policy the admin asserts, not a property this code verifies -- nothing
+    here can distinguish a private, self-hosted endpoint from an arbitrary
+    third-party host the admin was tricked into typing. ``ai_configs.update``
+    requires the value to be a well-formed absolute ``https`` URL, which
+    rules out a typo or a plaintext endpoint, but not a wrong-but-valid one.
     """
 
     __tablename__ = "ai_configs"

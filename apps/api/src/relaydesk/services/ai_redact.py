@@ -13,8 +13,14 @@ string stays, a duration stays. Only shapes that are almost never anything
 else are replaced.
 
 A caller may skip redaction entirely when the workspace has configured a
-``base_url`` of its own (spec D6): the text never leaves their deployment,
-so redacting it costs answer quality and buys nothing.
+``base_url`` of its own (spec D6), on the reasoning that the text never
+leaves their deployment, so redacting it costs answer quality and buys
+nothing. That reasoning holds only if ``base_url`` really does point at
+infrastructure the workspace controls -- an admin's assertion that
+``ai_configs.update`` checks is a well-formed ``https`` URL, not that it is
+the workspace's own. Nothing in this module, or in ``ai_answers``, can
+verify the second half; the skip is a policy the admin has chosen, not a
+guarantee this code can make on its own.
 
 This implementation uses a token-based scanner to avoid regex backtracking:
 each token is checked independently with bounded, anchored patterns rather

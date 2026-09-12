@@ -240,9 +240,12 @@ async def answer(
     if not sources:
         return await degrade("no_sources")
 
-    # Skipped when the workspace points at inference it hosts itself: the
-    # text never leaves their deployment, and redacting it would cost
-    # answer quality for nothing (spec D6).
+    # Skipped when the admin has asserted (by setting `base_url`) that the
+    # workspace points at inference it hosts itself: the text never leaves
+    # their deployment, and redacting it would cost answer quality for
+    # nothing (spec D6). `ai_configs.update` requires `base_url` to be a
+    # well-formed `https` URL, which is as far as this code can check --
+    # it cannot verify the host really is the workspace's own.
     asked = question if config.base_url else ai_redact.redact(question)
     system = SYSTEM.format(
         workspace=workspace.name, context=ai_retrieval.render_context(sources)
