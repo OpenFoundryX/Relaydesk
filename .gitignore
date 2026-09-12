@@ -17,3 +17,8 @@ build
 
 # TypeScript incremental build cache
 *.tsbuildinfo
+
+# Agent-created git worktrees. These are linked worktrees, not content:
+# committing one would drag a second checkout of the whole tree into the
+# repository. `.superpowers/` needs no entry -- it ships its own.
+.claude/worktrees/
