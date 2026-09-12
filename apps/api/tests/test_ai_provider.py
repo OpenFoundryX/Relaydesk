@@ -180,3 +180,54 @@ async def test_the_real_provider_raises_refused_not_unavailable_on_a_refusal() -
         [chunk async for chunk in provider.complete(
             system="s", question="q", model="claude-opus-5"
         )]
+
+
+async def test_cached_input_tokens_count_towards_the_budget() -> None:
+    """The context is the expensive part, and caching hides it.
+
+    The system block carries `cache_control`, so on a cache hit the SDK
+    reports the system prompt and the retrieved articles under
+    `cache_read_input_tokens` and leaves `input_tokens` holding little more
+    than the question. A real answer over five articles recorded TEN input
+    tokens against a daily ceiling that sums this column.
+
+    Cached tokens are cheaper, not free, and the ceiling counts tokens
+    rather than money.
+    """
+
+    class _FinalMessage:
+        stop_reason = "end_turn"
+        usage = SimpleNamespace(
+            input_tokens=10,
+            output_tokens=138,
+            cache_read_input_tokens=2400,
+            cache_creation_input_tokens=600,
+        )
+
+    class _Stream:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get_final_message(self):
+            return _FinalMessage()
+
+    async def _chunks():
+        yield "Within 14 days [1]."
+
+    stream = _Stream()
+    type(stream).text_stream = property(lambda self: _chunks())
+
+    provider = AnthropicProvider(api_key="sk-test")
+    provider._client = SimpleNamespace(
+        messages=SimpleNamespace(stream=lambda **kwargs: stream)
+    )
+
+    [chunk async for chunk in provider.complete(
+        system="s", question="q", model="claude-opus-5"
+    )]
+
+    assert provider.usage().input_tokens == 3010, "cached context must be counted"
+    assert provider.usage().output_tokens == 138

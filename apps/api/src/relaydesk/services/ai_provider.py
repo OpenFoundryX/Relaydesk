@@ -176,8 +176,25 @@ class AnthropicProvider:
 
         if final.stop_reason == "refusal":
             raise ProviderRefused("refused")
-        self._usage.input_tokens = final.usage.input_tokens
-        self._usage.output_tokens = final.usage.output_tokens
+        # Every input token, not just the uncached ones. The system block
+        # carries `cache_control`, so on a cache hit the SDK reports the
+        # system prompt and the retrieved articles under
+        # `cache_read_input_tokens` and leaves `input_tokens` holding
+        # little more than the question itself. Reading only the latter
+        # made a real answer over five articles record TEN input tokens,
+        # and `ai_budget` sums this column -- so the context, which is the
+        # expensive part, was invisible to the daily ceiling.
+        #
+        # Cached tokens are cheaper, not free, and the budget is a token
+        # ceiling rather than a bill. Counting them keeps it honest in the
+        # direction that matters.
+        usage = final.usage
+        self._usage.input_tokens = (
+            (usage.input_tokens or 0)
+            + (getattr(usage, "cache_read_input_tokens", 0) or 0)
+            + (getattr(usage, "cache_creation_input_tokens", 0) or 0)
+        )
+        self._usage.output_tokens = usage.output_tokens or 0
 
     def usage(self) -> Completion:
         return self._usage
