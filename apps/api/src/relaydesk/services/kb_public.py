@@ -447,7 +447,9 @@ def _disjunctive_tsquery(question: str):
 async def search_any(
     session: AsyncSession, workspace_id: uuid.UUID, question: str, *, limit: int = 5
 ) -> list[KbArticle]:
-    """Published external articles sharing any significant word with ``question``, best first.
+    """Published external articles sharing any significant word with the question.
+
+    Ranked best first.
 
     For ``ai_retrieval.retrieve`` only. ``search()`` above is
     ``kb_articles.search`` with this module's two visibility predicates
