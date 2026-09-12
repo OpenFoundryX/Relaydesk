@@ -138,14 +138,19 @@ export function Panel({
   // Three day-one states, in priority order, exactly as before. An empty
   // knowledge base still opens on `compose` and never mounts a search
   // affordance (spec D7, slice 8) -- that rule is untouched, and it
-  // outranks AI because a model with nothing to ground an answer in cannot
-  // answer either. Otherwise a workspace that has configured AI opens on
-  // the conversation, and one that has not opens on Home's cards exactly
-  // as before.
-  const [homeView, setHomeView] = useState<HomeView>(() => {
-    if (empty) return { name: "compose" };
-    return aiEnabled ? { name: "ask" } : { name: "home" };
-  });
+  // outranks everything else because a model with nothing to ground an
+  // answer in cannot answer either.
+  //
+  // Otherwise: Home. An earlier rule opened a configured workspace
+  // straight into the conversation, which made sense when the conversation
+  // WAS the panel -- but the tab bar hides inside a conversation (it is a
+  // full-height screen with its own way back), so opening there meant a
+  // visitor never saw Home, Help, or the tabs at all. Home now carries
+  // "Ask a question" as its first card, which is one tap and shows the
+  // visitor what else is here.
+  const [homeView, setHomeView] = useState<HomeView>(() =>
+    empty ? { name: "compose" } : { name: "home" },
+  );
 
   // Whether the Help tab is showing a full-height screen
   // of its own -- reading an article, the same way Article used to. Set by

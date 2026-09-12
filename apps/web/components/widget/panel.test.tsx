@@ -73,6 +73,9 @@ describe("Panel", () => {
         aiEnabled
       />,
     );
+    // Home no longer shows it -- the conversation does, once opened.
+    expect(screen.queryByText("Hi! Need a hand?")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Ask a question/ }));
     expect(screen.getByText("Hi! Need a hand?")).toBeTruthy();
   });
 
@@ -230,8 +233,15 @@ describe("Panel deflection events", () => {
 });
 
 describe("the panel's day-one view", () => {
-  it("opens on the conversation when the workspace can answer", () => {
+  it("opens on Home, with the conversation one tap away", () => {
+    // An earlier rule opened a configured workspace straight into the
+    // conversation. The tab bar hides inside one, so that meant a visitor
+    // never saw Home, Help or the tabs at all.
     render(<Panel {...workspace} articleCount={12} aiEnabled />);
+    expect(screen.queryByPlaceholderText("Ask a question")).toBeNull();
+    expect(screen.getByRole("button", { name: "Home" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /Ask a question/ }));
     expect(screen.getByPlaceholderText("Ask a question")).toBeTruthy();
   });
 
@@ -280,8 +290,9 @@ describe("the panel's tab bar", () => {
 
   it("hides the tab bar once a conversation is under way, and restores it going home", async () => {
     render(<Panel {...workspace} articleCount={12} aiEnabled />);
-    // Opens straight on the conversation (day-one rule, above) -- the tab
-    // bar must already be gone, not just after some later transition.
+    // Present on Home, gone the moment a conversation is open.
+    expect(screen.getByRole("button", { name: "Home" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Ask a question/ }));
     expect(screen.queryByRole("button", { name: "Home" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /Talk to a person instead/i }));
@@ -328,10 +339,10 @@ describe("the panel's Home screen", () => {
   });
 
   it("shows Ask a question once back on Home, when AI is configured", async () => {
-    // `aiEnabled` opens straight on the conversation (day-one rule) --
-    // reached back here the same way a real total failure would: no
-    // widget key, so asking anything degrades straight to Home.
+    // Open the conversation from Home, then come back the way a real
+    // total failure would: no widget key, so asking degrades to Home.
     render(<Panel {...workspace} articleCount={12} aiEnabled />);
+    fireEvent.click(screen.getByRole("button", { name: /Ask a question/ }));
     fireEvent.change(screen.getByPlaceholderText("Ask a question"), {
       target: { value: "Hi" },
     });
