@@ -97,6 +97,9 @@ type View =
  * variant, because the frame is cross-origin from the host page and has no
  * other signal for it.
  */
+/** How much larger the panel is drawn on a laptop-sized host page. */
+const PANEL_ZOOM = 1.12;
+
 export function Panel({
   workspaceName,
   monogram,
@@ -255,7 +258,13 @@ export function Panel({
       // scaling it whole keeps type, spacing and hit targets in the
       // proportions they were designed in. `transform: scale` would blur
       // text and leave the layout at the old size; `zoom` re-lays out.
-      style={wide ? { zoom: 1.12 } : undefined}
+      //
+      // The height has to be divided back out. `zoom` scales the element's
+      // own box too, so `h-screen` at 1.12 is 112% of the iframe -- the
+      // header goes off the top and the footer off the bottom. Asking for
+      // 100vh/1.12 and letting zoom multiply it lands exactly on the
+      // viewport.
+      style={wide ? { zoom: PANEL_ZOOM, height: `calc(100vh / ${PANEL_ZOOM})` } : undefined}
       className="motion-reduce:transition-none flex h-screen flex-col bg-white text-ink-900 dark:bg-ink-900 dark:text-ink-50"
     >
       <Header name={displayName} monogram={monogram} onBack={onBack} onClose={close} />

@@ -287,6 +287,12 @@ describe("the panel on a laptop", () => {
     const { container } = render(<Panel {...workspace} articleCount={12} wide />);
     const root = container.querySelector('[role="dialog"]') as HTMLElement;
     expect(root.style.zoom).toBe("1.12");
+    // `zoom` scales the element's own box, so a panel asking for 100vh
+    // would render 112% of the iframe and clip its own header and footer.
+    // The height is divided back out; jsdom normalises the calc, so assert
+    // the property rather than the literal we wrote.
+    expect(root.style.height).toContain("vh");
+    expect(root.style.height).not.toBe("100vh");
   });
 
   it("leaves a phone alone", () => {
@@ -295,5 +301,6 @@ describe("the panel on a laptop", () => {
     const { container } = render(<Panel {...workspace} articleCount={12} />);
     const root = container.querySelector('[role="dialog"]') as HTMLElement;
     expect(root.style.zoom).toBe("");
+    expect(root.style.height).toBe("");
   });
 });
