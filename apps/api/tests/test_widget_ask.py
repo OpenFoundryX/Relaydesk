@@ -2,6 +2,8 @@ import sqlalchemy as sa
 
 from relaydesk.config import get_settings
 from relaydesk.models.ai_call import AiCall
+from relaydesk.models.conversation import Conversation
+from relaydesk.models.message import Message
 from relaydesk.schemas.widget import QUESTION_MAX_CHARS
 from relaydesk.services import widget_keys
 from tests.factories import make_workspace
@@ -78,3 +80,38 @@ async def test_the_hourly_cap_bounds_how_many_questions_are_answered(
     assert count == 2  # The third call never reached `ai_answers.answer`.
 
     get_settings.cache_clear()
+
+
+async def test_a_resolved_question_writes_no_conversation(client, db_session) -> None:
+    """An inbox full of questions the AI answered is a triage problem."""
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
+    await db_session.commit()
+
+    await client.post(f"/api/widget/{key.key}/ask", json={"question": "refund"})
+
+    count = await db_session.scalar(
+        sa.select(sa.func.count()).select_from(Conversation)
+    )
+    assert count == 0
+
+
+async def test_an_escalated_question_carries_its_transcript(client, db_session) -> None:
+    """The agent must see what the visitor was already told."""
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
+    await db_session.commit()
+
+    response = await client.post(
+        f"/api/widget/{key.key}/tickets",
+        data={
+            "email": "wren@lantern.co",
+            "message": "This did not help.",
+            "transcript": "Visitor: how do refunds work\nAssistant: Within 14 days.",
+        },
+    )
+    assert response.status_code == 201
+
+    body = await db_session.scalar(sa.select(Message.body))
+    assert "how do refunds work" in body
+    assert "This did not help." in body

@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 from relaydesk.models.ai_call import AiCall, AiOutcome
 from relaydesk.models.ai_config import AiConfig
-from relaydesk.services.ai_budget import within_budget
+from relaydesk.services.ai_budget import breaker_open, within_budget
 from tests.factories import make_workspace
 
 
@@ -62,3 +62,45 @@ async def test_another_workspace_spend_does_not_count(db_session) -> None:
     await _spend(db_session, two.id, 5000)
 
     assert await within_budget(db_session, config) is True
+
+
+async def test_the_breaker_opens_after_repeated_provider_failures(db_session) -> None:
+    """An outage must not become a retry storm billed to the customer."""
+    workspace = await make_workspace(db_session)
+    for _ in range(5):
+        db_session.add(
+            AiCall(
+                workspace_id=workspace.id,
+                model="claude-opus-5",
+                input_tokens=0,
+                output_tokens=0,
+                cost_micros=0,
+                latency_ms=1,
+                outcome=AiOutcome.degraded,
+                reason="provider_unavailable",
+            )
+        )
+    await db_session.flush()
+
+    assert await breaker_open(db_session, workspace.id) is True
+
+
+async def test_other_degradations_do_not_open_the_breaker(db_session) -> None:
+    """A workspace with no key configured is not an outage."""
+    workspace = await make_workspace(db_session)
+    for _ in range(5):
+        db_session.add(
+            AiCall(
+                workspace_id=workspace.id,
+                model="claude-opus-5",
+                input_tokens=0,
+                output_tokens=0,
+                cost_micros=0,
+                latency_ms=1,
+                outcome=AiOutcome.degraded,
+                reason="not_configured",
+            )
+        )
+    await db_session.flush()
+
+    assert await breaker_open(db_session, workspace.id) is False

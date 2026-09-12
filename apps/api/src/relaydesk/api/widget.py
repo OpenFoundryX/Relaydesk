@@ -39,7 +39,12 @@ from relaydesk.schemas.kb import (
     PublicSearchEntryOut,
     TicketSubmittedOut,
 )
-from relaydesk.schemas.widget import WidgetAskIn, WidgetBootstrapOut, WidgetEventIn
+from relaydesk.schemas.widget import (
+    TRANSCRIPT_MAX_CHARS,
+    WidgetAskIn,
+    WidgetBootstrapOut,
+    WidgetEventIn,
+)
 from relaydesk.services import (
     ai_answers,
     ai_retrieval,
@@ -134,6 +139,7 @@ async def submit(
     name: Annotated[str, Form()] = "",
     subject: Annotated[str, Form()] = "",
     company: Annotated[str, Form()] = "",
+    transcript: Annotated[str, Form()] = "",
     files: Annotated[list[UploadFile] | None, File()] = None,
 ) -> TicketSubmittedOut:
     widget_key = await widget_keys.resolve(session, key)
@@ -190,13 +196,22 @@ async def submit(
     if company.strip():
         return TicketSubmittedOut(received=True)
 
+    # The agent must see what the visitor was already told. Answering a
+    # question the AI has already answered differently is worse than never
+    # having answered it (spec D8). Truncated, not refused -- see
+    # `TRANSCRIPT_MAX_CHARS`.
+    body = message
+    if transcript.strip():
+        clipped = transcript.strip()[-TRANSCRIPT_MAX_CHARS:]
+        body = f"{message}\n\n--- Before contacting support ---\n{clipped}"
+
     await tickets.submit(
         session,
         widget_key.workspace_id,
         email=str(email),
         name=name,
         subject=subject,
-        message=message,
+        message=body,
         attachments=parsed,
     )
     # Required, and easy to miss: `get_session` has no commit-on-exit and

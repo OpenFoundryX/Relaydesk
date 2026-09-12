@@ -48,6 +48,17 @@ function parseEvent(raw: string): { event: string; data: Record<string, unknown>
  * as an "error" -- the route never answers with one (Task 8's contract):
  * a failure always arrives as content, on a 200.
  */
+/** What the visitor has already been told, rendered as the plain-text
+ * transcript the ticket route accepts -- see `apps/api/src/relaydesk/api/
+ * widget.py`'s `submit`. Turns still in flight (the streaming draft) are
+ * not included: this only ever runs from the "Send a message" click,
+ * after a turn has settled into state one way or the other. */
+function transcriptText(turns: Turn[]): string {
+  return turns
+    .map((turn) => `${turn.role === "visitor" ? "Visitor" : "Assistant"}: ${turn.text}`)
+    .join("\n");
+}
+
 export function Ask({
   widgetKey,
   onDegrade,
@@ -55,7 +66,10 @@ export function Ask({
 }: {
   widgetKey: string | undefined;
   onDegrade: () => void;
-  onCompose: () => void;
+  /** Escalating carries the transcript so far (spec D8) -- empty when the
+   * visitor asked nothing before reaching for a human, which leaves the
+   * ticket exactly as it looks today. */
+  onCompose: (transcript: string) => void;
 }) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [typed, setTyped] = useState("");
@@ -198,7 +212,11 @@ export function Ask({
       </form>
 
       <div className="mt-auto pt-2">
-        <WidgetButton type="button" variant="secondary" onClick={onCompose}>
+        <WidgetButton
+          type="button"
+          variant="secondary"
+          onClick={() => onCompose(transcriptText(turns))}
+        >
           Send a message
         </WidgetButton>
       </div>

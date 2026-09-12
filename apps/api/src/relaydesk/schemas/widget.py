@@ -46,3 +46,12 @@ class WidgetAskIn(CamelModel):
     # `transcript` form field on the ticket route instead. A field neither
     # produced nor consumed anywhere is worse than no field: it invites a
     # caller to rely on context that is silently dropped.
+
+
+# The ticket route's `transcript` field is truncated to this many
+# characters, not rejected: a visitor escalating to a human because the AI
+# could not help must never be blocked by the length of their own
+# conversation (spec D8). Truncated from the front, keeping the tail --
+# the exchange immediately before escalation is what the agent most needs
+# to see, and the oldest turns are the safest ones to drop first.
+TRANSCRIPT_MAX_CHARS = 4000

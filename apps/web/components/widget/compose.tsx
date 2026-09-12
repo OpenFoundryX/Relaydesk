@@ -30,6 +30,7 @@ export function Compose({
   onSubmit,
   initialEmail,
   initialName,
+  transcript,
 }: {
   showBack: boolean;
   onBack: () => void;
@@ -44,6 +45,13 @@ export function Compose({
    */
   initialEmail?: string;
   initialName?: string;
+  /**
+   * What the visitor was already told, from Ask's escalate button (spec
+   * D8). Absent or empty -- reached from Home, Results, Article, or Ask
+   * with nothing yet asked -- sends no `transcript` field at all, so the
+   * ticket looks exactly as it does today.
+   */
+  transcript?: string;
 }) {
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -143,6 +151,10 @@ export function Compose({
             className="min-h-24 flex-1 resize-none rounded-md border border-ink-200 bg-white px-3 py-2 text-[13px] text-ink-900 placeholder:text-ink-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 dark:border-ink-700 dark:bg-ink-800 dark:text-white"
           />
         </div>
+
+        {transcript && transcript.trim() !== "" && (
+          <input type="hidden" name="transcript" value={transcript} />
+        )}
 
         {/* The honeypot -- hidden with CSS, not `type="hidden"`, and kept
             out of tab order and screen-reader reach, exactly as the

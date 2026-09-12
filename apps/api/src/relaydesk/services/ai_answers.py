@@ -141,6 +141,9 @@ async def answer(
     if not await ai_budget.within_budget(session, config):
         return await degrade("over_budget")
 
+    if await ai_budget.breaker_open(session, workspace.id):
+        return await degrade("breaker_open")
+
     sources = await ai_retrieval.retrieve(session, workspace.id, question)
     if not sources:
         return await degrade("no_sources")

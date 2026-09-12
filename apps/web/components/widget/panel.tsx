@@ -126,6 +126,18 @@ export function Panel({
     return aiEnabled ? { name: "ask" } : { name: "home" };
   });
 
+  // Set only by Ask's escalate button, from the turns already on screen
+  // (task 11, spec D8): the agent reading the resulting ticket must see
+  // what the visitor was already told, not just what they typed into
+  // Compose. Reset by every other route into Compose, so a transcript
+  // from an earlier, abandoned conversation can never ride along on a
+  // ticket that has nothing to do with it.
+  const [transcript, setTranscript] = useState("");
+  const compose = (nextTranscript = "") => {
+    setTranscript(nextTranscript);
+    setView({ name: "compose" });
+  };
+
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Minted once, for the life of the panel -- not persisted, not sent
@@ -241,7 +253,7 @@ export function Panel({
               recordEvent("searched");
               setView({ name: "results", query });
             }}
-            onCompose={() => setView({ name: "compose" })}
+            onCompose={() => compose()}
           />
         )}
         {view.name === "results" && (
@@ -253,7 +265,7 @@ export function Panel({
               recordEvent("read");
               setView({ name: "article", path });
             }}
-            onCompose={() => setView({ name: "compose" })}
+            onCompose={() => compose()}
           />
         )}
         {view.name === "article" && (
@@ -261,7 +273,7 @@ export function Panel({
             key={view.path}
             widgetKey={widgetKey}
             path={view.path}
-            onCompose={() => setView({ name: "compose" })}
+            onCompose={() => compose()}
           />
         )}
         {view.name === "compose" && (
@@ -275,13 +287,14 @@ export function Panel({
             onSubmit={onSubmit}
             initialEmail={email}
             initialName={name}
+            transcript={transcript}
           />
         )}
         {view.name === "ask" && (
           <Ask
             widgetKey={widgetKey}
             onDegrade={() => setView({ name: "home" })}
-            onCompose={() => setView({ name: "compose" })}
+            onCompose={compose}
           />
         )}
         {view.name === "sent" && <Sent onHome={goHome} />}
