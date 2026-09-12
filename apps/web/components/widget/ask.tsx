@@ -30,6 +30,7 @@ type Turn =
 type Escalation =
   | { stage: "closed" }
   | { stage: "offer"; question: string }
+  | { stage: "issue" }
   | { stage: "email"; question: string }
   | { stage: "name"; question: string; email: string }
   | { stage: "filing"; question: string; email: string; name: string }
@@ -164,6 +165,7 @@ export function Ask({
   // Follow the conversation as it grows, the way a messenger does. Without
   // this a streaming answer runs off the bottom of a short panel and the
   // visitor watches a static first line while the rest arrives unseen.
+  const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const node = scrollRef.current;
@@ -333,6 +335,31 @@ export function Ask({
     setEscalation({ stage: "closed" });
   }
 
+  /** "Create a support ticket", chosen before anything was asked. There is
+   *  no question to attach yet, so collect one -- the same field the bot
+   *  would otherwise have inferred from what the visitor asked. */
+  function startTicket() {
+    appendTurn({
+      role: "assistant",
+      text: "Of course. What's the problem? A sentence or two is plenty — I'll pass it to the team.",
+      citations: [],
+    });
+    setEscalation({ stage: "issue" });
+  }
+
+  /** The composer's reply while `escalation.stage === "issue"`: the
+   *  problem itself, which becomes the ticket's message. */
+  function submitIssue(raw: string) {
+    if (escalation.stage !== "issue") return;
+    appendTurn({ role: "visitor", text: raw });
+    appendTurn({
+      role: "assistant",
+      text: "Thanks. What's the best email address to reach you on?",
+      citations: [],
+    });
+    setEscalation({ stage: "email", question: raw });
+  }
+
   // The composer's reply while `escalation.stage === "email"`. A
   // not-quite-an-address reply reprompts rather than filing anything --
   // the ticket would only bounce back from the API's own `EmailStr`
@@ -439,6 +466,10 @@ export function Ask({
     if (!text || busy) return;
     setTyped("");
 
+    if (escalation.stage === "issue") {
+      submitIssue(text);
+      return;
+    }
     if (escalation.stage === "email") {
       submitEmail(text);
       return;
@@ -463,6 +494,41 @@ export function Ask({
         <Bubble from="assistant">
           {greeting?.trim() || "Hi! Ask a question and I'll answer from our help articles."}
         </Bubble>
+
+        {/* Both ways in, offered upfront. A visitor who already knows they
+            want a person should not have to ask the bot first and wait to
+            be turned down, and one who wants an answer should not have to
+            guess that typing is allowed. Shown only on a fresh
+            conversation -- once either has been taken, the conversation
+            itself is the interface. */}
+        {turns.length === 0 && escalation.stage === "closed" && (
+          <div className="flex flex-col gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => inputRef.current?.focus()}
+              className="rounded-xl border border-ink-200 bg-white px-3.5 py-2.5 text-left text-[13px] transition-colors hover:border-ink-300 hover:bg-ink-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 dark:border-ink-700 dark:bg-ink-800 dark:hover:border-ink-600"
+            >
+              <span className="block font-medium text-ink-900 dark:text-white">
+                Ask a question
+              </span>
+              <span className="block text-[12px] text-ink-500 dark:text-ink-400">
+                Answered from our help articles, with links
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={startTicket}
+              className="rounded-xl border border-ink-200 bg-white px-3.5 py-2.5 text-left text-[13px] transition-colors hover:border-ink-300 hover:bg-ink-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 dark:border-ink-700 dark:bg-ink-800 dark:hover:border-ink-600"
+            >
+              <span className="block font-medium text-ink-900 dark:text-white">
+                Create a support ticket
+              </span>
+              <span className="block text-[12px] text-ink-500 dark:text-ink-400">
+                Goes straight to the team, no bot in the way
+              </span>
+            </button>
+          </div>
+        )}
 
         {turns.map((turn, index) =>
           turn.role === "visitor" ? (
@@ -577,6 +643,7 @@ export function Ask({
         </label>
         <input
           id="widget-ask"
+          ref={inputRef}
           type="text"
           value={typed}
           onChange={(event) => setTyped(event.target.value)}

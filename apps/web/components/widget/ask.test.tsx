@@ -192,7 +192,7 @@ describe("Ask escalation offer", () => {
     await reply("Ada Lovelace");
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    const sent = onSubmit.mock.calls[0][0] as FormData;
+    const [sent] = onSubmit.mock.calls[0] as unknown as [FormData];
     expect(sent.get("email")).toBe("ada@example.com");
     expect(sent.get("name")).toBe("Ada Lovelace");
     // The ticket's message is the original unanswered question, not the
@@ -222,7 +222,7 @@ describe("Ask escalation offer", () => {
     fireEvent.click(screen.getByRole("button", { name: "Skip" }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    const sent = onSubmit.mock.calls[0][0] as FormData;
+    const [sent] = onSubmit.mock.calls[0] as unknown as [FormData];
     expect(sent.get("name")).toBe("");
   });
 
@@ -309,7 +309,8 @@ describe("Ask, in conversation", () => {
     await askQuestion("What about annually?");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 
-    const second = JSON.parse(fetchMock.mock.calls[1][1].body as string);
+    const [, init] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+    const second = JSON.parse(init.body as string);
     expect(second.question).toBe("What about annually?");
     expect(second.history).toEqual([
       { role: "visitor", text: "How do refunds work?" },
@@ -339,6 +340,58 @@ describe("Ask, in conversation", () => {
 
     await waitFor(() =>
       expect(screen.getByText(/would you like me to pass this to the team/i)).toBeTruthy(),
+    );
+  });
+});
+
+describe("Ask, opening choices", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("offers both ways in before anything is asked", () => {
+    render(<Ask widgetKey="rdw_test" onDegrade={() => {}} onCompose={() => {}} />);
+    expect(screen.getByRole("button", { name: /Ask a question/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Create a support ticket/ })).toBeTruthy();
+  });
+
+  it("files a ticket without ever asking the bot", async () => {
+    // Someone who already knows they want a person should not have to ask
+    // the bot first and wait to be turned down.
+    const onSubmit = vi.fn(async () => ({ ok: true }) as const);
+    render(
+      <Ask
+        widgetKey="rdw_test"
+        onDegrade={() => {}}
+        onCompose={() => {}}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Create a support ticket/ }));
+    await reply("The export button does nothing");
+    await reply("ada@example.com");
+    await reply("Ada");
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const [sent] = onSubmit.mock.calls[0] as unknown as [FormData];
+    expect(sent.get("email")).toBe("ada@example.com");
+    expect(sent.get("message")).toBe("The export button does nothing");
+  });
+
+  it("hides the choices once the conversation starts", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockAskFetch([
+        { event: "text", data: { text: "Here you go." } },
+        { event: "done", data: { outcome: "answered", citations: [] } },
+      ]),
+    );
+    render(<Ask widgetKey="rdw_test" onDegrade={() => {}} onCompose={() => {}} />);
+    await askQuestion("How do refunds work?");
+
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /Create a support ticket/ })).toBeNull(),
     );
   });
 });
