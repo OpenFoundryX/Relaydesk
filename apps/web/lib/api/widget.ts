@@ -105,8 +105,26 @@ export interface WidgetArticle extends WidgetArticleSummary {
   author: WidgetAuthor | null;
 }
 
+/** One step of the collections above an article. Name to print (unused by
+ * the widget today) and slug to build a `kb/collections` request -- see
+ * `PublicCrumb` in `lib/api/public.ts` for the same shape, one door over. */
+export interface WidgetCrumb {
+  name: string;
+  slug: string;
+}
+
+/** An article plus where it sits, as `getWidgetArticle` resolves it. */
+export interface WidgetArticlePage {
+  article: WidgetArticle;
+  /** The categories above it, nearest last. Empty for an article filed at
+   * the knowledge base's own root. */
+  ancestors: WidgetCrumb[];
+}
+
 /**
- * `GET /widget/{key}/kb/{path}`, resolved to the article it names.
+ * `GET /widget/{key}/kb/{path}`, resolved to the article it names, its
+ * collections included -- `article.tsx` needs the nearest one to find the
+ * article's related reading.
  *
  * `null` on anything that is not a live article: unknown path, a category
  * (the widget never browses collections, only opens articles a search
@@ -116,17 +134,20 @@ export interface WidgetArticle extends WidgetArticleSummary {
 export async function getWidgetArticle(
   key: string,
   path: string,
-): Promise<WidgetArticle | null> {
+): Promise<WidgetArticlePage | null> {
   try {
     // Encoded per segment, not as one string -- `path` is slash-joined
     // ("billing/refunds") and the API's catch-all expects those slashes
     // intact. See `getPublicNode` in `lib/api/public.ts` for the same idiom.
     const encoded = path.split("/").map(encodeURIComponent).join("/");
-    const node = await apiFetch<{ kind: "category" | "article"; article?: WidgetArticle }>(
-      `/widget/${encodeURIComponent(key)}/kb/${encoded}`,
-      { auth: false },
-    );
-    return node.kind === "article" && node.article ? node.article : null;
+    const node = await apiFetch<{
+      kind: "category" | "article";
+      article?: WidgetArticle;
+      ancestors?: WidgetCrumb[];
+    }>(`/widget/${encodeURIComponent(key)}/kb/${encoded}`, { auth: false });
+    return node.kind === "article" && node.article
+      ? { article: node.article, ancestors: node.ancestors ?? [] }
+      : null;
   } catch (error) {
     if (error instanceof ApiError && error.status === 404) return null;
     throw error;

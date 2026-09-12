@@ -67,25 +67,35 @@ export function Help({
   onEvent?: (kind: "searched" | "read") => void;
   /**
    * Whether this tab is showing a full-height screen -- reading an
-   * article. The panel hides the tab bar and asks the loader to grow when
-   * it is, the same as it does for a conversation: both are screens where
-   * a visitor is reading rather than choosing.
+   * article -- and, while it is, that article's own title. The panel
+   * hides the tab bar and asks the loader to grow on the first, the same
+   * as it does for a conversation: both are screens where a visitor is
+   * reading rather than choosing. It puts the second in its own header in
+   * place of the workspace name, the way Intercom's Messenger does for an
+   * open article. One callback rather than two: both describe the same
+   * screen, and a panel juggling them separately could show one without
+   * the other in a render that lands between the two calls.
    */
-  onFullScreenChange?: (full: boolean) => void;
+  onFullScreenChange?: (full: boolean, title?: string) => void;
 }) {
   const [typed, setTyped] = useState("");
   // Committed only on submit, same as Home/Results (spec D8: search runs
   // on submit, not per keystroke) -- typing alone never fires a request.
   const [query, setQuery] = useState("");
   const [view, setView] = useState<View>({ name: "browse" });
+  // The open article's own title, reported by `Article` itself once it has
+  // loaded (or `null` before then, or on failure) -- this component has no
+  // way to know it any sooner, since the article is fetched inside `Article`,
+  // not here.
+  const [articleTitle, setArticleTitle] = useState<string | null>(null);
 
   // Reported rather than derived by the panel: only this component knows
   // which of its own screens is showing, and a panel guessing from the
   // outside would be wrong the moment Help grows another screen.
   const full = view.name === "article";
   useEffect(() => {
-    onFullScreenChange?.(full);
-  }, [full, onFullScreenChange]);
+    onFullScreenChange?.(full, full && articleTitle ? articleTitle : undefined);
+  }, [full, articleTitle, onFullScreenChange]);
 
   function submitSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -173,7 +183,21 @@ export function Help({
           <div className="px-4 pt-6">
             <BackButton onClick={() => setView(view.back)} />
           </div>
-          <Article key={view.path} widgetKey={widgetKey} path={view.path} onCompose={onCompose} />
+          <Article
+            key={view.path}
+            widgetKey={widgetKey}
+            path={view.path}
+            onCompose={onCompose}
+            onOpen={(path) => {
+              onEvent?.("read");
+              // A lateral move to another article in the same collection,
+              // not a drill deeper: its own back control returns wherever
+              // this one's did, exactly like opening it fresh from Results
+              // or a collection's own list would have.
+              setView({ name: "article", path, back: view.back });
+            }}
+            onTitleChange={setArticleTitle}
+          />
         </div>
       )}
     </div>

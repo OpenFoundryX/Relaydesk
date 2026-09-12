@@ -152,12 +152,12 @@ export function Panel({
     empty ? { name: "compose" } : { name: "home" },
   );
 
-  // Whether the Help tab is showing a full-height screen
-  // of its own -- reading an article, the same way Article used to. Set by
-  // nothing today (the placeholder never calls it), but wired through so
-  // the real Help component has a working `onFullScreenChange` the moment
-  // it lands, instead of needing another round trip through panel.tsx.
+  // Whether the Help tab is showing a full-height screen of its own --
+  // reading an article, the same way Article used to -- and, while it is,
+  // that article's own title, carried into the header below in place of
+  // the workspace name (the way Intercom's Messenger does it).
   const [helpFullScreen, setHelpFullScreen] = useState(false);
+  const [helpArticleTitle, setHelpArticleTitle] = useState<string | undefined>(undefined);
 
   // Set only by Ask's escalate button, from the turns already on screen
   // (task 11, spec D8): the agent reading the resulting ticket must see
@@ -329,7 +329,12 @@ export function Panel({
       className="motion-reduce:transition-none flex h-screen flex-col bg-white text-ink-900 dark:bg-ink-900 dark:text-ink-50"
     >
       <Header
-        name={displayName}
+        // The open article's own title while one is showing, exactly the
+        // way Intercom's Messenger swaps its header for the article's own
+        // -- `helpArticleTitle` is only ever set while `helpFullScreen` is
+        // true (see `onFullScreenChange` above), so this needs no separate
+        // guard on the tab itself.
+        name={helpArticleTitle ?? displayName}
         monogram={monogram}
         // A conversation hides the tab bar, so without this there is no
         // way back to Home short of the answer failing. Compose and Sent
@@ -395,7 +400,10 @@ export function Panel({
             widgetKey={widgetKey}
             onCompose={() => setTab("home")}
             onEvent={recordEvent}
-            onFullScreenChange={setHelpFullScreen}
+            onFullScreenChange={(full, title) => {
+              setHelpFullScreen(full);
+              setHelpArticleTitle(title);
+            }}
           />
         </div>
       </div>

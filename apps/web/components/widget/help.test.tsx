@@ -47,6 +47,14 @@ const REFUND_ARTICLE = {
   author: null,
 };
 
+// `/widget/kb/article` answers with the article's own ancestors alongside
+// it (see `getWidgetArticle`), not the article on its own -- Article reads
+// the nearest one to find its "Related articles".
+const REFUND_ARTICLE_PAGE = {
+  article: REFUND_ARTICLE,
+  ancestors: [{ name: "Billing", slug: "billing" }],
+};
+
 /** Routes a stubbed `fetch` by the request URL, the way each of Help's
  * three reads (collections, a collection's articles, search) actually
  * differ from one another -- by path, not by anything else. */
@@ -125,7 +133,7 @@ describe("Help, browsing collections", () => {
       vi.fn(async (input: string) => {
         const url = new URL(input, "http://panel.test");
         if (url.pathname === "/widget/kb/article") {
-          return new Response(JSON.stringify(REFUND_ARTICLE), { status: 200 });
+          return new Response(JSON.stringify(REFUND_ARTICLE_PAGE), { status: 200 });
         }
         if (url.searchParams.get("path") === "billing") {
           return new Response(JSON.stringify(BILLING_ARTICLES), { status: 200 });
@@ -223,7 +231,7 @@ describe("Help, searching", () => {
       vi.fn(async (input: string) => {
         const url = new URL(input, "http://panel.test");
         if (url.pathname === "/widget/kb/search") return new Response(JSON.stringify([REFUND_ARTICLE]), { status: 200 });
-        if (url.pathname === "/widget/kb/article") return new Response(JSON.stringify(REFUND_ARTICLE), { status: 200 });
+        if (url.pathname === "/widget/kb/article") return new Response(JSON.stringify(REFUND_ARTICLE_PAGE), { status: 200 });
         return new Response(JSON.stringify(COLLECTIONS), { status: 200 });
       }),
     );
@@ -324,39 +332,66 @@ describe("Help, asking for room to read", () => {
     vi.restoreAllMocks();
   });
 
-  it("reports full-height while an article is open, and not before or after", async () => {
+  it("reports full-height while an article is open, and not before or after, carrying the article's own title once it loads", async () => {
     // The panel hides the tab bar and asks the loader to grow on this
-    // signal. Only Help knows which of its own screens is showing, so a
-    // panel deriving it from the outside would be wrong the moment Help
-    // grows another screen.
+    // signal, and swaps its header for the article's own title -- Only
+    // Help knows which of its own screens is showing, and only `Article`
+    // knows the title once it has loaded, so a panel deriving either from
+    // the outside would be wrong the moment Help (or Article) changes.
+    //
+    // This used to assert only the boolean; the callback grew a second,
+    // optional argument (task 5) once the panel header needed a way to
+    // learn the open article's title, and this is the one place that
+    // signal is proven to reach a caller end to end.
     const onFullScreenChange = vi.fn();
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (url: string) =>
-        !url.includes("path=")
-          ? new Response(
-              JSON.stringify([
-                {
-                  id: "c",
-                  name: "Billing",
-                  slug: "billing",
-                  description: "",
-                  icon: "",
-                  articleCount: 1,
-                },
-              ]),
-              { status: 200 },
-            )
-          : new Response(
-              JSON.stringify({
-                collection: { id: "c", name: "Billing", slug: "billing" },
-                articles: [
-                  { id: "a", title: "Refunds", slug: "refunds", excerpt: "", path: "billing/refunds" },
-                ],
-              }),
-              { status: 200 },
-            ),
-      ),
+      vi.fn(async (input: string) => {
+        const url = new URL(input, "http://panel.test");
+        if (url.pathname === "/widget/kb/article") {
+          return new Response(
+            JSON.stringify({
+              article: {
+                id: "a",
+                title: "Refunds",
+                slug: "refunds",
+                excerpt: "",
+                path: "billing/refunds",
+                doc: { type: "doc", content: [] },
+                publishedAt: null,
+                updatedAt: "2026-01-01T00:00:00Z",
+                author: null,
+              },
+              ancestors: [{ name: "Billing", slug: "billing" }],
+            }),
+            { status: 200 },
+          );
+        }
+        if (!url.searchParams.get("path")) {
+          return new Response(
+            JSON.stringify([
+              {
+                id: "c",
+                name: "Billing",
+                slug: "billing",
+                description: "",
+                icon: "",
+                articleCount: 1,
+              },
+            ]),
+            { status: 200 },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            collection: { id: "c", name: "Billing", slug: "billing" },
+            articles: [
+              { id: "a", title: "Refunds", slug: "refunds", excerpt: "", path: "billing/refunds" },
+            ],
+          }),
+          { status: 200 },
+        );
+      }),
     );
 
     render(
@@ -367,12 +402,15 @@ describe("Help, asking for room to read", () => {
       />,
     );
 
-    // Browsing is not full-height.
-    await waitFor(() => expect(onFullScreenChange).toHaveBeenCalledWith(false));
+    // Browsing is not full-height, and carries no title.
+    await waitFor(() => expect(onFullScreenChange).toHaveBeenCalledWith(false, undefined));
 
     fireEvent.click(await screen.findByText("Billing"));
     fireEvent.click(await screen.findByText("Refunds"));
 
-    await waitFor(() => expect(onFullScreenChange).toHaveBeenCalledWith(true));
+    // Full-height fires immediately, before the article's title is known.
+    await waitFor(() => expect(onFullScreenChange).toHaveBeenCalledWith(true, undefined));
+    // The title follows once `Article` has loaded it.
+    await waitFor(() => expect(onFullScreenChange).toHaveBeenCalledWith(true, "Refunds"));
   });
 });
