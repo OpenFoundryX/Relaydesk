@@ -22,7 +22,7 @@ from collections.abc import AsyncIterator
 from datetime import timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, Request, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import EmailStr
 
@@ -104,14 +104,42 @@ async def bootstrap(key: str, session: DbSession) -> WidgetBootstrapOut:
     )
 
 
+async def _kb_read_allowed(session: DbSession, request: Request) -> None:
+    """Cap anonymous knowledge-base reads per address.
+
+    Every write on this router is capped and none of the reads were, on a
+    door whose key sits in any customer's page source. Per address rather
+    than per key: a key lifted from a page is usable by anyone, so a
+    per-key cap alone would let one caller spend a whole workspace's
+    allowance.
+
+    Raises rather than degrading. Unlike `ask` there is no lesser answer
+    to fall back to -- the list of articles is the whole response.
+    """
+    within = await ratelimit.check(
+        session,
+        "widget_kb_ip",
+        client_ip.resolve(request),
+        limit=get_settings().widget_kb_ip_hourly_cap,
+        window=timedelta(hours=1),
+    )
+    if not within:
+        raise HTTPException(status_code=429, detail="Too many requests")
+
+
 @router.get("/{key}/kb", response_model=list[PublicCollectionOut])
-async def kb_index(key: str, session: DbSession) -> list[PublicCollectionOut]:
+async def kb_index(
+    key: str, session: DbSession, request: Request
+) -> list[PublicCollectionOut]:
+    await _kb_read_allowed(session, request)
     widget_key = await widget_keys.resolve(session, key)
     return await public.read_kb_index(slug=widget_key.workspace.slug, session=session)
 
 
 @router.get("/{key}/kb/search/index", response_model=list[PublicSearchEntryOut])
-async def kb_search_index(key: str, session: DbSession) -> list[PublicSearchEntryOut]:
+async def kb_search_index(
+    key: str, session: DbSession, request: Request
+) -> list[PublicSearchEntryOut]:
     """The whole searchable set, for scoring in the browser.
 
     Unused by the frame today: D8 reversed an earlier draft of that
@@ -125,6 +153,7 @@ async def kb_search_index(key: str, session: DbSession) -> list[PublicSearchEntr
     new either way -- every entry is a published, externally-scoped article
     already served in full on the public help site.
     """
+    await _kb_read_allowed(session, request)
     widget_key = await widget_keys.resolve(session, key)
     return await public.read_kb_search_index(
         slug=widget_key.workspace.slug, session=session
@@ -133,9 +162,10 @@ async def kb_search_index(key: str, session: DbSession) -> list[PublicSearchEntr
 
 @router.get("/{key}/kb/search", response_model=list[PublicArticleSummary])
 async def kb_search(
-    key: str, session: DbSession, q: str = ""
+    key: str, session: DbSession, request: Request, q: str = ""
 ) -> list[PublicArticleSummary]:
     """Server-side search, for indexes too large to ship whole (spec D8)."""
+    await _kb_read_allowed(session, request)
     widget_key = await widget_keys.resolve(session, key)
     return await public.search_kb(slug=widget_key.workspace.slug, session=session, q=q)
 
@@ -461,7 +491,10 @@ def _degraded(reason: str) -> StreamingResponse:
 # Declared last: `{path:path}` matches anything, including the fixed
 # segments above, so moving it up silently 404s them as missing articles.
 @router.get("/{key}/kb/{path:path}", response_model=PublicNodeOut)
-async def kb_node(key: str, path: str, session: DbSession) -> PublicNodeOut:
+async def kb_node(
+    key: str, path: str, session: DbSession, request: Request
+) -> PublicNodeOut:
+    await _kb_read_allowed(session, request)
     widget_key = await widget_keys.resolve(session, key)
     return await public.read_kb_path(
         slug=widget_key.workspace.slug, path=path, session=session

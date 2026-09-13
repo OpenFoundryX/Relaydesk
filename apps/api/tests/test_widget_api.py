@@ -1,3 +1,4 @@
+from relaydesk.config import get_settings
 from relaydesk.services import widget_keys
 from tests.factories import make_workspace
 
@@ -51,3 +52,34 @@ async def test_embed_policy_answers_none_for_an_unknown_key(client, db_session):
     response = await client.get("/api/widget/rdw_" + "0" * 32 + "/embed-policy")
     assert response.status_code == 200
     assert response.text == "frame-ancestors 'none'"
+
+
+async def test_knowledge_base_reads_are_capped_per_address(
+    client, db_session, monkeypatch
+) -> None:
+    """Every write on this router has been capped since it was written and
+    none of the reads were, on a door addressed only by a key that sits in
+    any customer's page source.
+
+    Per address rather than per key: a key lifted from a page is usable by
+    anyone, so a per-key cap alone lets one caller spend a whole
+    workspace's allowance -- the same reasoning `ask` already applies.
+    """
+    monkeypatch.setenv("WIDGET_KB_IP_HOURLY_CAP", "2")
+    get_settings.cache_clear()
+
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
+    await db_session.commit()
+
+    first = await client.get(f"/api/widget/{key.key}/kb")
+    second = await client.get(f"/api/widget/{key.key}/kb")
+    third = await client.get(f"/api/widget/{key.key}/kb")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    # Refused outright, not degraded: a list of articles is the whole
+    # response, so there is no lesser answer to fall back to.
+    assert third.status_code == 429
+
+    get_settings.cache_clear()

@@ -102,6 +102,13 @@ class Settings(BaseSettings):
     # still giving one visitor room for a real back-and-forth (a handful of
     # follow-up questions in one sitting) without tripping it.
     widget_ask_ip_hourly_cap: int = 8
+    # The knowledge-base reads a panel makes: the collections list, the
+    # search index, a search, and resolving a path. Anonymous, addressed
+    # only by a publishable key, and generous -- a visitor browsing a help
+    # centre makes a lot of these, and the ceiling is here to stop a
+    # script, not a reader. The writes on this router have had caps since
+    # they were written; the reads never did.
+    widget_kb_ip_hourly_cap: int = 300
     ticket_message_max_chars: int = 10000
     ticket_attachment_max_count: int = 5
 
