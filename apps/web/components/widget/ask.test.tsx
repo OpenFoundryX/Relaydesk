@@ -23,6 +23,17 @@ function mockAskFetch(events: { event: string; data: unknown }[]) {
   return vi.fn(async () => new Response(sseStream(events), { status: 200 }));
 }
 
+/** A different reply per call, for conversations whose outcomes differ --
+ *  the last script repeats once the list runs out. */
+function mockAskSequence(scripts: { event: string; data: unknown }[][]) {
+  let call = 0;
+  return vi.fn(async () => {
+    const events = scripts[Math.min(call, scripts.length - 1)];
+    call += 1;
+    return new Response(sseStream(events), { status: 200 });
+  });
+}
+
 async function askQuestion(question: string) {
   fireEvent.change(screen.getByPlaceholderText("Ask a question"), {
     target: { value: question },
@@ -392,28 +403,34 @@ describe("Ask, in conversation", () => {
 
   it("counts answers, not the bot's own escalation prompts", async () => {
     // OFFER_AFTER_ANSWERS is about a visitor who has been at this a while.
-    // Counting `collecting` turns -- which arrive three or four at a time
-    // from one escalation -- reaches the threshold on a visitor who has
-    // had a single real answer, and tells them they have been at it a
-    // while when they have not.
+    // One escalation writes three or four assistant turns, so counting
+    // them reached the threshold on a visitor who had had a single real
+    // answer, and told them they had been at it a while when they had not.
+    //
+    // The count only runs on an `answered` outcome, so the conversation
+    // has to get there: a refusal opens the offer (without marking it
+    // offered), the visitor declines -- two `collecting` turns -- and then
+    // one question lands. Two real answers, three assistant turns.
     vi.stubGlobal(
       "fetch",
-      mockAskFetch([
-        { event: "text", data: { text: "I couldn't find that." } },
-        { event: "done", data: { outcome: "refused", citations: [] } },
+      mockAskSequence([
+        [
+          { event: "text", data: { text: "no idea" } },
+          { event: "done", data: { outcome: "refused", citations: [] } },
+        ],
+        [
+          { event: "text", data: { text: "Yes, we ship there." } },
+          { event: "done", data: { outcome: "answered", citations: [] } },
+        ],
       ]),
     );
 
     render(<Ask widgetKey="rdw_test" onDegrade={() => {}} onCompose={() => {}} />);
-    await askQuestion("one");
+    await askQuestion("do you ship to Berlin?");
     fireEvent.click(await screen.findByRole("button", { name: "No" }));
-    await askQuestion("two");
+    await askQuestion("what about Vienna?");
 
-    // Two refusals on screen: `refused` swaps the streamed text for its
-    // own line, so that is what to count.
-    await waitFor(() =>
-      expect(screen.getAllByText(/I couldn't find an answer for that/i).length).toBe(2),
-    );
+    await waitFor(() => expect(screen.getByText("Yes, we ship there.")).toBeTruthy());
     expect(screen.queryByText(/we've been at this a little while/i)).toBeNull();
   });
 });
