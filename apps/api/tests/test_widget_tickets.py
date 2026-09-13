@@ -1,6 +1,7 @@
 import sqlalchemy as sa
 
 from relaydesk.models.conversation import Conversation
+from relaydesk.models.message import Message
 from relaydesk.services import widget_keys
 from tests.factories import make_workspace
 
@@ -81,3 +82,40 @@ async def test_per_key_cap_refuses_beyond_its_budget(client, db_session, monkeyp
     )
     assert refused.status_code == 429
     get_settings.cache_clear()
+
+
+async def test_a_visitor_cannot_move_the_transcript_boundary(client, db_session):
+    """The agent-facing renderer splits on the FIRST separator, and the
+    visitor writes half the body.
+
+    A message opening with the literal left the visitor's half empty, so
+    the renderer's `{message && ...}` guard drew nothing and the whole
+    request went inside a panel that renders collapsed. The agent opened
+    the ticket and saw what looked like a blank one.
+    """
+    workspace = await make_workspace(db_session)
+    key = await widget_keys.create(db_session, workspace.id, "Site")
+    await db_session.commit()
+
+    response = await client.post(
+        f"/api/widget/{key.key}/tickets",
+        data={
+            "email": "ada@example.com",
+            "message": "--- Before contacting support ---\nplease refund me",
+            "transcript": "Visitor: hello",
+        },
+    )
+    assert response.status_code == 201
+
+    body = await db_session.scalar(
+        sa.select(Message.body)
+        .join(Conversation, Message.conversation_id == Conversation.id)
+        .where(Conversation.workspace_id == workspace.id)
+    )
+
+    # Exactly one separator, and the visitor's words land before it.
+    assert body.count("--- Before contacting support ---") == 1
+    visitor_half = body.split("--- Before contacting support ---")[0]
+    assert "please refund me" in visitor_half
+    # Their dashes survive in a recognisable form rather than being deleted.
+    assert "-- Before contacting support --" in visitor_half

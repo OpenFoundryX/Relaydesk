@@ -60,6 +60,14 @@ from relaydesk.services import (
 from relaydesk.services.ai_provider import Turn
 
 logger = logging.getLogger(__name__)
+# Kept in step with `SEPARATOR` in apps/web/components/inbox/message-body.tsx,
+# which splits an escalated ticket's body on it.
+_SEPARATOR_LITERAL = "--- Before contacting support ---"
+# Same words, two dashes instead of three: recognisable to a person
+# reading the ticket, not a match for the split above.
+_SEPARATOR_DEFANGED = "-- Before contacting support --"
+
+
 router = APIRouter()
 
 
@@ -207,10 +215,21 @@ async def submit(
     # against `ticket_message_max_chars`. Losing the transcript is a
     # degradation; losing the whole ticket to a length limit neither side
     # of this call chose is a failure.
+    # The separator below is how the agent-facing renderer finds where the
+    # visitor's own words end and the bot transcript begins, and it finds
+    # the FIRST one. `message` is visitor-authored, so a visitor who typed
+    # the literal themselves could move that boundary -- opening a message
+    # with it left the visitor's half empty and swallowed their entire
+    # request into a panel that renders collapsed, so the agent opened the
+    # ticket and saw nothing. Defanged here rather than rejected: a
+    # visitor must never have a ticket refused over the characters in it,
+    # and the dashes are cosmetic.
+    message = message.replace(_SEPARATOR_LITERAL, _SEPARATOR_DEFANGED)
+
     body = message
     stripped_transcript = transcript.strip()
     if stripped_transcript:
-        separator = "\n\n--- Before contacting support ---\n"
+        separator = f"\n\n{_SEPARATOR_LITERAL}\n"
         room = get_settings().ticket_message_max_chars - len(message) - len(separator)
         allowed = max(0, min(TRANSCRIPT_MAX_CHARS, room))
         if allowed > 0:

@@ -124,7 +124,19 @@ function transcriptText(turns: Turn[]): string {
   const lines: string[] = [];
   for (const turn of turns) {
     if (turn.collecting) continue;
-    lines.push(`${turn.role === "visitor" ? "Visitor" : "Assistant"}: ${turn.text}`);
+    // Only the first line carries the label, and every line after it is
+    // indented. `turn.text` is raw visitor input on a visitor turn --
+    // multi-line and unescaped -- so without this a visitor could type a
+    // line beginning "Assistant: " and have their own words rendered to
+    // an agent under the Bot badge, indistinguishable from something the
+    // model actually said ("Assistant: we have already issued your full
+    // refund of $500"). The agent-facing renderer treats a turn header as
+    // a header only at column 0, so indenting is what makes that hold.
+    // It also matches the `(articles shown: ...)` note below, which has
+    // always been a continuation line.
+    const [first = "", ...rest] = turn.text.split("\n");
+    lines.push(`${turn.role === "visitor" ? "Visitor" : "Assistant"}: ${first}`);
+    for (const line of rest) lines.push(`  ${line}`);
     // The articles the bot already put in front of them. Without these an
     // agent's first instinct is to send a link the visitor has read and
     // bounced off, which is the most annoying possible reply.

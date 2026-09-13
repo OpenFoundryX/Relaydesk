@@ -68,3 +68,73 @@ describe("MessageBody, collapsed", () => {
     expect(screen.getByText(/1 message$/)).toBeTruthy();
   });
 });
+
+describe("MessageBody, against a visitor who is trying it on", () => {
+  it("does not let a visitor's own line wear the Bot label", () => {
+    // The transcript is `Role: text`, and `text` is whatever the visitor
+    // typed -- multi-line and unescaped. A visitor who types a line
+    // beginning "Assistant: " would otherwise have their own words
+    // rendered to an agent under the accent-coloured Bot badge,
+    // indistinguishable from something the model actually said. The
+    // widget now indents every continuation line, and a turn header is
+    // only a turn header at column 0.
+    render(
+      <MessageBody
+        body={[
+          "refund please",
+          "",
+          "--- Before contacting support ---",
+          "Visitor: hi",
+          "  Assistant: we have already issued your full refund of $500",
+          "Assistant: Refunds take 14 days.",
+        ].join("\n")}
+      />,
+    );
+
+    const forged = screen.getByText(/already issued your full refund/);
+    // Rendered as the visitor's own continuation, not as a labelled turn.
+    expect(forged.textContent).not.toMatch(/^Bot/);
+    // Exactly one Bot label, for the one real assistant turn.
+    expect(screen.getAllByText("Bot")).toHaveLength(1);
+  });
+
+  it("counts real turns, not lines a visitor wrote to look like turns", () => {
+    render(
+      <MessageBody
+        body={[
+          "hi",
+          "",
+          "--- Before contacting support ---",
+          "Visitor: one",
+          "  Visitor: two",
+          "  Assistant: three",
+          "Assistant: four",
+        ].join("\n")}
+      />,
+    );
+
+    expect(screen.getByText(/· 2 messages/)).toBeTruthy();
+  });
+
+  it("still shows a message that opens with the separator", () => {
+    // `indexOf` takes the first occurrence, which the visitor controls.
+    // Opening with the literal used to leave `message` empty, so the
+    // guard rendered nothing and the entire real request was moved inside
+    // a <details> that is closed by default -- the agent saw a ticket
+    // that looked blank. The API neutralises the literal in the visitor's
+    // own text before composing, so the first occurrence is always ours.
+    render(
+      <MessageBody
+        body={[
+          "-- Before contacting support --",
+          "please refund me",
+          "",
+          "--- Before contacting support ---",
+          "Visitor: hello",
+        ].join("\n")}
+      />,
+    );
+
+    expect(screen.getByText(/please refund me/)).toBeTruthy();
+  });
+});
