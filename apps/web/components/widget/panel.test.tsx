@@ -516,3 +516,38 @@ describe("the panel growing when it needs room", () => {
     expect(sent.length).toBe(before);
   });
 });
+
+describe("escalating out of the Help tab", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // `Help` proving it called `onCompose` is not proof the panel does
+  // anything useful with it -- the same gap the article-title test above
+  // exists to close. This renders the whole `Panel`: the wire used to
+  // call `setTab("home")` and stop there, landing the visitor on Home's
+  // card list with no form. With AI on, that list offers "Ask a question"
+  // and no way to reach a person at all, so the one visitor who had
+  // explicitly asked for one was handed back to the bot.
+  it("opens the message form itself, not the tab the form lives on", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify([
+              { id: "c", name: "Billing", slug: "billing", description: "", icon: "", articleCount: 1 },
+            ]),
+            { status: 200 },
+          ),
+      ),
+    );
+
+    render(<Panel {...workspace} articleCount={12} aiEnabled widgetKey="rdw_test" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Help" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Send a message" }));
+
+    expect(await screen.findByPlaceholderText("you@example.com")).toBeTruthy();
+  });
+});

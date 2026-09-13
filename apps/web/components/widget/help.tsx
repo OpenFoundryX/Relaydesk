@@ -296,7 +296,7 @@ function Collections({
       )}
 
       <div className="mt-auto pt-2">
-        <WidgetButton type="button" variant="secondary" onClick={onCompose}>
+        <WidgetButton type="button" variant="secondary" onClick={() => onCompose()}>
           Send a message
         </WidgetButton>
       </div>
@@ -396,7 +396,7 @@ function CollectionArticles({
       )}
 
       <div className="mt-auto pt-2">
-        <WidgetButton type="button" variant="primary" onClick={onCompose}>
+        <WidgetButton type="button" variant="primary" onClick={() => onCompose()}>
           Send a message
         </WidgetButton>
       </div>

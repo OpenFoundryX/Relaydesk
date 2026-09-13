@@ -398,7 +398,16 @@ export function Panel({
         <div className={tab === "help" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
           <Help
             widgetKey={widgetKey}
-            onCompose={() => setTab("home")}
+            // `compose()`, not `setTab("home")`: the form is what was
+            // asked for, and the tab is only where it lives -- `compose`
+            // switches to it anyway. Stopping at the tab dropped the
+            // visitor on Home's card list, which with AI on offers no
+            // route to a person at all. Wrapped, because Help's buttons
+            // call this from an onClick and `compose`'s first parameter
+            // is the transcript -- an unwrapped reference hands it a
+            // click event. Ask's wiring passes `compose` directly on
+            // purpose: it really does supply a transcript.
+            onCompose={() => compose()}
             onEvent={recordEvent}
             onFullScreenChange={(full, title) => {
               setHelpFullScreen(full);

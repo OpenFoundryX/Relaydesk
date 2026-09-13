@@ -39,6 +39,14 @@ export async function GET(request: Request) {
         // changed a colour in the console sees it on the site rather than
         // wondering whether it saved.
         "Cache-Control": "public, max-age=60",
+        // The loader runs on the customer's page and fetches this from
+        // ours, so every real caller is cross-origin. Without this the
+        // browser rejects the answer before the loader sees it, the
+        // loader's `.catch` swallows it, and the correction this route
+        // exists for silently never happens -- while the request is
+        // still sent and still served. `*` discloses nothing: the key is
+        // public by construction and the body is a colour and a corner.
+        "Access-Control-Allow-Origin": "*",
       },
     },
   );
