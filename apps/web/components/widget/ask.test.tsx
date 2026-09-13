@@ -347,6 +347,75 @@ describe("Ask, in conversation", () => {
       expect(screen.getByText(/would you like me to pass this to the team/i)).toBeTruthy(),
     );
   });
+
+  it("does not send the bot collecting an email as if it were the conversation", async () => {
+    // `collecting` turns are the escalation micro-dialogue -- "what's your
+    // email address?", "Skip". They are already excluded from the
+    // transcript an agent reads, for the reason the flag's own comment
+    // gives, and they must be excluded here for a sharper one: the model
+    // would be shown six turns of what look like its own prior messages
+    // saying "I'll pass this on to the team", as in-context examples of
+    // exactly the behaviour `_NO_ACTIONS` was added to the system prompt
+    // to stop. They would also consume the whole six-turn budget, so the
+    // next real follow-up arrives with none of the context this feature
+    // exists to supply.
+    const fetchMock = mockAskFetch([
+      { event: "text", data: { text: "I couldn't find that." } },
+      { event: "done", data: { outcome: "refused", citations: [] } },
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Ask widgetKey="rdw_test" onDegrade={() => {}} onCompose={() => {}} />);
+    await askQuestion("do you ship to Berlin?");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    // Decline the offer, which still writes `collecting` turns on both sides.
+    fireEvent.click(await screen.findByRole("button", { name: "No" }));
+
+    await askQuestion("what about Vienna?");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    const [, init] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+    const sent = JSON.parse(init.body as string);
+    // The `refused` branch replaces the streamed text with its own line,
+    // which carries the offer inline -- that turn is a real answer and
+    // belongs in the history. What must not be there is the "No" and the
+    // "No problem, ask away" that followed it.
+    expect(sent.history).toEqual([
+      { role: "visitor", text: "do you ship to Berlin?" },
+      {
+        role: "assistant",
+        text: "I couldn't find an answer for that. Would you like me to pass this to the team?",
+      },
+    ]);
+  });
+
+  it("counts answers, not the bot's own escalation prompts", async () => {
+    // OFFER_AFTER_ANSWERS is about a visitor who has been at this a while.
+    // Counting `collecting` turns -- which arrive three or four at a time
+    // from one escalation -- reaches the threshold on a visitor who has
+    // had a single real answer, and tells them they have been at it a
+    // while when they have not.
+    vi.stubGlobal(
+      "fetch",
+      mockAskFetch([
+        { event: "text", data: { text: "I couldn't find that." } },
+        { event: "done", data: { outcome: "refused", citations: [] } },
+      ]),
+    );
+
+    render(<Ask widgetKey="rdw_test" onDegrade={() => {}} onCompose={() => {}} />);
+    await askQuestion("one");
+    fireEvent.click(await screen.findByRole("button", { name: "No" }));
+    await askQuestion("two");
+
+    // Two refusals on screen: `refused` swaps the streamed text for its
+    // own line, so that is what to count.
+    await waitFor(() =>
+      expect(screen.getAllByText(/I couldn't find an answer for that/i).length).toBe(2),
+    );
+    expect(screen.queryByText(/we've been at this a little while/i)).toBeNull();
+  });
 });
 
 describe("Ask, opening choices", () => {

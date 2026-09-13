@@ -224,8 +224,18 @@ export function Ask({
       //
       // The server caps and truncates this; nothing is trimmed here beyond
       // dropping the turn just appended, which is the question itself.
+      //
+      // `collecting` turns are left out for the same reason they are left
+      // out of the transcript an agent reads, and a sharper one: they are
+      // the bot saying "I'll pass this on to the team" and "Sending this
+      // to the team now", so sending them would show the model several
+      // turns of apparently its own messages claiming to have taken an
+      // action -- in-context examples of precisely what `_NO_ACTIONS` is
+      // in the system prompt to prevent. They would also fill the whole
+      // six-turn budget with an email address and the word "Skip".
       const history = turnsRef.current
         .slice(0, -1)
+        .filter((turn) => !turn.collecting)
         .map((turn) => ({ role: turn.role, text: turn.text }));
 
       const response = await fetch("/widget/ask", {
@@ -281,8 +291,12 @@ export function Ask({
               // After enough back-and-forth, offer. Once: a bot that keeps
               // asking is worse than one that asked and took no for an
               // answer.
+              // Answers, not everything the bot has said: one escalation
+              // writes three or four `collecting` turns, which would reach
+              // the threshold on a visitor who has had a single real
+              // answer and tell them they have been at this a while.
               const answers = turnsRef.current.filter(
-                (turn) => turn.role === "assistant",
+                (turn) => turn.role === "assistant" && !turn.collecting,
               ).length;
               if (answers >= OFFER_AFTER_ANSWERS && !offeredRef.current) {
                 offeredRef.current = true;
