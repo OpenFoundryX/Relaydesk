@@ -56,6 +56,31 @@ class ProviderRefused(ProviderUnavailable):
     """
 
 
+class ProviderRejectedRequest(ProviderUnavailable):
+    """The provider rejected what we sent it. Our fault, not an outage.
+
+    A 4xx means the request was malformed or unacceptable -- a `messages`
+    array whose roles do not alternate, a model name that does not exist,
+    a key that is not valid. None of that gets better by waiting, and none
+    of it says anything about whether the provider is up.
+
+    Split out for the same reason `ProviderRefused` is, and with the same
+    mechanics: a subclass, so the visitor-facing degrade path needs no
+    change and a visitor still cannot tell which happened, caught ahead of
+    the parent by the one caller that cares. What it buys is that
+    `ai_budget.breaker_open` cannot be tripped by it. The breaker exists
+    to stop us hammering a provider that is down; a request we built
+    wrongly is not evidence of that, and counting it let five crafted
+    requests -- far under any rate limit on this door -- disable AI for an
+    entire workspace for fifteen minutes.
+
+    429 is deliberately NOT this. Being rate-limited is the provider
+    telling us it cannot serve us right now, which is what the breaker is
+    for.
+    """
+
+
+
 @dataclass
 class Completion:
     text: str = ""
@@ -230,6 +255,12 @@ class AnthropicProvider:
                     yield text
                 final = await stream.get_final_message()
         except anthropic.APIStatusError as error:
+            # A 4xx is this code sending something unacceptable; a 429 or a
+            # 5xx is the provider itself. Only the latter should count
+            # toward the circuit breaker -- see `ProviderRejectedRequest`.
+            status = getattr(error, "status_code", None)
+            if isinstance(status, int) and 400 <= status < 500 and status != 429:
+                raise ProviderRejectedRequest(str(error)) from error
             raise ProviderUnavailable(str(error)) from error
         except anthropic.APIConnectionError as error:
             raise ProviderUnavailable(str(error)) from error

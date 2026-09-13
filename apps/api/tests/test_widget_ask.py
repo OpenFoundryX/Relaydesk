@@ -18,22 +18,44 @@ from tests.factories import make_workspace
 def test_history_keeps_only_the_last_n_turns_dropping_the_oldest() -> None:
     """Bounded, not rejected -- the oldest turns are the safest to drop, the
     same reasoning `TRANSCRIPT_MAX_CHARS`'s front-truncation uses."""
+    # Alternating, because `_bound_history` now also reduces a
+    # conversation to a shape the Messages API accepts: a run of same-role
+    # turns is merged into one before the window is taken, so nine visitor
+    # turns collapse to a single turn and demonstrate nothing about the
+    # window. See `test_widget_history.py` for the shape rules themselves.
     turns = [
-        {"role": "visitor", "text": f"turn {i}"} for i in range(HISTORY_MAX_TURNS + 3)
+        {"role": "visitor" if i % 2 == 0 else "assistant", "text": f"turn {i}"}
+        for i in range(HISTORY_MAX_TURNS + 3)
     ]
 
     parsed = WidgetAskIn(question="q", history=turns)
 
-    assert len(parsed.history) == HISTORY_MAX_TURNS
-    assert parsed.history[0].text == "turn 3"
-    assert parsed.history[-1].text == f"turn {HISTORY_MAX_TURNS + 2}"
+    # Nine alternating turns begin on a visitor and so end on one. The
+    # window keeps the last six -- turns 3..8 -- and then both ends are
+    # trimmed: turn 3 is an assistant turn with nothing before it to
+    # answer, and turn 8 is a visitor turn that `question` would follow as
+    # a second user turn in a row. Four survive, and the cap is what
+    # decided where they start.
+    assert len(parsed.history) <= HISTORY_MAX_TURNS
+    assert [turn.text for turn in parsed.history] == [
+        "turn 4",
+        "turn 5",
+        "turn 6",
+        "turn 7",
+    ]
 
 
 def test_an_overlong_turn_is_truncated_not_rejected() -> None:
     """A visitor must never be blocked by the length of their own
     conversation -- unlike `question`, which uses `Field(max_length=...)`
     and does reject, this field truncates."""
-    turns = [{"role": "visitor", "text": "A" * (HISTORY_TURN_MAX_CHARS + 500)}]
+    # Followed by an assistant turn so this is a history the provider
+    # would accept: a lone visitor turn is dropped as the trailing turn,
+    # since `question` is appended directly after it.
+    turns = [
+        {"role": "visitor", "text": "A" * (HISTORY_TURN_MAX_CHARS + 500)},
+        {"role": "assistant", "text": "ok"},
+    ]
 
     parsed = WidgetAskIn(question="q", history=turns)
 

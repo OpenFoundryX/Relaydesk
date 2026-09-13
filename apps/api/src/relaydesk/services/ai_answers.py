@@ -40,6 +40,7 @@ from relaydesk.services import ai_budget, ai_redact, ai_retrieval
 from relaydesk.services.ai_provider import (
     Provider,
     ProviderRefused,
+    ProviderRejectedRequest,
     ProviderUnavailable,
     Turn,
     for_config,
@@ -431,6 +432,25 @@ async def answer(
                     call_id,
                     outcome=AiOutcome.refused,
                     reason="declined",
+                    input_tokens=input_tokens,
+                    output_tokens=0,
+                    latency_ms=int((time.monotonic() - started) * 1000),
+                )
+            return
+        except ProviderRejectedRequest:
+            # Caught ahead of ProviderUnavailable for the same reason
+            # ProviderRefused is: it is a subclass, and a request the
+            # provider would not accept is our mistake, not its outage.
+            # Recorded under its own reason so breaker_open -- which
+            # counts only `provider_unavailable` -- cannot be opened by a
+            # caller sending five unacceptable requests, which is far
+            # under any rate limit on this door.
+            async with audit_factory() as audit:
+                await _settle(
+                    audit,
+                    call_id,
+                    outcome=AiOutcome.degraded,
+                    reason="request_rejected",
                     input_tokens=input_tokens,
                     output_tokens=0,
                     latency_ms=int((time.monotonic() - started) * 1000),

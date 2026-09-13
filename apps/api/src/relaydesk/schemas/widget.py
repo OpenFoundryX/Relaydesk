@@ -79,22 +79,70 @@ class WidgetAskIn(CamelModel):
     @field_validator("history", mode="after")
     @classmethod
     def _bound_history(cls, turns: list[WidgetTurnIn]) -> list[WidgetTurnIn]:
-        """Keep at most the last `HISTORY_MAX_TURNS` turns, oldest dropped
-        first, each clipped to `HISTORY_TURN_MAX_CHARS`.
+        """Reduce a conversation to a shape the provider will accept, and
+        bound what it costs.
 
-        The oldest turns are the safest to drop -- the same reasoning
-        `TRANSCRIPT_MAX_CHARS`'s truncation-from-the-front uses below, and
-        for the same reason: what a visitor asked a moment ago is what
-        "that" in a follow-up question refers to, not what they asked six
-        turns back.
+        The Messages API has three structural rules, and each is a 400
+        rather than a tolerated shape: the first message must be `user`,
+        roles must strictly alternate, and no content block may be empty.
+        `AnthropicProvider.complete` turns a 400 into a provider error and
+        `ai_budget.breaker_open` counts those -- so an unaccepted shape did
+        not merely fail one question, it disabled AI for the whole
+        workspace once five arrived in fifteen minutes.
+
+        That cannot be left to the caller. The key sits in any customer's
+        page source, so a hostile caller can send whatever it likes; and
+        the bundled client is not well-behaved either -- it appends the
+        escalation offer directly after an answer, which is two assistant
+        turns in a row, so an ordinary fourth question carried a guaranteed
+        400 of its own.
+
+        Order matters. Blank turns go first, because a turn that is only
+        whitespace should not keep two real turns apart. Then same-role
+        runs are merged rather than dropped, which preserves what was said
+        and makes the sequence alternate. Only then is each turn clipped
+        and the window taken -- merging afterwards could re-introduce a
+        run, and taking the window first could slice a merged conversation
+        back into a non-alternating one.
+
+        The two ends are trimmed last. A leading assistant turn is the
+        greeting bubble every conversation opens with, and it has nothing
+        before it to answer. A trailing visitor turn goes because
+        `question` is appended after all of these as the next user turn,
+        and two user turns together is the same 400 from the other side.
+
+        Truncation throughout, never rejection: a visitor must not be
+        blocked by the shape or the length of their own conversation --
+        the principle `QUESTION_MAX_CHARS` and `TRANSCRIPT_MAX_CHARS`
+        already apply to the other two visitor-controlled fields here. The
+        oldest turns are the safest to drop, for the reason
+        `TRANSCRIPT_MAX_CHARS` gives below: what a visitor asked a moment
+        ago is what "that" refers to, not what they asked six turns back.
         """
-        kept = turns[-HISTORY_MAX_TURNS:]
-        return [
+        spoken = [turn for turn in turns if turn.text.strip()]
+
+        merged: list[WidgetTurnIn] = []
+        for turn in spoken:
+            if merged and merged[-1].role == turn.role:
+                merged[-1] = merged[-1].model_copy(
+                    update={"text": f"{merged[-1].text}\n\n{turn.text}"}
+                )
+            else:
+                merged.append(turn)
+
+        clipped = [
             turn
             if len(turn.text) <= HISTORY_TURN_MAX_CHARS
             else turn.model_copy(update={"text": turn.text[:HISTORY_TURN_MAX_CHARS]})
-            for turn in kept
+            for turn in merged
         ]
+
+        window = clipped[-HISTORY_MAX_TURNS:]
+        if window and window[0].role == "assistant":
+            window = window[1:]
+        if window and window[-1].role == "visitor":
+            window = window[:-1]
+        return window
 
 
 # The ticket route's `transcript` field is truncated to this many

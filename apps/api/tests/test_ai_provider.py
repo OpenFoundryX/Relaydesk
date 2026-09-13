@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import anthropic
+import httpx
 import pytest
 
 from relaydesk.models.ai_config import AiConfig
@@ -7,6 +9,7 @@ from relaydesk.services.ai_provider import (
     AnthropicProvider,
     FakeProvider,
     ProviderRefused,
+    ProviderRejectedRequest,
     ProviderUnavailable,
     Turn,
     for_config,
@@ -349,3 +352,56 @@ async def test_the_real_provider_with_no_history_sends_only_the_question() -> No
     )]
 
     assert captured["messages"] == [{"role": "user", "content": "refund"}]
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (400, ProviderRejectedRequest),
+        (401, ProviderRejectedRequest),
+        (404, ProviderRejectedRequest),
+        (422, ProviderRejectedRequest),
+        # Being rate-limited is the provider saying it cannot serve us, not
+        # us sending something wrong -- the one 4xx the breaker should see.
+        (429, ProviderUnavailable),
+        (500, ProviderUnavailable),
+        (529, ProviderUnavailable),
+    ],
+)
+async def test_a_rejected_request_is_not_an_outage(status, expected) -> None:
+    """A 4xx must not look like the provider being down.
+
+    `breaker_open` counts `provider_unavailable` and nothing else, so
+    before this split five malformed requests -- far under any rate limit
+    on an anonymous route whose key sits in a page source -- disabled AI
+    for a whole workspace for fifteen minutes. The distinction has to live
+    in `AnthropicProvider`, the line production actually reaches.
+    """
+
+    class _Stream:
+        async def __aenter__(self):
+            raise anthropic.APIStatusError(
+                "boom",
+                response=httpx.Response(
+                    status, request=httpx.Request("POST", "https://api.anthropic.com")
+                ),
+                body=None,
+            )
+
+        async def __aexit__(self, *exc):
+            return False
+
+    provider = AnthropicProvider(api_key="sk-test")
+    provider._client = SimpleNamespace(
+        messages=SimpleNamespace(stream=lambda **kwargs: _Stream())
+    )
+
+    with pytest.raises(expected) as caught:
+        async for _ in provider.complete(system="s", question="q", model="m"):
+            pass
+
+    # Either way the visitor is told the same thing -- the split is for the
+    # audit row and the breaker, never for the person asking.
+    assert str(caught.value) == "the model is unavailable"
+    if expected is ProviderUnavailable:
+        assert not isinstance(caught.value, ProviderRejectedRequest)
