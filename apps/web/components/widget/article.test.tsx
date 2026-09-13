@@ -281,4 +281,36 @@ describe("Article, telling the panel its own title", () => {
     expect(onTitleChange).toHaveBeenCalledWith(null);
     expect(onTitleChange).not.toHaveBeenCalledWith("Refund timing");
   });
+
+  it("offers a handful of related articles, not the whole collection", async () => {
+    // `related` is the collection flattened -- its own articles plus every
+    // section's -- so without a cap an eighty-article collection puts
+    // seventy-nine rows under every article in it.
+    const many = Array.from({ length: 30 }, (_, index) => ({
+      id: `a${index}`,
+      title: `Related ${index}`,
+      slug: `related-${index}`,
+      excerpt: "",
+      path: `billing/related-${index}`,
+    }));
+    vi.stubGlobal(
+      "fetch",
+      routedFetch({ article: ARTICLE, ancestors: [{ name: "Billing", slug: "billing" }], related: many }),
+    );
+
+    render(
+      <Article
+        widgetKey="rdw_test"
+        path="billing/refund-timing"
+        onBack={() => {}}
+        onOpen={() => {}}
+        onCompose={() => {}}
+      />,
+    );
+
+    await screen.findByText("Related 0");
+    // The first five of the thirty, in order.
+    expect(screen.getByText("Related 4")).toBeTruthy();
+    expect(screen.getAllByText(/^Related \d+$/)).toHaveLength(5);
+  });
 });

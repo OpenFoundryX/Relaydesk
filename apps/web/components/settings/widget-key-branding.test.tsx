@@ -44,9 +44,15 @@ describe("WidgetKeyDialog branding section", () => {
     expect(screen.getByLabelText("Left")).toBeTruthy();
   });
 
-  it("says plainly that a colour or position change needs a re-paste", () => {
+  it("does not still tell an admin to re-paste the snippet", () => {
+    // It used to, and correctly: the loader drew from its data-* attributes
+    // and nothing corrected them. `/widget/launcher` was built to fix that
+    // and the copy was never updated -- so the moment the route started
+    // working, this paragraph became a lie that sends a customer round
+    // every site they own re-pasting a snippet they need not touch.
     render(<WidgetKeyDialog open onOpenChange={() => {}} />);
-    expect(screen.getByText(/re-paste/i)).toBeTruthy();
+    expect(screen.queryByText(/re-paste/i)).toBeNull();
+    expect(screen.getByText(/corrects itself/i)).toBeTruthy();
   });
 
   it("opens pre-filled from an existing embed's settings", () => {

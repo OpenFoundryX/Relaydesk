@@ -21,6 +21,15 @@ const NO_IMAGE = "";
  * date on an article is a property of the article, not of whichever visitor
  * happens to be reading it right now.
  */
+/** How many of a collection's other articles to offer under one.
+ *
+ *  The list this comes from is the whole collection -- its own articles
+ *  and every section's, flattened -- so an eighty-article collection
+ *  would put seventy-nine rows under every article in it, in a panel
+ *  three hundred and eighty pixels wide. Related reading stops being
+ *  related somewhere well before that. */
+const MAX_RELATED = 5;
+
 const DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
   day: "numeric",
   month: "long",
@@ -239,7 +248,7 @@ export function Article({
             Related articles
           </h2>
           <ul className="mt-2 flex flex-col gap-1">
-            {related.map((candidate) => (
+            {related.slice(0, MAX_RELATED).map((candidate) => (
               <li key={candidate.id}>
                 <button
                   type="button"

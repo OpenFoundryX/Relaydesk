@@ -282,9 +282,10 @@ function WidgetKeyForm({
           </fieldset>
 
           <p className="text-[12px] text-ink-500">
-            Colour and position are drawn by the script tag itself, before the
-            panel ever opens -- changing either here takes effect only once
-            you re-paste the updated snippet wherever this embed is installed.
+            The script tag draws the launcher from its own attributes first,
+            so it appears before any network call -- then corrects itself
+            from here. Changing a colour or a corner reaches every site this
+            embed is installed on within a minute. No re-pasting.
           </p>
         </fieldset>
 
