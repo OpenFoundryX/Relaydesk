@@ -13,11 +13,23 @@ export async function POST(request: NextRequest) {
   const { key, question, history } = await request.json();
   if (!key || !question) return new Response(null, { status: 404 });
 
+  // Forwarded so the API's per-IP cap buckets the visitor rather than
+  // this container. `client_ip.resolve` falls through to the immediate
+  // peer when nothing arrives, and the peer is always this route -- so
+  // without the header every visitor of every workspace shares one
+  // bucket of `widget_ask_ip_hourly_cap` across the whole deployment.
+  // Absent stays absent: inventing a value would tell the API a request
+  // came from somewhere it did not. Same as `submitWidgetTicket`.
+  const forwardedFor = request.headers.get("x-forwarded-for");
+
   const upstream = await fetch(
     `${process.env.API_URL ?? "http://api:8000"}/api/widget/${encodeURIComponent(key)}/ask`,
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(forwardedFor ? { "X-Forwarded-For": forwardedFor } : {}),
+      },
       // `history` is forwarded, not rebuilt: the API caps and
       // truncates it, and a proxy that quietly dropped it left the
       // model answering every follow-up with no idea what it followed.
