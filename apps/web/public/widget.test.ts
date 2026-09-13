@@ -3,21 +3,33 @@ import { readFileSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 
 describe("loader", () => {
-  it("stays under the 3 KB budget, measured as it is served", () => {
+  it("stays under its budget, measured as it is served", () => {
     // Spec D6: this is the argument for choosing the widget over a heavier
     // messenger, so a regression here is a regression in the pitch.
     //
     // Gzipped, because that is what a customer's page actually pays --
-    // Next serves this with `Content-Encoding: gzip`, verified against a
-    // running server. The old assertion measured the raw file, which meant
-    // every comment in it counted against the promise and the only way to
-    // add a feature was to delete an explanation. That is a bad trade, and
-    // it is not what the number was ever about.
+    // Next serves `public/` compressed. The old assertion measured the raw
+    // file, which meant every comment in it counted against the promise
+    // and the only way to add a feature was to delete an explanation.
+    // That is a bad trade, and it is not what the number was ever about.
     //
-    // 2 KB rather than 3: at the time of writing this is ~1.4 KB, and a
-    // budget with twice the headroom it needs stops catching anything.
+    // 3 KB, raised from 2. The note that used to sit here said "this is
+    // ~1.4 KB, and a budget with twice the headroom it needs stops
+    // catching anything" -- but it was never 1.4 KB. It measured 1967
+    // against 2048: four percent of headroom, not double. The reasoning
+    // was sound and the number it rested on was wrong, which is worse than
+    // no note at all, because it told everyone who read it not to check.
+    //
+    // The loading skeleton is what finally needed the room. Raising the
+    // ceiling is the honest move rather than deleting comments to squeeze
+    // under it -- but it is a one-time move, not a habit. The next feature
+    // that does not fit should buy its room with build-time minification,
+    // which would return most of this file, rather than another raise.
+    //
+    // A literal, deliberately: importing a shared constant would make this
+    // assertion agree with whatever the code already does.
     const gzipped = gzipSync(readFileSync("public/widget.js"), { level: 9 });
-    expect(gzipped.byteLength).toBeLessThan(2048);
+    expect(gzipped.byteLength).toBeLessThan(3072);
   });
 
   it("injects no iframe until the launcher is clicked", () => {
@@ -36,6 +48,10 @@ describe("loader", () => {
  * frozen the moment a customer pastes it -- there is no second chance to
  * add coverage for a behaviour that ships broken.
  */
+function countOf(haystack: string, needle: string): number {
+  return haystack.split(needle).length - 1;
+}
+
 describe("loader behaviour", () => {
   const source = readFileSync("public/widget.js", "utf8");
   const SCRIPT_ORIGIN = "https://relay.example.com";
@@ -239,8 +255,12 @@ describe("loader behaviour", () => {
     expect(launcher.style.left).toBe("24px");
     expect(launcher.style.right).toBe("");
 
+    // The property, not the selector it happens to be written under --
+    // the panel and its loading skeleton share one geometry rule, and
+    // which ids are listed in front of it is not what this test is about.
     const style = document.head.querySelector("style")!;
-    expect(style.textContent).toContain("#rdw{position:fixed;left:24px");
+    expect(style.textContent).toContain("position:fixed;left:24px");
+    expect(style.textContent).not.toContain("position:fixed;right:24px");
   });
 
   it("defaults to the right when data-position is absent or not 'left'", () => {
@@ -261,6 +281,83 @@ describe("loader behaviour", () => {
 
     loadWidget({ "data-key": "rdw_test" });
     expect(document.querySelector("button")).not.toBeNull();
+  });
+
+  it("keeps the reduced-motion rule at the top level, not nested", () => {
+    // Nesting an @media inside a rule needs CSS Nesting, which is not
+    // universal -- and a reduced-motion rule that silently does not apply
+    // is worse than none, because nobody will notice it failing.
+    // Read off the assembled stylesheet rather than the source that
+    // built it: the old assertion looked for a particular string
+    // concatenation, so it would have passed for genuinely nested CSS
+    // written on one line, and failed for correct CSS split differently.
+    loadWidget({ "data-key": "rdw_test" });
+    const css = document.head.querySelector("style")!.textContent!;
+
+    const query = "@media(prefers-reduced-motion:reduce){";
+    const at = css.indexOf(query);
+    expect(at).toBeGreaterThan(-1);
+
+    // Top level means every brace before it is closed.
+    const before = css.slice(0, at);
+    expect(countOf(before, "{")).toBe(countOf(before, "}"));
+
+    // And it has to actually turn the two animations off.
+    const body = css.slice(at + query.length, css.indexOf("}}", at) + 1);
+    expect(body).toContain("transition:none");
+    expect(body).toContain("animation:none");
+  });
+
+  it("covers the blank frame with a skeleton until its document arrives", () => {
+    // The iframe is created and shown in the same breath, so until the
+    // frame's document arrives a visitor is looking at a white rectangle
+    // -- the first thing they see of the product, on the slowest
+    // connection. The skeleton is drawn in the host page because the
+    // panel cannot draw anything before it exists.
+    loadWidget({ "data-key": "rdw_test" });
+    document.querySelector("button")!.click();
+
+    const skeleton = document.getElementById("rds")!;
+    expect(skeleton).toBeTruthy();
+    expect(skeleton.style.display).not.toBe("none");
+    // Nothing here is readable, so it must not be announced.
+    expect(skeleton.getAttribute("aria-hidden")).toBe("true");
+
+    document.getElementById("rdw")!.dispatchEvent(new Event("load"));
+
+    expect(skeleton.style.display).toBe("none");
+  });
+
+  it("puts the skeleton over the panel, not under it", () => {
+    // A document that has not loaded still paints its own opaque white,
+    // so a skeleton behind the iframe would never be seen at all.
+    loadWidget({ "data-key": "rdw_test" });
+    const css = document.head.querySelector("style")!.textContent!;
+
+    // The skeleton's own rule, not the shared geometry one -- note the
+    // leading brace, since "#rdw,#rds{" contains "#rds{" too.
+    const shared = Number(/#rdw,#rds\{[^}]*z-index:(\d+)/.exec(css)![1]);
+    const skeletonOnly = Number(/\}#rds\{[^}]*z-index:(\d+)/.exec(css)![1]);
+
+    expect(skeletonOnly).toBeGreaterThan(shared);
+  });
+
+  it("brings the skeleton back if the panel is closed and reopened before it loads", () => {
+    loadWidget({ "data-key": "rdw_test" });
+    const launcher = document.querySelector<HTMLButtonElement>("button")!;
+
+    launcher.click();
+    launcher.click();
+    expect(document.getElementById("rds")!.style.display).toBe("none");
+
+    launcher.click();
+    expect(document.getElementById("rds")!.style.display).toBe("block");
+
+    // ...but not once there is a real panel behind it.
+    document.getElementById("rdw")!.dispatchEvent(new Event("load"));
+    launcher.click();
+    launcher.click();
+    expect(document.getElementById("rds")!.style.display).toBe("none");
   });
 });
 
@@ -354,12 +451,4 @@ describe("resizing smoothly", () => {
     expect(source).toContain("#rdw{transition:none}");
   });
 
-  it("keeps the reduced-motion rule at the top level, not nested", () => {
-    // Nesting an @media inside a rule needs CSS Nesting, which is not
-    // universal -- and a reduced-motion rule that silently does not apply
-    // is worse than none, because nobody will notice it failing.
-    const source = readFileSync("public/widget.js", "utf8");
-    expect(source).not.toContain("{transition:none}\" +");
-    expect(source).toContain("}@media(prefers-reduced-motion:reduce){");
-  });
 });
