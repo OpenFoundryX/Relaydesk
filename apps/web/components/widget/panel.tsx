@@ -339,7 +339,13 @@ export function Panel({
         // -- `helpArticleTitle` is only ever set while `helpFullScreen` is
         // true (see `onFullScreenChange` above), so this needs no separate
         // guard on the tab itself.
-        name={helpArticleTitle ?? displayName}
+        // Guarded on the tab, not only on `helpFullScreen`. That flag
+        // tracks Help's own internal view and survives a tab switch by
+        // design, so an article opened in Help kept its title in the
+        // header over Home's cards -- disagreeing with the dialog's own
+        // aria-label, and now reachable in one click via Help's
+        // "Send a message".
+        name={tab === "help" && helpArticleTitle ? helpArticleTitle : displayName}
         monogram={monogram}
         // A conversation hides the tab bar, so without this there is no
         // way back to Home short of the answer failing. Compose and Sent

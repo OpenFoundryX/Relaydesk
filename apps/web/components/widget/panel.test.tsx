@@ -464,6 +464,74 @@ describe("the panel header while reading an article", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(header().textContent).toContain("Beacon");
   });
+
+  it("gives the workspace name back when the visitor leaves the Help tab", async () => {
+    // `helpFullScreen` tracks Help's own view and survives a tab switch by
+    // design, so guarding the header on it alone left an article's title
+    // sitting over Home's cards -- disagreeing with the dialog's own
+    // aria-label, and one click away now that Help's "Send a message"
+    // works.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        const url = new URL(input, "http://panel.test");
+        if (url.pathname === "/widget/kb/article") {
+          return new Response(
+            JSON.stringify({
+              article: {
+                id: "a",
+                title: "Refund timing",
+                slug: "refund-timing",
+                excerpt: "",
+                path: "billing/refund-timing",
+                doc: { type: "doc", content: [] },
+                publishedAt: null,
+                updatedAt: "2026-01-01T00:00:00Z",
+                author: null,
+              },
+              ancestors: [{ name: "Billing", slug: "billing" }],
+            }),
+            { status: 200 },
+          );
+        }
+        if (!url.searchParams.get("path")) {
+          return new Response(
+            JSON.stringify([
+              { id: "c", name: "Billing", slug: "billing", description: "", icon: "", articleCount: 1 },
+            ]),
+            { status: 200 },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            collection: { id: "c", name: "Billing", slug: "billing" },
+            articles: [
+              { id: "a", title: "Refund timing", slug: "refund-timing", excerpt: "", path: "billing/refund-timing" },
+            ],
+          }),
+          { status: 200 },
+        );
+      }),
+    );
+
+    const { container } = render(<Panel {...workspace} articleCount={12} widgetKey="rdw_test" />);
+    const header = () => container.querySelector("header")!;
+
+    fireEvent.click(screen.getByRole("button", { name: "Help" }));
+    fireEvent.click(await screen.findByText("Billing"));
+    fireEvent.click(await screen.findByText("Refund timing"));
+    await waitFor(() => expect(header().textContent).toContain("Refund timing"));
+
+    // The reachable route out of an open article: the tab bar is hidden
+    // while reading, so "Send a message" is how a visitor leaves -- and
+    // it now switches to Home and opens the form, which is exactly where
+    // an article's title must not follow them.
+    fireEvent.click(screen.getByRole("button", { name: "Send a message" }));
+
+    expect(await screen.findByPlaceholderText("you@example.com")).toBeTruthy();
+    expect(header().textContent).toContain("Beacon");
+    expect(header().textContent).not.toContain("Refund timing");
+  });
 });
 
 describe("the panel growing when it needs room", () => {

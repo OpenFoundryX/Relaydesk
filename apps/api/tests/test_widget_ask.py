@@ -358,6 +358,17 @@ async def test_a_ticket_with_no_transcript_writes_no_ai_call_row(
     )
     assert response.status_code == 201
 
+    # The behaviour this test is named for. These two assertions were
+    # once further down the file and a later edit inserted two new tests
+    # between them and the request above, so they ended up inside an
+    # unrelated test -- where they could not fail, because that test
+    # monkeypatches `ai_answers.answer` out and no `AiCall` row could be
+    # written by any implementation. This test was left asserting only
+    # that the route returns 201, and the deflection guarantee in its own
+    # docstring was observed by nothing.
+    count = await db_session.scalar(sa.select(sa.func.count()).select_from(AiCall))
+    assert count == 0
+
 
 def _fake_attempt(*, sources, chunks):
     """A scripted `Attempt`, for exercising the route's own SSE rendering
@@ -410,6 +421,3 @@ async def test_a_blank_clarify_reply_degrades(client, db_session, monkeypatch) -
 
     assert response.status_code == 200
     assert '"outcome": "degraded"' in response.text
-
-    count = await db_session.scalar(sa.select(sa.func.count()).select_from(AiCall))
-    assert count == 0
