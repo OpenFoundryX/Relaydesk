@@ -5,7 +5,6 @@ subdomain and applies the same two predicates -- external scope, published
 status -- because this is the code path anonymous visitors reach.
 """
 
-import functools
 import re
 import uuid
 from collections.abc import Sequence

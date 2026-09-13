@@ -223,3 +223,32 @@ async def test_retrieval_is_bounded_in_sources_and_in_body(db_session) -> None:
     assert all(len(source.body) <= 2000 for source in sources), (
         "an article's body must be trimmed before it reaches the model"
     )
+
+
+def test_the_question_token_cap_is_the_number_it_claims() -> None:
+    """`_MAX_QUESTION_TOKENS` against a literal, not against itself.
+
+    The stack-depth test next door pins the halving fold, not the cap:
+    around 245 distinct tokens folded pairwise nest only eight deep, well
+    inside the recursion limit, so deleting the cap outright leaves that
+    test green. Its own sibling in `test_ai_retrieval` was written for
+    exactly this failure -- raising a limit to 100 had previously passed
+    the entire suite -- and the same treatment is owed here.
+    """
+    from relaydesk.services.kb_public import _MAX_QUESTION_TOKENS, _disjunctive_tsquery
+
+    assert _MAX_QUESTION_TOKENS == 40
+
+    question = " ".join(f"word{index}" for index in range(200))
+    # Read off the bound parameters rather than the SQL text: the regconfig
+    # argument has no literal renderer, so the statement cannot be compiled
+    # with literal binds at all.
+    bound = {
+        value
+        for value in _disjunctive_tsquery(question).compile().params.values()
+        if isinstance(value, str) and value.startswith("word")
+    }
+
+    assert len(bound) == 40
+    assert "word39" in bound
+    assert "word40" not in bound

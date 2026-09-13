@@ -625,3 +625,147 @@ async def test_a_prior_answers_citation_numbers_do_not_go_back_to_the_model(
     # A visitor writing "[1]" is writing prose, not addressing our list.
     visitor = [turn for turn in sent if turn.role == "visitor"]
     assert visitor[0].text == "how do refunds work?"
+
+
+async def test_a_new_question_is_not_answered_from_the_last_one_s_article(
+    db_session,
+) -> None:
+    """Widening is for follow-ups, not for everything that comes after one.
+
+    `search_any` is disjunctive with no relevance floor, so any single
+    shared significant word matches. Widening every query meant the
+    previous question's words rode along forever: ask about refunds, then
+    ask about something else entirely, and the refunds article came back
+    as a permitted source for a question that had nothing to do with it.
+    The bare question is tried first now, and only a question that
+    retrieves nothing on its own is widened.
+    """
+    workspace, config, key = await _setup(db_session)
+    await _publish(db_session, workspace)
+    await _publish_second(db_session, workspace)
+    provider = FakeProvider(chunks=["We ship worldwide [1]."])
+
+    attempt = await answer(
+        db_session, workspace, key, "do you ship to Berlin?",
+        history=[Turn(role="visitor", text="how do refunds work?")],
+        provider=provider,
+        audit_sessions=_audit_sessions(db_session),
+    )
+    [chunk async for chunk in attempt.stream]
+
+    titles = [source.title for source in attempt.sources]
+    assert titles == ["Shipping and delivery"], titles
+
+
+async def test_a_real_follow_up_still_retrieves_through_the_prior_turn(
+    db_session,
+) -> None:
+    """The other half, which the narrowing must not break: "what about
+    annually?" has no word an article need contain, and is exactly what
+    the widening exists for."""
+    workspace, config, key = await _setup(db_session)
+    await _publish(db_session, workspace)
+    provider = FakeProvider(chunks=["Yes [1]."])
+
+    attempt = await answer(
+        db_session, workspace, key, "what about annually?",
+        history=[Turn(role="visitor", text="how do refunds work?")],
+        provider=provider,
+        audit_sessions=_audit_sessions(db_session),
+    )
+    [chunk async for chunk in attempt.stream]
+
+    assert attempt.sources, "a genuine follow-up must still find its article"
+
+
+async def _publish_second(db_session, workspace):
+    """A second published article on an unrelated subject, so a question
+    about one cannot be quietly answered from the other."""
+    from relaydesk.models.kb import ArticleStatus, KbArticle, KbCategory, KbScope
+
+    category = KbCategory(
+        workspace_id=workspace.id, name="Shipping", slug="shipping",
+        scope=KbScope.external, position=1,
+    )
+    db_session.add(category)
+    await db_session.flush()
+    db_session.add(
+        KbArticle(
+            workspace_id=workspace.id, category_id=category.id,
+            title="Shipping and delivery", slug="shipping",
+            excerpt="We ship to Berlin and everywhere else in Germany.",
+            doc={"type": "doc", "content": []},
+            status=ArticleStatus.published,
+        )
+    )
+    await db_session.flush()
+
+
+async def test_an_empty_clarify_reply_is_recorded_as_its_own_failure(
+    db_session,
+) -> None:
+    """A clarifying question and an empty body are different events.
+
+    The first is the feature working. The second is the model returning
+    nothing, which the route renders to the visitor as `degraded` -- so
+    filing both under `"clarify"` made the failure invisible to any query
+    over this table, and disagreed with what the visitor was shown.
+    """
+    workspace, config, key = await _setup(db_session)
+    provider = FakeProvider(chunks=[])
+
+    attempt = await answer(
+        db_session, workspace, key, "hi",
+        provider=provider,
+        audit_sessions=_audit_sessions(db_session),
+    )
+    [chunk async for chunk in attempt.stream]
+
+    reason = await db_session.scalar(
+        sa.select(AiCall.reason).order_by(AiCall.created_at.desc()).limit(1)
+    )
+    assert reason == "clarify_empty"
+
+
+async def test_the_provisional_charge_counts_the_conversation_too(
+    db_session,
+) -> None:
+    """History is billed on every question for the life of a conversation,
+    and it is part of the charge a disconnecting visitor cannot escape.
+
+    Six turns of a thousand characters is three times the largest possible
+    question, and nothing observed that the estimate included them --
+    `FakeProvider`'s own usage ignores history too, so even a settled row
+    would have shown history-free numbers. Read through the provider-down
+    path, which is the one that settles with the estimate rather than
+    overwriting it with what the provider reported.
+    """
+    workspace, config, key = await _setup(db_session)
+    long_turn = "x" * 900
+
+    async def ask(history):
+        attempt = await answer(
+            db_session, workspace, key, "and annually?",
+            history=history,
+            provider=FakeProvider(fails=True),
+            audit_sessions=_audit_sessions(db_session),
+        )
+        [chunk async for chunk in attempt.stream]
+
+    await ask([])
+    await ask(
+        [
+            Turn(role="visitor", text=long_turn),
+            Turn(role="assistant", text=long_turn),
+        ]
+    )
+
+    # Both rows, not "the latest" -- `created_at` ties between two calls in
+    # the same test and the ordering is then arbitrary.
+    charges = sorted(
+        (await db_session.scalars(sa.select(AiCall.input_tokens))).all()
+    )
+    assert len(charges) == 2, charges
+    # 1800 characters of conversation at the module's four-per-token
+    # heuristic is about 450 tokens, and it must be in the charge.
+    assert charges[1] - charges[0] > 400, charges

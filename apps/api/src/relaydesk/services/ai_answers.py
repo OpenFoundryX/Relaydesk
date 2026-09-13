@@ -374,9 +374,20 @@ async def answer(
     # about annually?") retrieves something -- see `_retrieval_query`. The
     # model still gets the unwidened `question` and the full `history`
     # below; this string exists purely to drive the search.
-    sources = await ai_retrieval.retrieve(
-        session, workspace.id, _retrieval_query(question, history)
-    )
+    # The bare question first, and the widened one only if that finds
+    # nothing. Widening unconditionally made clarify mode unreachable
+    # after the first successful question: `search_any` is disjunctive
+    # with no relevance floor, so any single shared word matches, and the
+    # widened query always carries every word of the previous question.
+    # Once anything had matched, `sources` was never empty again --
+    # a visitor who said "thanks" after asking about refunds got the
+    # refunds article as the model's only permitted source, and was
+    # offered a ticket for saying thank you.
+    sources = await ai_retrieval.retrieve(session, workspace.id, question)
+    if not sources:
+        widened = _retrieval_query(question, history)
+        if widened != question:
+            sources = await ai_retrieval.retrieve(session, workspace.id, widened)
 
     # Skipped when the admin has asserted (by setting `base_url`) that the
     # workspace points at inference it hosts itself: the text never leaves
@@ -524,7 +535,14 @@ async def answer(
             # this row into the `clarified` outcome the frontend sees; nothing
             # here needs a fourth database value to do that.
             outcome = AiOutcome.refused
-            reason = "clarify"
+            # Two shapes reach here and they are not the same event. A
+            # clarifying question is the feature working: the visitor is
+            # asked what they meant. An empty body is the model returning
+            # nothing at all, which the route renders as `degraded` on the
+            # wire -- so filing both under one reason left the failure
+            # invisible to any query over this table, and disagreeing with
+            # what the visitor was actually shown.
+            reason = "clarify" if usage.text.strip() else "clarify_empty"
         async with audit_factory() as audit:
             await _settle(
                 audit,
