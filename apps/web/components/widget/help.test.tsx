@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { Help } from "@/components/widget/help";
+import { Help, scrollAncestorToTop } from "@/components/widget/help";
 
 const COLLECTIONS = [
   {
@@ -100,8 +100,12 @@ describe("Help, browsing collections", () => {
   it("opens a collection to its own articles, with a back control and its name", async () => {
     vi.stubGlobal(
       "fetch",
-      routedFetch({
-        "/widget/kb/collections": COLLECTIONS,
+      vi.fn(async (input: string) => {
+        const url = new URL(input, "http://panel.test");
+        const body = url.searchParams.get("path")
+          ? { collection: COLLECTIONS[0], articles: [] }
+          : COLLECTIONS;
+        return new Response(JSON.stringify(body), { status: 200 });
       }),
     );
     // Re-stub once the collection is known, so the second request (with
@@ -412,5 +416,63 @@ describe("Help, asking for room to read", () => {
     await waitFor(() => expect(onFullScreenChange).toHaveBeenCalledWith(true, undefined));
     // The title follows once `Article` has loaded it.
     await waitFor(() => expect(onFullScreenChange).toHaveBeenCalledWith(true, "Refunds"));
+  });
+});
+
+describe("Help, moving between screens", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("scrolls the panel's own scroller, whichever ancestor that is", () => {
+    // jsdom performs no layout -- every element reports zero height -- so
+    // this cannot be observed by rendering, which is why it is its own
+    // function rather than a loop buried in an effect.
+    const outer = document.createElement("div");
+    const middle = document.createElement("div");
+    const leaf = document.createElement("div");
+    outer.appendChild(middle);
+    middle.appendChild(leaf);
+
+    // Only `outer` scrolls; `middle` is the kind of plain wrapper that
+    // sits between Help and the panel.
+    Object.defineProperty(outer, "scrollHeight", { value: 900 });
+    Object.defineProperty(outer, "clientHeight", { value: 300 });
+    outer.scrollTop = 420;
+
+    expect(scrollAncestorToTop(leaf)).toBe(outer);
+    expect(outer.scrollTop).toBe(0);
+  });
+
+  it("returns null rather than guessing when nothing scrolls", () => {
+    const parent = document.createElement("div");
+    const child = document.createElement("div");
+    parent.appendChild(child);
+
+    expect(scrollAncestorToTop(child)).toBeNull();
+  });
+
+  it("puts a screen reader at the top of what just replaced the screen", async () => {
+    // Every drill-down unmounted the focused control and dropped focus to
+    // <body>, with nothing announced.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        const url = new URL(input, "http://panel.test");
+        const body = url.searchParams.get("path")
+          ? { collection: COLLECTIONS[0], articles: [] }
+          : COLLECTIONS;
+        return new Response(JSON.stringify(body), { status: 200 });
+      }),
+    );
+
+    const { container } = render(
+      <Help widgetKey="rdw_test" onCompose={() => {}} onEvent={() => {}} />,
+    );
+    const root = container.firstElementChild!;
+
+    fireEvent.click(await screen.findByText("Billing"));
+
+    await waitFor(() => expect(document.activeElement).toBe(root));
   });
 });

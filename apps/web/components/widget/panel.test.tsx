@@ -728,4 +728,31 @@ describe("the panel's two tabs", () => {
     expect(document.activeElement).not.toBe(document.body);
     expect(hiddenPanel.contains(document.activeElement)).toBe(false);
   });
+
+  it("offers no Help tab, and fetches nothing for it, with an empty knowledge base", () => {
+    // Spec D7: a search field over an empty index makes the product look
+    // broken on the day it is being judged. The tabbed restructure moved
+    // that field behind a tab, which did not change what it searches --
+    // and `Help` was mounted regardless, so it fetched a collection list
+    // for a shelf no visitor could ever open.
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify([]), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Panel {...workspace} articleCount={0} widgetKey="rdw_test" />);
+
+    expect(screen.queryByRole("button", { name: "Help" })).toBeNull();
+    expect(screen.queryByRole("searchbox")).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("still offers it when there is something to read", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify([]), { status: 200 })),
+    );
+
+    render(<Panel {...workspace} articleCount={12} widgetKey="rdw_test" />);
+
+    expect(screen.getByRole("button", { name: "Help" })).toBeTruthy();
+  });
 });

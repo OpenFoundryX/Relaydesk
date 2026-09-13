@@ -126,6 +126,11 @@ export function Panel({
   // The configured display name replaces the workspace name in the header
   // (spec D10, un-deferred) -- absent falls back to exactly what rendered
   // before this existed.
+  // Spec D7: with nothing published there is no search, no Help tab and
+  // no tab bar -- and `Help` is not mounted at all, so it does not fetch
+  // a collection list for a shelf the visitor can never open.
+  const hasArticles = articleCount > 0;
+
   const displayName =
     branding.name && branding.name.trim() !== "" ? branding.name : workspaceName;
 
@@ -426,9 +431,10 @@ export function Panel({
         </div>
 
         <div
-          hidden={tab !== "help"}
-          className={tab === "help" ? "flex min-h-0 flex-1 flex-col" : "hidden"}
+          hidden={!hasArticles || tab !== "help"}
+          className={hasArticles && tab === "help" ? "flex min-h-0 flex-1 flex-col" : "hidden"}
         >
+          {hasArticles && (
           <Help
             widgetKey={widgetKey}
             workspaceSlug={workspaceSlug}
@@ -448,9 +454,16 @@ export function Panel({
               setHelpArticleTitle(title);
             }}
           />
+          )}
         </div>
       </div>
-      {!fullScreen && <TabBar tab={tab} onChange={setTab} />}
+      {/* No articles, no Help tab -- spec D7's rule, which the tabbed
+          restructure lost: a search field over an empty index makes the
+          product look broken on the day it is being judged, and moving
+          that field behind a tab did not change what it searches. With
+          one tab left there is nothing to switch between either, so the
+          bar goes with it. */}
+      {!fullScreen && hasArticles && <TabBar tab={tab} onChange={setTab} />}
       <Footer />
     </div>
   );

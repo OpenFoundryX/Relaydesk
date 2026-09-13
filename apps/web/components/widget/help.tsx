@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ChevronRight, Search } from "lucide-react";
 
 import { Article } from "@/components/widget/article";
@@ -26,6 +26,28 @@ export interface HelpCollection {
 
 /** Where the article view returns to when its back control is used. */
 type Back = { name: "browse" } | { name: "collection"; collection: HelpCollection };
+
+/**
+ * Put whichever ancestor actually scrolls back to the top.
+ *
+ * The scroller belongs to the panel and is shared with the Home tab, so
+ * opening an article from a list scrolled halfway down landed the reader
+ * halfway down the article, and Back restored the list at the article's
+ * offset. Which ancestor scrolls is the panel's business and has already
+ * changed once, so this finds it rather than naming it.
+ *
+ * Exported for its own test: jsdom performs no layout, so this is not
+ * observable by rendering -- every element reports a zero height.
+ */
+export function scrollAncestorToTop(from: HTMLElement): HTMLElement | null {
+  for (let node = from.parentElement; node; node = node.parentElement) {
+    if (node.scrollHeight > node.clientHeight) {
+      node.scrollTop = 0;
+      return node;
+    }
+  }
+  return null;
+}
 
 type View =
   | { name: "browse" }
@@ -86,6 +108,7 @@ export function Help({
   // on submit, not per keystroke) -- typing alone never fires a request.
   const [query, setQuery] = useState("");
   const [view, setView] = useState<View>({ name: "browse" });
+  const rootRef = useRef<HTMLDivElement>(null);
   // The open article's own title, reported by `Article` itself once it has
   // loaded (or `null` before then, or on failure) -- this component has no
   // way to know it any sooner, since the article is fetched inside `Article`,
@@ -99,6 +122,23 @@ export function Help({
   useEffect(() => {
     onFullScreenChange?.(full, full && articleTitle ? articleTitle : undefined);
   }, [full, articleTitle, onFullScreenChange]);
+
+  // Where the visitor is, as one string, so an effect can tell a real
+  // change of screen from a re-render.
+  const viewKey =
+    view.name === "article"
+      ? `article:${view.path}`
+      : view.name === "collection"
+        ? `collection:${view.collection.slug}`
+        : "browse";
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+
+    scrollAncestorToTop(root);
+    root.focus({ preventScroll: true });
+  }, [viewKey]);
 
   function submitSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -117,7 +157,16 @@ export function Help({
   }
 
   return (
-    <div className="flex flex-1 flex-col">
+    <div
+      ref={rootRef}
+      // Focusable only programmatically, so a view change can put a
+      // screen reader at the top of what just replaced the screen. Every
+      // drill-down used to unmount the focused control and drop focus to
+      // <body>, silently, with nothing announced.
+      tabIndex={-1}
+      aria-live="polite"
+      className="flex flex-1 flex-col focus-visible:outline-none"
+    >
       {view.name === "browse" && (
         <div className="px-4 pt-6">
           <form role="search" onSubmit={submitSearch} className="relative">
