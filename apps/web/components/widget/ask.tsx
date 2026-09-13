@@ -214,7 +214,15 @@ export function Ask({
     // visitor typing past it is as much a "no" as clicking the button,
     // and nothing here should keep expecting an email that is never
     // coming.
-    setEscalation({ stage: "closed" });
+    //
+    // `failed` is the exception, and it is not a half-finished dialogue:
+    // it holds a ticket the visitor has already filled in and agreed to
+    // send, which did not send. It is everything "Try again" has. A
+    // visitor asking something else while that sits there must not
+    // silently destroy it.
+    setEscalation((current) =>
+      current.stage === "failed" ? current : { stage: "closed" },
+    );
     appendTurn({ role: "visitor", text: question });
     setDraft("");
     setAsking(true);
@@ -317,7 +325,12 @@ export function Ask({
                   text: "We've been at this a little while — would you like me to pass this to the team, so a person can pick it up?",
                   citations: [],
                 });
-                setEscalation({ stage: "offer", question });
+                setEscalation((current) =>
+                // Never over a ticket still waiting to be sent: that
+                // state is all "Try again" has, and replacing it with a
+                // fresh offer would drop the visitor's details.
+                current.stage === "failed" ? current : { stage: "offer", question },
+              );
               }
             } else if (outcome === "refused" || outcome === "degraded") {
               appendTurn({
@@ -328,7 +341,12 @@ export function Ask({
                     : "Sorry, something's gone wrong on my end. Would you like me to pass this to the team?",
                 citations: [],
               });
-              setEscalation({ stage: "offer", question });
+              setEscalation((current) =>
+                // Never over a ticket still waiting to be sent: that
+                // state is all "Try again" has, and replacing it with a
+                // fresh offer would drop the visitor's details.
+                current.stage === "failed" ? current : { stage: "offer", question },
+              );
             } else {
               // A fifth outcome value would be new to the wire and
               // unrecognised here -- treat it exactly like any other
@@ -583,6 +601,19 @@ export function Ask({
       submitName(text);
       return;
     }
+    // Typing while an offer is open is an answer to it: the visitor has
+    // carried on rather than said yes. Closing it here means the offer
+    // is recorded as put -- the buttons go, and the bot does not ask
+    // again -- instead of the composer quietly starting a new question
+    // underneath an offer still waiting on screen.
+    if (escalation.stage === "offer") {
+      offeredRef.current = true;
+      setEscalation({ stage: "closed" });
+    }
+    // `failed` is deliberately NOT reset. It holds the whole unsent
+    // ticket -- question, email, name -- and it is the only thing "Try
+    // again" has to work from. A visitor asking something else while a
+    // ticket is waiting to be sent must not silently destroy it.
     void ask(text);
   }
 

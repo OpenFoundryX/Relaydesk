@@ -712,3 +712,74 @@ describe("Ask, passing it on when the bot cannot help", () => {
     );
   });
 });
+
+describe("Ask, typing instead of pressing a button", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("treats a typed reply to an offer as carrying on, and closes the offer", async () => {
+    // The composer stayed live under an open offer and fell straight
+    // through to a new AI question, leaving Yes/No sitting on screen
+    // above an answer to something else.
+    vi.stubGlobal(
+      "fetch",
+      mockAskSequence([
+        [{ event: "done", data: { outcome: "refused", citations: [] } }],
+        [
+          { event: "text", data: { text: "Try this." } },
+          { event: "done", data: { outcome: "answered", citations: [] } },
+        ],
+      ]),
+    );
+
+    render(<Ask widgetKey="rdw_test" onDegrade={() => {}} onCompose={() => {}} />);
+    await askQuestion("one");
+    expect(await screen.findByRole("button", { name: "Yes" })).toBeTruthy();
+
+    await askQuestion("actually, something else");
+
+    await screen.findByText("Try this.");
+    expect(screen.queryByRole("button", { name: "Yes" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "No" })).toBeNull();
+  });
+
+  it("does not throw away an unsent ticket when the visitor asks something else", async () => {
+    // `failed` holds the whole unsent ticket -- question, email, name --
+    // and it is the only thing "Try again" works from. Asking another
+    // question used to reset it, silently destroying the escalation the
+    // visitor had already filled in.
+    const onSubmit = vi.fn(async () => ({ ok: false, message: "network" }) as const);
+    vi.stubGlobal(
+      "fetch",
+      mockAskSequence([
+        [{ event: "done", data: { outcome: "refused", citations: [] } }],
+        [
+          { event: "text", data: { text: "Try this." } },
+          { event: "done", data: { outcome: "answered", citations: [] } },
+        ],
+      ]),
+    );
+
+    render(
+      <Ask
+        widgetKey="rdw_test"
+        onDegrade={() => {}}
+        onCompose={() => {}}
+        onSubmit={onSubmit}
+      />,
+    );
+    await askQuestion("one");
+    fireEvent.click(await screen.findByRole("button", { name: "Yes" }));
+    await reply("ada@example.com");
+    await reply("skip");
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("button", { name: "Try again" })).toBeTruthy();
+
+    await askQuestion("meanwhile, something else");
+    await screen.findByText("Try this.");
+
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+  });
+});
