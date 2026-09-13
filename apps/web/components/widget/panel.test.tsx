@@ -551,11 +551,68 @@ describe("the panel growing when it needs room", () => {
     const sent = messages();
     render(<Panel {...workspace} articleCount={12} aiEnabled wide />);
 
+    // The ordered tail, not `toContain`. The sizing effect runs on mount
+    // and posts a collapse straight away, so `toContain("relaydesk:collapse")`
+    // after the back click was satisfied before the click happened -- it
+    // would have passed with the whole handler deleted.
+    sent.length = 0;
+
     fireEvent.click(screen.getByRole("button", { name: /Ask a question/ }));
-    expect(sent).toContain("relaydesk:expand");
+    expect(sent.at(-1)).toBe("relaydesk:expand");
 
     fireEvent.click(screen.getByRole("button", { name: "Back to home" }));
-    expect(sent).toContain("relaydesk:collapse");
+    expect(sent.at(-1)).toBe("relaydesk:collapse");
+  });
+
+  it("asks to grow for an opened article too, not only a conversation", async () => {
+    // Auto-expand is specified for both, and only the conversation half
+    // was covered.
+    const sent = messages();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        const url = new URL(input, "http://panel.test");
+        if (url.pathname === "/widget/kb/article") {
+          return new Response(
+            JSON.stringify({
+              article: {
+                id: "a", title: "Refund timing", slug: "refund-timing", excerpt: "",
+                path: "billing/refund-timing", doc: { type: "doc", content: [] },
+                publishedAt: null, updatedAt: "2026-01-01T00:00:00Z", author: null,
+              },
+              ancestors: [{ name: "Billing", slug: "billing" }],
+            }),
+            { status: 200 },
+          );
+        }
+        if (!url.searchParams.get("path")) {
+          return new Response(
+            JSON.stringify([
+              { id: "c", name: "Billing", slug: "billing", description: "", icon: "", articleCount: 1 },
+            ]),
+            { status: 200 },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            collection: { id: "c", name: "Billing", slug: "billing" },
+            articles: [
+              { id: "a", title: "Refund timing", slug: "refund-timing", excerpt: "", path: "billing/refund-timing" },
+            ],
+          }),
+          { status: 200 },
+        );
+      }),
+    );
+
+    render(<Panel {...workspace} articleCount={12} widgetKey="rdw_test" wide />);
+    sent.length = 0;
+
+    fireEvent.click(screen.getByRole("button", { name: "Help" }));
+    fireEvent.click(await screen.findByText("Billing"));
+    fireEvent.click(await screen.findByText("Refund timing"));
+
+    await waitFor(() => expect(sent.at(-1)).toBe("relaydesk:expand"));
   });
 
   it("offers the control only where there is room to grow", () => {
@@ -617,5 +674,58 @@ describe("escalating out of the Help tab", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Send a message" }));
 
     expect(await screen.findByPlaceholderText("you@example.com")).toBeTruthy();
+  });
+});
+
+describe("the panel's two tabs", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("keeps the tab a visitor is not on out of reach, not merely out of sight", async () => {
+    // jsdom loads no CSS, so a `hidden` class means nothing there: before
+    // the `hidden` attribute went on, the whole show/hide mechanism could
+    // be deleted and this suite stayed green while a real browser stacked
+    // both tabs on top of each other.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify([]), { status: 200 })),
+    );
+
+    render(<Panel {...workspace} articleCount={12} widgetKey="rdw_test" />);
+
+    // On Home, Help's search box is mounted but must not be reachable.
+    expect(screen.queryByRole("searchbox", { name: /search/i })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Help" }));
+
+    expect(await screen.findByRole("searchbox", { name: /search/i })).toBeTruthy();
+  });
+
+  it("does not let focus wander into the tab nobody is looking at", async () => {
+    // The trap collects focusables from the whole panel, and both tabs
+    // are always mounted. With the tab bar hidden -- most screens -- the
+    // last focusable was a button inside the hidden panel, so Shift+Tab
+    // called focus() on a display:none node, which does nothing, and
+    // focus escaped to <body>.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify([]), { status: 200 })),
+    );
+
+    const { container } = render(
+      <Panel {...workspace} articleCount={12} widgetKey="rdw_test" />,
+    );
+
+    const hiddenPanel = container.querySelector("[hidden]")!;
+    expect(hiddenPanel).toBeTruthy();
+
+    const first = container.querySelector<HTMLElement>("header button")!;
+    first.focus();
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+
+    // Wherever focus wrapped to, it is somewhere the visitor can see.
+    expect(document.activeElement).not.toBe(document.body);
+    expect(hiddenPanel.contains(document.activeElement)).toBe(false);
   });
 });

@@ -244,9 +244,18 @@ export function Panel({
         return;
       }
       if (event.key !== "Tab" || !node) return;
-      const focusable = node.querySelectorAll<HTMLElement>(
-        'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      );
+      // Both tab panels are always mounted and the inactive one is
+      // hidden, so this has to exclude anything inside a hidden subtree.
+      // It did not: with the tab bar away -- a conversation, Compose,
+      // Sent, an open article, which is most screens -- `last` resolved
+      // to a button in the hidden panel, so Shift+Tab called focus() on a
+      // display:none element, which does nothing, and focus fell out of
+      // the panel entirely.
+      const focusable = [
+        ...node.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ].filter((element) => element.closest("[hidden]") === null);
       if (focusable.length === 0) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
@@ -368,7 +377,17 @@ export function Panel({
             tabs never loses where the visitor was: a conversation
             mid-stream, a half-typed message, or (once Help is real)
             wherever its own search left off. */}
-        <div className={tab === "home" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
+        {/* Both the attribute and the class. The class is what actually
+            hides it in a browser; the attribute is what takes it out of
+            the accessibility tree, which is what `getByRole` and the
+            focus trap below both read. Without the attribute nothing in a
+            test could tell a hidden tab from a visible one -- jsdom loads
+            no CSS, so the class alone means nothing there, and the whole
+            mechanism could be deleted with the suite still green. */}
+        <div
+          hidden={tab !== "home"}
+          className={tab === "home" ? "flex min-h-0 flex-1 flex-col" : "hidden"}
+        >
           {homeView.name === "home" && (
             <Home
               workspaceName={displayName}
@@ -406,7 +425,10 @@ export function Panel({
           {homeView.name === "sent" && <Sent onHome={goHome} />}
         </div>
 
-        <div className={tab === "help" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
+        <div
+          hidden={tab !== "help"}
+          className={tab === "help" ? "flex min-h-0 flex-1 flex-col" : "hidden"}
+        >
           <Help
             widgetKey={widgetKey}
             workspaceSlug={workspaceSlug}
