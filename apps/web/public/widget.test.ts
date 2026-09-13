@@ -359,6 +359,69 @@ describe("loader behaviour", () => {
     launcher.click();
     expect(document.getElementById("rds")!.style.display).toBe("none");
   });
+
+  it("grows and shrinks through the stylesheet, never inline", () => {
+    // Inline width and height outrank the max-width:480px takeover and
+    // nothing cleared them, so expanding on a laptop and then narrowing
+    // the window left the panel pinned to all four edges at a fixed size.
+    // A rule inside the same min-width query the large size already uses
+    // cannot collide with the phone takeover at all.
+    loadWidget({ "data-key": "rdw_test" });
+    document.querySelector<HTMLButtonElement>("button")!.click();
+    const frame = document.getElementById("rdw")!;
+
+    window.dispatchEvent(
+      new MessageEvent("message", { data: "relaydesk:expand", origin: SCRIPT_ORIGIN }),
+    );
+
+    const sheets = [...document.head.querySelectorAll("style")]
+      .map((node) => node.textContent ?? "")
+      .join("");
+    expect(sheets).toContain("min(720px,calc(100vw - 48px))");
+    expect(sheets).toContain("@media(min-width:1024px)");
+    expect(frame.style.width).toBe("");
+    expect(frame.style.height).toBe("");
+
+    window.dispatchEvent(
+      new MessageEvent("message", { data: "relaydesk:collapse", origin: SCRIPT_ORIGIN }),
+    );
+
+    const afterCollapse = [...document.head.querySelectorAll("style")]
+      .map((node) => node.textContent ?? "")
+      .join("");
+    expect(afterCollapse).not.toContain("min(720px,calc(100vw - 48px))");
+  });
+
+  it("clears an accent the snippet still carries when the console has none", async () => {
+    // The route answers `accent: null` for a key with no colour of its
+    // own -- distinct from the field being absent. Testing truthiness
+    // treated the two alike, so picking "Default" in the console did
+    // nothing on a live site: the launcher kept whatever colour the
+    // pasted snippet carried, and the one setting a customer could not
+    // fix without re-pasting was the one this route exists to fix.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ accent: null, position: "right" }))),
+    );
+
+    loadWidget({ "data-key": "rdw_test", "data-accent": "#E11D48" });
+    const launcher = document.querySelector<HTMLButtonElement>("button")!;
+    expect(launcher.style.background).toBe("rgb(225, 29, 72)");
+
+    await vi.waitFor(() => expect(launcher.style.background).toBe("rgb(24, 24, 27)"));
+  });
+
+  it("still takes a colour the console does set", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ accent: "#0D9488", position: "right" }))),
+    );
+
+    loadWidget({ "data-key": "rdw_test", "data-accent": "#E11D48" });
+    const launcher = document.querySelector<HTMLButtonElement>("button")!;
+
+    await vi.waitFor(() => expect(launcher.style.background).toBe("rgb(13, 148, 136)"));
+  });
 });
 
 describe("launcher branding", () => {
@@ -410,18 +473,12 @@ describe("panel size", () => {
 });
 
 describe("resizing on request", () => {
-  it("grows and shrinks when the panel asks", () => {
-    const source = readFileSync("public/widget.js", "utf8");
-    expect(source).toContain("relaydesk:expand");
-    expect(source).toContain("relaydesk:collapse");
-  });
 
-  it("ignores the request where there is no room", () => {
-    // Below a laptop the panel is already as large as it gets, and on a
-    // phone it is the whole screen -- growing it there would be a no-op at
-    // best and a broken layout at worst.
+  it("needs no innerWidth guard, because the rule cannot apply on a phone", () => {
+    // The guard also meant a collapse arriving after the window had
+    // shrunk was dropped, leaving the panel stuck large with no way back.
     const source = readFileSync("public/widget.js", "utf8");
-    expect(source).toContain("window.innerWidth < 1024");
+    expect(source).not.toContain("window.innerWidth < 1024");
   });
 
   it("still only trusts messages from its own origin", () => {

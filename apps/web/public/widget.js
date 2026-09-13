@@ -64,6 +64,11 @@
     "inset:0;width:100%;height:100%;border-radius:0}}";
   document.head.appendChild(style);
 
+  // Appended after `style`, so its rule wins at equal specificity when it
+  // has one. Empty until the panel asks to grow.
+  var grow = document.createElement("style");
+  document.head.appendChild(grow);
+
   // Drawn in the host page while the frame's document is still in
   // flight. Until it arrives the iframe is a blank white rectangle, and
   // on a slow connection that is the first thing a visitor sees of the
@@ -128,16 +133,22 @@
       return;
     }
     // The panel asks to grow when a visitor is reading or in a
-    // conversation, and to shrink coming back. Only on a screen with the
-    // room: below 1024px the panel is already as large as it gets, and on
-    // a phone it is the whole screen.
+    // conversation, and to shrink coming back.
+    //
+    // Through a stylesheet rather than inline styles. Inline width and
+    // height outrank the max-width:480px takeover below, and nothing
+    // cleared them -- so expanding on a laptop and then narrowing the
+    // window (or rotating a tablet) left the panel pinned to all four
+    // edges at a fixed size. Wrapping the rule in the same min-width
+    // query the large size already uses means it does not exist at all on
+    // a small screen, so no innerWidth guard is needed -- and a collapse
+    // arriving after the window shrank is no longer dropped.
     if (event.data === "relaydesk:expand" || event.data === "relaydesk:collapse") {
-      if (window.innerWidth < 1024) return;
-      var big = event.data === "relaydesk:expand";
-      if (frame) {
-        frame.style.width = big ? "min(720px,calc(100vw - 48px))" : "440px";
-        frame.style.height = big ? "min(820px,calc(100vh - 120px))" : "min(700px,calc(100vh - 140px))";
-      }
+      grow.textContent =
+        event.data === "relaydesk:expand"
+          ? "@media(min-width:1024px){#rdw,#rds{width:min(720px,calc(100vw - 48px));" +
+            "height:min(820px,calc(100vh - 120px))}}"
+          : "";
     }
   });
 
@@ -149,7 +160,18 @@
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (s) {
       if (!s) return;
-      if (s.accent && s.accent !== accent) launcher.style.background = s.accent;
+      // `null` means this key has no colour of its own and the launcher
+      // should go back to the default -- distinct from the field being
+      // absent. Testing truthiness treated the two the same, so clearing
+      // a colour in the console did nothing on a live site and the
+      // launcher kept whatever the pasted snippet carried.
+      if (s.accent !== undefined) {
+        var next = s.accent || "#18181B";
+        if (next !== accent) {
+          launcher.style.background = next;
+          accent = next;
+        }
+      }
       if (s.position && s.position !== side) {
         launcher.style[side] = "";
         launcher.style[s.position] = "24px";
