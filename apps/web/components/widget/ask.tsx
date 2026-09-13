@@ -369,6 +369,13 @@ export function Ask({
   // that ever moves `escalation` into `email`.
   function acceptEscalation() {
     if (escalation.stage !== "offer") return;
+    // However this offer arrived -- proactively after three answers, or
+    // from a refusal -- it has now been put and answered. Only the
+    // proactive path used to record that, so a refusal-triggered offer
+    // that a visitor declined left the counter free to ask again later
+    // in the same conversation. A bot that asked once and took the
+    // answer is the whole point of the constant.
+    offeredRef.current = true;
     appendTurn({ role: "visitor", text: "Yes", collecting: true });
     appendTurn({
       role: "assistant",
@@ -383,6 +390,7 @@ export function Ask({
   // would have if nothing had gone wrong.
   function declineEscalation() {
     if (escalation.stage !== "offer") return;
+    offeredRef.current = true;
     appendTurn({ role: "visitor", text: "No", collecting: true });
     appendTurn({
       role: "assistant",

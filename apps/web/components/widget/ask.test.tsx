@@ -433,6 +433,36 @@ describe("Ask, in conversation", () => {
     await waitFor(() => expect(screen.getByText("Yes, we ship there.")).toBeTruthy());
     expect(screen.queryByText(/we've been at this a little while/i)).toBeNull();
   });
+
+  it("takes No for an answer, however the offer arrived", async () => {
+    // `offeredRef` was set only on the proactive path, so an offer that
+    // came from a refusal and was declined left the counter free to ask
+    // again once three answers had landed -- the bot asking a visitor who
+    // had already said no.
+    vi.stubGlobal(
+      "fetch",
+      mockAskSequence([
+        [{ event: "done", data: { outcome: "refused", citations: [] } }],
+        [
+          { event: "text", data: { text: "Try this." } },
+          { event: "done", data: { outcome: "answered", citations: [] } },
+        ],
+      ]),
+    );
+
+    render(<Ask widgetKey="rdw_test" onDegrade={() => {}} onCompose={() => {}} />);
+    await askQuestion("one");
+    fireEvent.click(await screen.findByRole("button", { name: "No" }));
+
+    for (const question of ["two", "three", "four"]) {
+      await askQuestion(question);
+      await waitFor(() =>
+        expect(screen.getAllByText("Try this.").length).toBeGreaterThan(0),
+      );
+    }
+
+    expect(screen.queryByText(/we've been at this a little while/i)).toBeNull();
+  });
 });
 
 describe("Ask, opening choices", () => {

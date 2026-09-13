@@ -59,6 +59,33 @@ describe("the panel's ask proxy", () => {
     expect(new Headers(calls[0].headers).has("x-forwarded-for")).toBe(false);
   });
 
+  it("forwards the conversation, which is the seam that broke once", async () => {
+    // The API accepted `history` for a while before anything sent it, and
+    // every answer looked right in isolation because each side's own
+    // tests passed. This hop is where it was dropped, and it had no test
+    // of its own at all.
+    const calls = stubFetch();
+
+    await ask({
+      key: "rdw_x",
+      question: "and annually?",
+      history: [{ role: "visitor", text: "how do refunds work?" }],
+    });
+
+    expect(JSON.parse(String(calls[0].body))).toEqual({
+      question: "and annually?",
+      history: [{ role: "visitor", text: "how do refunds work?" }],
+    });
+  });
+
+  it("sends an empty conversation rather than none at all", async () => {
+    const calls = stubFetch();
+
+    await ask({ key: "rdw_x", question: "hi" });
+
+    expect(JSON.parse(String(calls[0].body)).history).toEqual([]);
+  });
+
   it("asks for nothing at all without a key or a question", async () => {
     const calls = stubFetch();
 
