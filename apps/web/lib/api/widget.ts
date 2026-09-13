@@ -122,6 +122,35 @@ export interface WidgetArticlePage {
 }
 
 /**
+ * A knowledge-base path, encoded for the API's catch-all route, or `null`
+ * if it does not name a place inside this key's knowledge base.
+ *
+ * The slashes have to survive -- the path is slash-joined
+ * ("billing/refunds") and the catch-all expects them -- so each segment is
+ * encoded separately rather than the whole string at once, which would
+ * turn them into %2F and resolve nothing.
+ *
+ * Encoding alone is not enough to make that safe. `encodeURIComponent`
+ * leaves a dot untouched, so `..` passes through intact and URL resolution
+ * then normalises it away: `/widget/{key}/kb/../../../../openapi.json`
+ * resolves to `/openapi.json`. The key segment is consumed by the climb,
+ * so no valid key is needed -- it would turn this proxy into an anonymous
+ * door onto every path the API serves. An empty segment is the same bug
+ * from the other end: a leading slash addresses the API's root instead of
+ * a path beneath this key.
+ *
+ * So the segments are checked, not just escaped. Dot segments and empty
+ * segments are refused outright; everything else is a legitimate slug.
+ */
+export function encodeKbPath(path: string): string | null {
+  const segments = path.split("/");
+  if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+    return null;
+  }
+  return segments.map(encodeURIComponent).join("/");
+}
+
+/**
  * `GET /widget/{key}/kb/{path}`, resolved to the article it names, its
  * collections included -- `article.tsx` needs the nearest one to find the
  * article's related reading.
@@ -135,11 +164,10 @@ export async function getWidgetArticle(
   key: string,
   path: string,
 ): Promise<WidgetArticlePage | null> {
+  const encoded = encodeKbPath(path);
+  if (encoded === null) return null;
+
   try {
-    // Encoded per segment, not as one string -- `path` is slash-joined
-    // ("billing/refunds") and the API's catch-all expects those slashes
-    // intact. See `getPublicNode` in `lib/api/public.ts` for the same idiom.
-    const encoded = path.split("/").map(encodeURIComponent).join("/");
     const node = await apiFetch<{
       kind: "category" | "article";
       article?: WidgetArticle;

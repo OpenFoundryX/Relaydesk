@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { ApiError, apiFetch } from "@/lib/api/client";
+import { encodeKbPath } from "@/lib/api/widget";
 
 /**
  * The Help tab's own collections browsing, proxied server-side for the
@@ -58,6 +59,12 @@ export async function GET(request: NextRequest) {
   const path = request.nextUrl.searchParams.get("path");
   if (!key) return NextResponse.json(path ? null : []);
 
+  // Refused before any call goes out: a path that climbs or has an empty
+  // segment does not name a place in this key's knowledge base. See
+  // `encodeKbPath` for what the climb would otherwise reach.
+  const encoded = path === null ? null : encodeKbPath(path);
+  if (path !== null && encoded === null) return NextResponse.json(null);
+
   try {
     if (!path) {
       const collections = await apiFetch<CollectionSummary[]>(
@@ -67,9 +74,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(collections);
     }
 
-    // Encoded per segment, not as one string -- see `getWidgetArticle` in
-    // `lib/api/widget.ts` for why a slash-joined path needs this.
-    const encoded = path.split("/").map(encodeURIComponent).join("/");
     const node = await apiFetch<Node>(`/widget/${encodeURIComponent(key)}/kb/${encoded}`, {
       auth: false,
     });

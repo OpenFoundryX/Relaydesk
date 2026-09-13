@@ -105,4 +105,19 @@ describe("the Help tab's collections route", () => {
       { auth: false },
     );
   });
+  it("refuses a path that climbs out of the knowledge base", async () => {
+    // `encodeURIComponent` does not escape dots, so `..` survives
+    // per-segment encoding and URL resolution then normalises it away:
+    // `/widget/rdw_x/kb/../../../../openapi.json` resolves to
+    // `/openapi.json`. The key segment is consumed by the climb, so this
+    // needs no valid key at all -- it turns the proxy into a door onto
+    // every path the API serves.
+    expect(await (await get("key=rdw_x&path=../../../../openapi.json")).json()).toBeNull();
+    expect(await (await get("key=rdw_x&path=billing/../../admin")).json()).toBeNull();
+    expect(await (await get("key=rdw_x&path=.")).json()).toBeNull();
+    // An empty segment is the other half: a leading slash would address
+    // the API's root rather than a path under this key's knowledge base.
+    expect(await (await get("key=rdw_x&path=/billing")).json()).toBeNull();
+    expect(mocked).not.toHaveBeenCalled();
+  });
 });
