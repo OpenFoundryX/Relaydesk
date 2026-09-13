@@ -29,6 +29,10 @@ type WidgetBrandingSettings = {
 
 export type PanelProps = {
   workspaceName: string;
+  /** This workspace's help-site subdomain, straight off the bootstrap.
+   *  Forwarded to Help for the article view's help-centre link -- the
+   *  panel is anonymous, so there is no session to resolve one from. */
+  workspaceSlug?: string;
   monogram: string;
   settings: Record<string, unknown>;
   articleCount: number;
@@ -104,6 +108,7 @@ const PANEL_ZOOM = 1.12;
 
 export function Panel({
   workspaceName,
+  workspaceSlug,
   monogram,
   settings,
   articleCount,
@@ -398,6 +403,7 @@ export function Panel({
         <div className={tab === "help" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
           <Help
             widgetKey={widgetKey}
+            workspaceSlug={workspaceSlug}
             // `compose()`, not `setTab("home")`: the form is what was
             // asked for, and the tab is only where it lives -- `compose`
             // switches to it anyway. Stopping at the tab dropped the

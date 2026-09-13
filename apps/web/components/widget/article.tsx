@@ -28,6 +28,34 @@ const NO_IMAGE = "";
  *  would put seventy-nine rows under every article in it, in a panel
  *  three hundred and eighty pixels wide. Related reading stops being
  *  related somewhere well before that. */
+/**
+ * This workspace's public help site, e.g. `http://chronon.localhost:3000`.
+ *
+ * Mirrors `getPortalOrigin` in `lib/api/portal.ts`, which cannot be used
+ * here: that one is `server-only` and resolves the slug from a session,
+ * and the panel is an anonymous client component addressed by a key. The
+ * slug arrives on the bootstrap instead.
+ *
+ * Both env vars are `NEXT_PUBLIC_`, so they are inlined at build time and
+ * readable here. A missing slug yields `null` and the link is not drawn:
+ * an "open in help centre" that 404s is worse than no link, and that is
+ * exactly what a path on the widget's own origin did -- the console and
+ * the portal are different hosts, and `middleware.ts` resolves a
+ * workspace only from `<slug>.<portal domain>`.
+ */
+function helpCentreUrl(slug: string | undefined, path: string): string | null {
+  if (!slug) return null;
+  const domain = process.env.NEXT_PUBLIC_PORTAL_DOMAIN ?? "localhost:3000";
+  let protocol = "http:";
+  try {
+    protocol = new URL(process.env.NEXT_PUBLIC_WEB_URL ?? "http://localhost:3000").protocol;
+  } catch {
+    protocol = "http:";
+  }
+  const segments = path.split("/").map(encodeURIComponent).join("/");
+  return `${protocol}//${slug}.${domain}/help/${segments}`;
+}
+
 const MAX_RELATED = 5;
 
 const DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
@@ -64,6 +92,7 @@ export function Article({
   onCompose,
   onOpen,
   onTitleChange,
+  workspaceSlug,
 }: {
   widgetKey: string | undefined;
   path: string;
@@ -79,6 +108,9 @@ export function Article({
    * alongside the full-height signal it already reports.
    */
   onTitleChange?: (title: string | null) => void;
+  /** This workspace's help-site subdomain; without it the
+   *  help-centre link is not drawn. */
+  workspaceSlug?: string;
 }) {
   // See results.tsx for why this resets by remounting (keyed on `path` in
   // panel.tsx) rather than by clearing state synchronously in the effect.
@@ -270,10 +302,10 @@ export function Article({
         </div>
       )}
 
-      {article && (
+      {article && helpCentreUrl(workspaceSlug, article.path) && (
         <p className="text-[12px] text-ink-400">
           <a
-            href={`/help/${article.path}`}
+            href={helpCentreUrl(workspaceSlug, article.path)!}
             // The panel lives in the loader's iframe (spec D5), which has
             // no chrome and no way back -- see ask.tsx's citations for the
             // same reasoning. A same-frame navigation would replace the

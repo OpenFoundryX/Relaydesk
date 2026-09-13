@@ -19,6 +19,10 @@ import { ApiError, apiFetch } from "./client";
 /** Everything the frame needs for its first paint, in one call. */
 export interface WidgetBootstrap {
   workspaceName: string;
+  /** This workspace's subdomain on the public help site. The panel is
+   *  anonymous and has no session to resolve one from, so without this
+   *  an article has no help-centre address to offer. */
+  workspaceSlug: string;
   monogram: string;
   settings: Record<string, unknown>;
   /** Drives the empty-knowledge-base screen (spec D7). */

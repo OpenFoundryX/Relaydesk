@@ -54,6 +54,7 @@ export function Help({
   onCompose,
   onEvent,
   onFullScreenChange,
+  workspaceSlug,
 }: {
   widgetKey: string | undefined;
   onCompose: () => void;
@@ -77,6 +78,8 @@ export function Help({
    * the other in a render that lands between the two calls.
    */
   onFullScreenChange?: (full: boolean, title?: string) => void;
+  /** Forwarded to `Article` for its help-centre link. */
+  workspaceSlug?: string;
 }) {
   const [typed, setTyped] = useState("");
   // Committed only on submit, same as Home/Results (spec D8: search runs
@@ -186,6 +189,7 @@ export function Help({
           <Article
             key={view.path}
             widgetKey={widgetKey}
+            workspaceSlug={workspaceSlug}
             path={view.path}
             onCompose={onCompose}
             onOpen={(path) => {

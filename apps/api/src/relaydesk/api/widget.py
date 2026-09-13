@@ -96,6 +96,7 @@ async def bootstrap(key: str, session: DbSession) -> WidgetBootstrapOut:
     config = await session.get(AiConfig, workspace.id)
     return WidgetBootstrapOut(
         workspace_name=workspace.name,
+        workspace_slug=workspace.slug,
         monogram=workspace.monogram,
         settings=widget_key.settings,
         article_count=article_count,

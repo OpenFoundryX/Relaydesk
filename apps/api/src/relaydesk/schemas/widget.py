@@ -7,6 +7,13 @@ from relaydesk.schemas.base import CamelModel
 
 class WidgetBootstrapOut(CamelModel):
     workspace_name: str
+    # The workspace's own subdomain on the public help site. The panel has
+    # no session to resolve one from -- it is anonymous, addressed only by
+    # a key -- so "open this in the help centre" had nowhere to point and
+    # linked to a path on the widget's own origin, which resolves to no
+    # workspace and 404s. The slug is the address of every article the
+    # workspace has published and does not change when it is renamed.
+    workspace_slug: str
     monogram: str
     settings: dict
     # Drives the empty-knowledge-base screen (spec D7).

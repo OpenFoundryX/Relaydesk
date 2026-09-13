@@ -231,12 +231,39 @@ describe("Article, the way out to the full help site", () => {
   it("links to the article on the help site, opening a new tab rather than navigating the panel's own iframe", async () => {
     vi.stubGlobal("fetch", routedFetch({ article: ARTICLE }));
 
-    render(<Article widgetKey="rdw_test" path="billing/refund-timing" onCompose={() => {}} onOpen={() => {}} />);
+    render(
+      <Article
+        widgetKey="rdw_test"
+        workspaceSlug="chronon"
+        path="billing/refund-timing"
+        onCompose={() => {}}
+        onOpen={() => {}}
+      />,
+    );
 
+    // An absolute address on the workspace's own help subdomain. It used
+    // to be the bare path `/help/...`, which resolves against the widget's
+    // origin -- and `middleware.ts` resolves a workspace only from
+    // `<slug>.<portal domain>`, so that link opened a 404. It is also the
+    // stated fallback for images the widget deliberately drops.
     const link = (await screen.findByText("Open in help center")) as HTMLAnchorElement;
-    expect(link.getAttribute("href")).toBe("/help/billing/refund-timing");
+    expect(link.getAttribute("href")).toBe(
+      "http://chronon.localhost:3000/help/billing/refund-timing",
+    );
     expect(link.getAttribute("target")).toBe("_blank");
     expect(link.getAttribute("rel")).toBe("noreferrer");
+  });
+
+  it("draws no help-site link at all when there is no slug to build one from", async () => {
+    // A link that 404s is worse than no link.
+    vi.stubGlobal("fetch", routedFetch({ article: ARTICLE }));
+
+    render(
+      <Article widgetKey="rdw_test" path="billing/refund-timing" onCompose={() => {}} onOpen={() => {}} />,
+    );
+
+    await screen.findByText(ARTICLE.title);
+    expect(screen.queryByText("Open in help center")).toBeNull();
   });
 });
 
@@ -302,7 +329,6 @@ describe("Article, telling the panel its own title", () => {
       <Article
         widgetKey="rdw_test"
         path="billing/refund-timing"
-        onBack={() => {}}
         onOpen={() => {}}
         onCompose={() => {}}
       />,
