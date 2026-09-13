@@ -23,6 +23,7 @@ them is an error, and none of them tells the visitor why: that a workspace
 has exhausted its AI budget is not a visitor's business.
 """
 
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
@@ -120,6 +121,37 @@ short clarifying question that would help find the right article. Keep the \
 whole reply under 40 words.
 
 """ + _NO_ACTIONS
+
+
+_MARKER_RE = re.compile(r"\s?\[\d+\]")
+
+
+def _strip_markers(text: str, role: str) -> str:
+    """Drop `[n]` citation markers from an assistant turn before it goes
+    back to the model.
+
+    Sources are renumbered from 1 on every question, and which article
+    ranks first changes with the query -- so `[1]` in a prior answer and
+    `[1]` in this turn's context routinely mean different articles. Left
+    in, the model is shown "Within 14 days [1]." as its own earlier
+    message and may carry that number forward, and `resolve_citations`
+    will resolve it happily because it is in range.
+
+    That is worse than the invented number the citation machinery was
+    built for. An out-of-range `[9]` resolves to nothing and the visitor
+    sees no link; an in-range but stale `[2]` resolves to a real article
+    that does not support the sentence, and the panel renders it as a
+    citation a visitor is invited to trust (spec D3).
+
+    Nothing is lost by removing them: the markers are an internal handle
+    for `resolve_citations`, and the visitor never sees them -- the panel
+    turns them into superscript links against the numbering of the turn
+    they arrived with.
+
+    Visitor turns are left alone. A visitor who types "[1]" is writing
+    prose, not addressing our source list.
+    """
+    return _MARKER_RE.sub("", text) if role == "assistant" else text
 
 
 def _retrieval_query(question: str, history: list[Turn]) -> str:
@@ -356,11 +388,16 @@ async def answer(
     # a visitor's own earlier message can carry the same PII the current
     # one can, and it reaches the same provider.
     asked = question if config.base_url else ai_redact.redact(question)
-    sent_history = (
-        history
-        if config.base_url
-        else [Turn(role=turn.role, text=ai_redact.redact(turn.text)) for turn in history]
-    )
+    sent_history = [
+        Turn(
+            role=turn.role,
+            text=_strip_markers(
+                turn.text if config.base_url else ai_redact.redact(turn.text),
+                turn.role,
+            ),
+        )
+        for turn in history
+    ]
 
     # No sources is not "nothing to do" -- it is the trigger for the
     # clarify-only prompt (spec: a visitor asking "hi" must not be met with

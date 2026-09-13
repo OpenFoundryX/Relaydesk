@@ -582,3 +582,46 @@ def test_neither_prompt_lets_the_model_discuss_citation_numbers() -> None:
     """
     for prompt in (ai_answers.SYSTEM, ai_answers.CLARIFY_SYSTEM):
         assert "never correct or apologise for them" in prompt
+
+
+async def test_a_prior_answers_citation_numbers_do_not_go_back_to_the_model(
+    db_session,
+) -> None:
+    """`[n]` is scoped to the turn it arrived with, and nothing else.
+
+    Sources are renumbered from 1 on every question and ranking moves with
+    the query, so `[1]` in a prior answer and `[1]` in this turn's context
+    routinely name different articles. Sent back, the model sees "Within
+    14 days [1]." as its own earlier message and can carry the number
+    forward -- and `resolve_citations` resolves it, because it is in
+    range. An out-of-range `[9]` shows the visitor no link; an in-range
+    stale `[2]` shows them a real article that does not support the
+    sentence, rendered as a citation they are invited to trust (spec D3).
+    """
+    workspace, config, key = await _setup(db_session)
+    await _publish(db_session, workspace)
+    provider = FakeProvider(chunks=["Yes [1]."])
+
+    attempt = await answer(
+        db_session, workspace, key, "and annually?",
+        history=[
+            Turn(role="visitor", text="how do refunds work?"),
+            Turn(role="assistant", text="Within 14 days [1]. See also [2]."),
+        ],
+        provider=provider,
+        audit_sessions=_audit_sessions(db_session),
+    )
+    [chunk async for chunk in attempt.stream]
+
+    sent = provider.received_history
+    assert sent is not None
+    assistant = [turn for turn in sent if turn.role == "assistant"]
+    assert assistant, "the assistant turn must still be sent"
+    assert "[1]" not in assistant[0].text
+    assert "[2]" not in assistant[0].text
+    # The words survive; only the handles go.
+    assert "Within 14 days." in assistant[0].text
+
+    # A visitor writing "[1]" is writing prose, not addressing our list.
+    visitor = [turn for turn in sent if turn.role == "visitor"]
+    assert visitor[0].text == "how do refunds work?"
