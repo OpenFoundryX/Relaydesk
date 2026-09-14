@@ -1,43 +1,51 @@
 import Link from "next/link";
-import { ChevronRight } from "lucide-react";
 
-import { Logo } from "@/components/console/logo";
 import { PlatformMenu, ResourcesMenu } from "@/components/marketing/nav-menus";
-import { Button } from "@/components/ui/button";
+import { PillLink } from "@/components/marketing/pill";
+import { SiteLogo } from "@/components/marketing/site-logo";
 
+/**
+ * A single transparent bar: no background, no border, no shadow. Logo left,
+ * links centre, a text link and one filled pill right.
+ */
 export function SiteHeader() {
   return (
-    <header className="sticky top-0 z-20 border-b border-ink-200/80 bg-white/85 backdrop-blur">
-      <div className="mx-auto flex h-16 max-w-6xl items-center px-6">
+    <header className="absolute inset-x-0 top-0 z-20">
+      <div className="mx-auto flex h-20 max-w-[1200px] items-center px-6 lg:px-10">
         <Link href="/" aria-label="Relaydesk home">
-          <Logo />
+          <SiteLogo />
         </Link>
-        <nav className="ml-auto hidden items-center gap-1 md:flex" aria-label="Primary">
+
+        <nav
+          className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-1 lg:flex"
+          aria-label="Primary"
+        >
           <PlatformMenu />
           <ResourcesMenu />
           <Link
             href="/#pricing"
-            className="inline-flex h-8 items-center rounded-md px-2 text-[13px] font-medium text-ink-600 transition-colors hover:text-ink-900"
+            className="px-3 py-0.5 text-[16px] font-normal text-ink-black"
           >
             Pricing
           </Link>
           <Link
-            href="/contact"
-            className="inline-flex h-8 items-center rounded-md px-2 text-[13px] font-medium text-ink-600 transition-colors hover:text-ink-900"
+            href="https://github.com/openfoundry/relaydesk"
+            className="px-3 py-0.5 text-[16px] font-normal text-ink-black"
           >
-            Book a demo
+            Open source
           </Link>
         </nav>
-        <div className="ml-auto flex items-center gap-2 md:ml-4">
-          <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex">
-            <Link href="/login">Sign in</Link>
-          </Button>
-          <Button asChild variant="primary" size="md">
-            <Link href="/contact">
-              Try for free
-              <ChevronRight />
-            </Link>
-          </Button>
+
+        <div className="ml-auto flex items-center gap-5">
+          <Link
+            href="/login"
+            className="hidden text-[16px] font-normal text-ink-black sm:inline"
+          >
+            Sign in
+          </Link>
+          <PillLink href="/contact" variant="filled" className="h-10">
+            Get started
+          </PillLink>
         </div>
       </div>
     </header>

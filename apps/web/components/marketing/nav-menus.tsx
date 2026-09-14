@@ -14,6 +14,8 @@ import {
   Inbox,
   Lightbulb,
   LifeBuoy,
+  MessageSquare,
+  Quote,
   Receipt,
   Server,
   ShieldCheck,
@@ -36,19 +38,21 @@ interface MenuItem {
 }
 
 const ticketing: MenuItem[] = [
-  { icon: Inbox, title: "Unified inbox", description: "Email, Discord, portal, API", href: "/#product" },
-  { icon: BarChart3, title: "Analytics", description: "See what the AI handles", href: "/#analytics" },
+  { icon: Inbox, title: "One inbox", description: "Email, Discord, portal, API", href: "/#inbox" },
+  { icon: MessageSquare, title: "Embedded widget", description: "One script tag", href: "/#answers" },
+  { icon: Lightbulb, title: "Triage", description: "Auto-assign and label", href: "/#triage" },
+  { icon: BarChart3, title: "Analytics", description: "Deflection you can audit", href: "/#analytics" },
 ];
 
 const aiAgent: MenuItem[] = [
+  { icon: Quote, title: "Grounded answers", description: "Cited, or it won't answer", href: "/#answers" },
   { icon: Database, title: "Connect your data", description: "Full account context", href: "/#agent" },
   { icon: Receipt, title: "Solve billing issues", description: "Refunds and cancellations", href: "/#agent" },
-  { icon: Lightbulb, title: "Triage tickets", description: "Auto-assign and label", href: "/#triage" },
   { icon: Webhook, title: "Custom actions", description: "Webhooks and MCP servers", href: "/#agent" },
 ];
 
 const knowledge: MenuItem[] = [
-  { icon: Globe, title: "Hosted user portal", description: "Customer self-service", href: "/#portal" },
+  { icon: Globe, title: "Hosted help centre", description: "Customer self-service", href: "/#portal" },
   { icon: BookOpen, title: "Internal knowledge base", description: "Your company docs", href: "/#portal" },
 ];
 
@@ -69,7 +73,7 @@ export function PlatformMenu() {
           <MenuGroup title="AI agent" items={aiAgent} />
           <MenuGroup title="Knowledge" items={knowledge} />
         </div>
-        <div className="space-y-6 border-l border-ink-200 bg-ink-50 p-6">
+        <div className="space-y-6 border-l border-hairline bg-fog-white p-6">
           <div>
             <GroupTitle>Getting started</GroupTitle>
             <ul className="mt-2 space-y-0.5">
@@ -116,7 +120,7 @@ export function ResourcesMenu() {
         </ul>
         <Link
           href={REPO}
-          className="mt-2 flex items-center gap-2 rounded-md border-t border-ink-200 px-3 pb-1 pt-3 text-[13px] text-ink-600 hover:text-ink-900"
+          className="mt-2 flex items-center gap-2 border-t border-hairline px-3 pb-1 pt-3 text-[15px] text-slate-gray hover:text-ink-black"
         >
           <BrandIcon brand="github" mono className="size-3.5" />
           Star on GitHub
@@ -184,10 +188,10 @@ function NavDropdown({ label, children }: { label: string; children: ReactNode }
           else setOpen(true);
         }}
         className={cn(
-          "inline-flex h-8 items-center gap-1 rounded-md border px-2 text-[13px] font-medium transition-colors",
+          "inline-flex h-8 items-center gap-1 rounded-full px-3 text-[16px] font-normal transition-colors",
           open
-            ? "border-accent-500 bg-accent-50 text-ink-900"
-            : "border-transparent text-ink-600 hover:text-ink-900",
+            ? "bg-mist-gray text-ink-black"
+            : "text-ink-black hover:bg-mist-gray",
         )}
       >
         {label}
@@ -199,7 +203,7 @@ function NavDropdown({ label, children }: { label: string; children: ReactNode }
       {open && (
         <div className="absolute left-1/2 top-full z-30 -translate-x-1/2 pt-3">
           <div
-            className="animate-content-in overflow-hidden rounded-xl border border-ink-200 bg-white shadow-overlay"
+            className="animate-content-in overflow-hidden rounded-card bg-paper-white shadow-popover"
             onClick={(event) => {
               if ((event.target as HTMLElement).closest("a")) setOpen(false);
             }}
@@ -229,7 +233,7 @@ function MenuGroup({ title, items }: { title: string; items: MenuItem[] }) {
 
 function GroupTitle({ children }: { children: ReactNode }) {
   return (
-    <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-500">{children}</p>
+    <p className="text-[14px] font-normal text-ash-gray">{children}</p>
   );
 }
 
@@ -237,13 +241,13 @@ function MenuLink({ item }: { item: MenuItem }) {
   return (
     <Link
       href={item.href}
-      className="group flex items-start gap-3 rounded-md px-3 py-2 transition-colors hover:bg-ink-50"
+      className="group flex items-start gap-3 rounded-[12px] px-3 py-2 transition-colors hover:bg-mist-gray"
     >
-      <item.icon className="mt-0.5 size-4 shrink-0 text-ink-400 group-hover:text-ink-700" aria-hidden />
+      <item.icon className="mt-0.5 size-4 shrink-0 text-smoke-gray group-hover:text-ink-black" aria-hidden />
       <span>
-        <span className="block text-[13px] font-medium text-ink-900">{item.title}</span>
+        <span className="block text-[15px] font-w450 text-ink-black">{item.title}</span>
         {item.description && (
-          <span className="block text-[12px] text-ink-500">{item.description}</span>
+          <span className="block text-[14px] text-slate-gray">{item.description}</span>
         )}
       </span>
     </Link>
@@ -254,9 +258,9 @@ function SimpleLink({ href, icon: Icon, children }: { href: string; icon: Lucide
   return (
     <Link
       href={href}
-      className="group flex items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] font-medium text-ink-800 transition-colors hover:bg-white hover:text-ink-900"
+      className="group flex items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-[15px] font-normal text-ink-black transition-colors hover:bg-mist-gray"
     >
-      <Icon className="size-3.5 text-ink-400 group-hover:text-ink-700" aria-hidden />
+      <Icon className="size-3.5 text-smoke-gray group-hover:text-ink-black" aria-hidden />
       {children}
     </Link>
   );
