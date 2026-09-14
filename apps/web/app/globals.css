@@ -24,10 +24,397 @@
   ::selection {
     @apply bg-accent-200 text-ink-950;
   }
+
+  /*
+   * The marketing site runs the Steep palette, so the two places the
+   * console's citron leaks in through a global -- the focus ring and the
+   * selection highlight -- are overridden for that subtree only.
+   */
+  .site-marketing :focus-visible {
+    @apply ring-ink-black ring-offset-paper-white;
+  }
+
+  .site-marketing ::selection {
+    @apply bg-blush-peach text-sienna-brown;
+  }
 }
 
 @layer utilities {
   .tabular {
     font-variant-numeric: tabular-nums;
+  }
+
+  /* Fades the two ends of a marquee into the page rather than cutting them. */
+  .marquee-mask {
+    -webkit-mask-image: linear-gradient(
+      to right,
+      transparent,
+      black 8%,
+      black 92%,
+      transparent
+    );
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      black 8%,
+      black 92%,
+      transparent
+    );
+  }
+}
+
+/*
+ * The hero wash.
+ *
+ * Note this is a deliberate departure from the "97% achromatic" rule in the
+ * Steep token doc: the live site's hero carries a large soft gradient, and
+ * the written spec omits it. Kept to the hero and the strip beneath it so the
+ * rest of the page stays the quiet paper the rest of the system describes.
+ */
+.aurora {
+  background-image:
+    radial-gradient(
+      58% 44% at 18% 8%,
+      rgba(251, 225, 209, 0.72) 0%,
+      rgba(251, 225, 209, 0) 68%
+    ),
+    radial-gradient(
+      46% 40% at 72% 4%,
+      rgba(233, 216, 240, 0.62) 0%,
+      rgba(233, 216, 240, 0) 70%
+    ),
+    radial-gradient(
+      60% 50% at 88% 42%,
+      rgba(252, 214, 196, 0.62) 0%,
+      rgba(252, 214, 196, 0) 72%
+    ),
+    radial-gradient(
+      52% 46% at 34% 62%,
+      rgba(255, 238, 222, 0.68) 0%,
+      rgba(255, 238, 222, 0) 74%
+    );
+}
+
+/*
+ * The hero assembly.
+ *
+ * The artifacts start scattered and converge into the tidy collage over the
+ * first ~640px of scroll. Driven off the root scroller rather than a view
+ * timeline because the hero is already at the top of the page, so there is no
+ * "entry" phase to hang a view() timeline on.
+ *
+ * The transform lives on a wrapper, not on the artifact itself: the artifact
+ * is already running the load-time fade, and one element cannot hold two
+ * animations on two different timelines without a lot of ceremony.
+ */
+@keyframes assemble-l {
+  from {
+    transform: translate3d(-58px, 54px, 0) rotate(-2.6deg) scale(0.93);
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes assemble-c {
+  from {
+    transform: translate3d(0, -22px, 0) scale(0.97);
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes assemble-r {
+  from {
+    transform: translate3d(58px, 62px, 0) rotate(2.4deg) scale(0.93);
+  }
+  to {
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: scroll()) {
+    .site-marketing .hero-piece {
+      animation-timeline: scroll(root block);
+      animation-range: 0px 640px;
+      animation-fill-mode: both;
+      animation-timing-function: linear;
+      will-change: transform;
+    }
+    .site-marketing .hero-piece-l {
+      animation-name: assemble-l;
+    }
+    .site-marketing .hero-piece-c {
+      animation-name: assemble-c;
+    }
+    .site-marketing .hero-piece-r {
+      animation-name: assemble-r;
+    }
+  }
+}
+
+/*
+ * The travelling highlight.
+ *
+ * Walks the four accent tints down the list as the reader scrolls, so the
+ * active question is the only coloured surface at any moment. The order
+ * matches the setup cards and the answer sequence, which is what stops four
+ * colours from reading as four unrelated decisions.
+ */
+@keyframes q-on-1 {
+  0%,
+  22% {
+    background-color: #fbe1d1;
+  }
+  30%,
+  100% {
+    background-color: rgba(251, 225, 209, 0);
+  }
+}
+@keyframes q-on-2 {
+  0%,
+  22% {
+    background-color: rgba(219, 229, 251, 0);
+  }
+  30%,
+  47% {
+    background-color: #dbe5fb;
+  }
+  55%,
+  100% {
+    background-color: rgba(219, 229, 251, 0);
+  }
+}
+@keyframes q-on-3 {
+  0%,
+  47% {
+    background-color: rgba(216, 236, 219, 0);
+  }
+  55%,
+  72% {
+    background-color: #d8ecdb;
+  }
+  80%,
+  100% {
+    background-color: rgba(216, 236, 219, 0);
+  }
+}
+@keyframes q-on-4 {
+  0%,
+  72% {
+    background-color: rgba(231, 220, 246, 0);
+  }
+  80%,
+  100% {
+    background-color: #e7dcf6;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: view()) {
+    .site-marketing .q-list {
+      view-timeline-name: --q-list;
+      view-timeline-axis: block;
+    }
+    .site-marketing .q-item {
+      animation-timeline: --q-list;
+      animation-range: entry 70% exit 30%;
+      animation-fill-mode: both;
+      animation-timing-function: linear;
+    }
+    .site-marketing .q-item-1 {
+      animation-name: q-on-1;
+    }
+    .site-marketing .q-item-2 {
+      animation-name: q-on-2;
+    }
+    .site-marketing .q-item-3 {
+      animation-name: q-on-3;
+    }
+    .site-marketing .q-item-4 {
+      animation-name: q-on-4;
+    }
+  }
+}
+
+/*
+ * The scroll-linked answer sequence.
+ *
+ * Frames 2-4 sit over frame 1 and default to transparent, so a browser with
+ * no scroll-driven animation support shows frame 1 as a finished artifact
+ * rather than a blank box or four overlapping ones. Nothing here is hidden
+ * outside that default.
+ */
+.seq-stack {
+  position: relative;
+  min-height: 430px;
+}
+
+.seq-frame-2,
+.seq-frame-3,
+.seq-frame-4 {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  opacity: 0;
+}
+
+@keyframes seq-1 {
+  0%,
+  17% {
+    opacity: 1;
+  }
+  25%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes seq-2 {
+  0%,
+  17% {
+    opacity: 0;
+  }
+  25%,
+  44% {
+    opacity: 1;
+  }
+  52%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes seq-3 {
+  0%,
+  44% {
+    opacity: 0;
+  }
+  52%,
+  71% {
+    opacity: 1;
+  }
+  79%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes seq-4 {
+  0%,
+  71% {
+    opacity: 0;
+  }
+  79%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes seq-step-1 {
+  0%,
+  20% {
+    opacity: 1;
+  }
+  28%,
+  100% {
+    opacity: 0.35;
+  }
+}
+@keyframes seq-step-2 {
+  0%,
+  20% {
+    opacity: 0.35;
+  }
+  28%,
+  47% {
+    opacity: 1;
+  }
+  55%,
+  100% {
+    opacity: 0.35;
+  }
+}
+@keyframes seq-step-3 {
+  0%,
+  47% {
+    opacity: 0.35;
+  }
+  55%,
+  74% {
+    opacity: 1;
+  }
+  82%,
+  100% {
+    opacity: 0.35;
+  }
+}
+@keyframes seq-step-4 {
+  0%,
+  74% {
+    opacity: 0.35;
+  }
+  82%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: view()) {
+    .site-marketing .answer-seq {
+      view-timeline-name: --answer-seq;
+      view-timeline-axis: block;
+    }
+
+    /* `entry 100% exit 0%` is the stretch where the section fully covers the
+       scrollport, which is the span the reader actually scrubs through. */
+    .site-marketing .seq-frame,
+    .site-marketing .seq-step {
+      animation-timeline: --answer-seq;
+      animation-range: entry 100% exit 0%;
+      animation-fill-mode: both;
+      animation-timing-function: linear;
+    }
+
+    .site-marketing .seq-frame-1 {
+      animation-name: seq-1;
+    }
+    .site-marketing .seq-frame-2 {
+      animation-name: seq-2;
+    }
+    .site-marketing .seq-frame-3 {
+      animation-name: seq-3;
+    }
+    .site-marketing .seq-frame-4 {
+      animation-name: seq-4;
+    }
+
+    .site-marketing .seq-step-1 {
+      animation-name: seq-step-1;
+    }
+    .site-marketing .seq-step-2 {
+      animation-name: seq-step-2;
+    }
+    .site-marketing .seq-step-3 {
+      animation-name: seq-step-3;
+    }
+    .site-marketing .seq-step-4 {
+      animation-name: seq-step-4;
+    }
+  }
+}
+
+/*
+ * One switch for every piece of marketing motion: the marquee, the chart
+ * draw-ons, the blinking caret and the reveals all resolve to their finished
+ * state instead of moving.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .site-marketing *,
+  .site-marketing *::before,
+  .site-marketing *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.01ms !important;
   }
 }

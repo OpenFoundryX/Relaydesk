@@ -1,60 +1,74 @@
-import Link from "next/link";
-import { Check } from "lucide-react";
-
-import { Button } from "@/components/ui/button";
+import { PillLink } from "@/components/marketing/pill";
 import type { Plan } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
 
+/**
+ * Three neutral cards at the 24px content radius.
+ *
+ * The featured plan is raised onto the elevated white surface rather than
+ * tinted: peach is spent once per page already, and the system has no second
+ * chromatic surface to promote with.
+ */
 export function Pricing({ plans }: { plans: Plan[] }) {
   return (
-    <div className="grid gap-4 md:grid-cols-3">
+    <div className="grid gap-5 md:grid-cols-3">
       {plans.map((plan) => (
         <div
           key={plan.id}
           className={cn(
-            "flex flex-col rounded-xl border bg-white p-6",
+            "flex flex-col rounded-card p-8",
             plan.featured
-              ? "border-ink-900 shadow-overlay ring-1 ring-ink-900"
-              : "border-ink-200",
+              ? "bg-paper-white shadow-artifact"
+              : "bg-mist-gray",
           )}
         >
-          <div className="flex items-center justify-between">
-            <h3 className="text-[15px] font-semibold text-ink-900">{plan.name}</h3>
+          <div className="flex items-baseline justify-between gap-3">
+            <h3 className="text-[14px] font-normal text-ash-gray">
+              {plan.name}
+            </h3>
             {plan.featured && (
-              <span className="rounded-full bg-accent-500 px-2 py-0.5 text-[11px] font-medium text-ink-950">
-                Most popular
+              <span className="text-[14px] font-normal text-slate-gray">
+                Most picked
               </span>
             )}
           </div>
-          <p className="mt-1 text-[13px] text-ink-500">{plan.blurb}</p>
-          <div className="mt-5 flex items-baseline gap-1.5">
-            <span className="text-3xl font-semibold tracking-tight text-ink-900">
-              {plan.price}
-            </span>
-            {plan.cadence && (
-              <span className="text-[13px] text-ink-500">
-                {plan.cadence.replace(/ for$/, "")}
-              </span>
-            )}
-          </div>
-          <ul className="mt-6 space-y-2.5">
+
+          <p className="mt-4 font-display text-[44px] font-normal leading-none tracking-[-0.66px] text-ink-black">
+            {plan.price}
+          </p>
+          {plan.cadence && (
+            <p className="mt-2 text-[14px] text-slate-gray">
+              {plan.cadence.replace(/ for$/, "")}
+            </p>
+          )}
+
+          <p className="mt-5 text-[16px] leading-[1.5] text-ink-black">
+            {plan.blurb}
+          </p>
+
+          {/* `flex-1` so the CTA sits on the floor of every column whatever the
+              blurb wraps to, and the three line up across the row. */}
+          <ul className="mt-6 flex-1">
             {plan.features.map((feature) => (
-              <li key={feature} className="flex items-start gap-2 text-[13px] text-ink-700">
-                <Check className="mt-0.5 size-3.5 shrink-0 text-accent-700" aria-hidden />
+              <li
+                key={feature}
+                className={cn(
+                  "border-t py-3 text-caption text-slate-gray",
+                  plan.featured ? "border-hairline" : "border-[#e3e3e5]",
+                )}
+              >
                 {feature}
               </li>
             ))}
           </ul>
-          <Button
-            asChild
-            variant={plan.featured ? "primary" : "secondary"}
-            size="lg"
-            className="mt-8"
+
+          <PillLink
+            href="/contact"
+            variant={plan.featured ? "filled" : "ghost"}
+            className="mt-8 w-full"
           >
-            <Link href="/contact">
-              {plan.cta}
-            </Link>
-          </Button>
+            {plan.cta}
+          </PillLink>
         </div>
       ))}
     </div>
